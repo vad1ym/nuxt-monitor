@@ -7,9 +7,9 @@ on:
     # tests, workflows — has nothing to publish and should not spend a run.
     paths:
       - 'docs/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - '.github/workflows/docs.yml'
+      - package.json
+      - pnpm-lock.yaml
+      - .github/workflows/docs.yml
   # So the site can be republished without an empty commit — after enabling
   # Pages for the first time, most of all.
   workflow_dispatch:
