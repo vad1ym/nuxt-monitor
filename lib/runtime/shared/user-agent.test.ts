@@ -14,9 +14,9 @@ describe('parseUserAgent', () => {
   it('reads browser, os and device from a mobile Safari string', () => {
     expect(parseUserAgent(IPHONE)).toEqual({
       browser: 'Mobile Safari',
-      browserVersion: '16',
+      browserVersion: 'Mobile Safari 16',
       os: 'iOS',
-      osVersion: '16.3',
+      osVersion: 'iOS 16.3',
       deviceType: 'mobile',
     })
   })
@@ -38,7 +38,17 @@ describe('parseUserAgent', () => {
    * Chrome release becomes its own row and the breakdown says nothing.
    */
   it('keeps only the major browser version', () => {
-    expect(parseUserAgent(CHROME_WINDOWS).browserVersion).toBe('120')
+    expect(parseUserAgent(CHROME_WINDOWS).browserVersion).toBe('Chrome 120')
+  })
+
+  /**
+   * A version is read in three places, and only one of them has the browser
+   * name nearby. Bare, `17` names nothing — and two browsers both at major 17
+   * would group into a single row belonging to neither.
+   */
+  it('qualifies a version with the name it belongs to', () => {
+    expect(parseUserAgent(IPAD).browserVersion).toBe('Mobile Safari 17')
+    expect(parseUserAgent(IPAD).osVersion).toBe('iOS 17.2')
   })
 
   it('returns a usable shape for a missing or unparseable agent', () => {

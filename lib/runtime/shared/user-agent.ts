@@ -76,11 +76,28 @@ function parse(ua: string): ParsedUserAgent {
     browser: result.browser.name || undefined,
     // The major alone is what a facet is useful over: `Chrome 120` groups,
     // `Chrome 120.0.6099.109` gives every patch release its own bucket.
-    browserVersion: result.browser.major || undefined,
+    browserVersion: qualify(result.browser.name, result.browser.major),
     os: result.os.name || undefined,
-    osVersion: result.os.version || undefined,
+    osVersion: qualify(result.os.name, result.os.version),
     deviceType: deviceType(result.device.type),
   }
+}
+
+/**
+ * A version carries its name: `Safari 17`, not `17`.
+ *
+ * Stored qualified rather than joined for display, because the value is read
+ * in three places — the environments column, the filter dropdown and the
+ * breakdown inside an issue — and only one of them has the parent nearby. A
+ * bare `17` next to a bare `10` names nothing, and worse, two browsers at
+ * major 17 would group into one row that means neither of them.
+ */
+function qualify(name: string | undefined, version: string | undefined): string | undefined {
+  if (!version) {
+    return undefined
+  }
+
+  return name ? `${name} ${version}` : version
 }
 
 /**

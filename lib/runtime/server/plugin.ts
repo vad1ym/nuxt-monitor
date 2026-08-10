@@ -1,6 +1,7 @@
 import type { H3Event } from 'h3'
 import { defineNitroPlugin, getRequestHeader, getRequestHeaders, getResponseStatus } from '#imports'
 import type { MonitorEvent, MonitorFacets } from '../../types'
+import { isAssetPath } from '../shared/route'
 import { scrub, scrubUrl } from '../shared/scrub'
 import { parseUserAgent } from '../shared/user-agent'
 import type { MonitorRuntimeConfig } from './context'
@@ -111,6 +112,10 @@ function isMonitorRoute(event: H3Event, route: string): boolean {
  * Both hooks can fire for one request — an error inside `beforeResponse`, for
  * instance — and counting twice would quietly inflate the denominator that
  * every rate on the overview is divided by.
+ *
+ * Static assets are not counted at all. They are not endpoints, so they cannot
+ * fail in a way anybody acts on, and one page view drags thirty chunks in with
+ * it — enough to make a broken endpoint read as healthy purely by dilution.
  */
 function countOnce(event: H3Event, status: number): void {
   const state = event.context as { _monitorCounted?: boolean }
@@ -121,7 +126,13 @@ function countOnce(event: H3Event, status: number): void {
 
   state._monitorCounted = true
 
-  countRequestSync(event.path ?? '/', event.method ?? 'GET', status)
+  const path = event.path ?? '/'
+
+  if (isAssetPath(path)) {
+    return
+  }
+
+  countRequestSync(path, event.method ?? 'GET', status)
 }
 
 /**

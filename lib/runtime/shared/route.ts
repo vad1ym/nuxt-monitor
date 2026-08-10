@@ -73,6 +73,39 @@ function normalizeAsset(segment: string): string {
   return `${withoutHash === name ? name : `${withoutHash}.*`}${extension}`
 }
 
+/**
+ * Whether a path is a static asset rather than an endpoint of the application.
+ *
+ * Every request the server answers used to become a row, which put
+ * `/_nuxt/Cn7cGL6M.js` and `/favicon.ico` beside `/api/checkout` in a table
+ * ranked by failure rate — fifteen build chunks burying seven real endpoints.
+ * They also inflated the denominator behind the error rate, so a page that
+ * loads thirty chunks quietly made a failing endpoint look thirty times
+ * healthier.
+ *
+ * Decided on the path, before normalisation, because that is where the build
+ * prefix is still intact.
+ */
+export function isAssetPath(path: string | undefined): boolean {
+  if (!path) {
+    return false
+  }
+
+  const [withoutQuery = ''] = path.split('?')
+
+  // Nuxt's build output, whatever it holds — chunks, the build manifest, CSS.
+  if (withoutQuery.startsWith('/_nuxt/')) {
+    return true
+  }
+
+  // Anything served as a file: an endpoint is `/api/orders`, not `/logo.svg`.
+  // A trailing extension is the honest signal, and it is the same test
+  // `normalizeSegment` already uses to recognise an asset segment.
+  const last = withoutQuery.slice(withoutQuery.lastIndexOf('/') + 1)
+
+  return /\.[a-z0-9]{1,8}$/i.test(last)
+}
+
 /** `500` → `5xx`, so counters stay small and read as classes. */
 export function statusClass(status: number): string {
   if (!Number.isFinite(status) || status < 100 || status > 599) {

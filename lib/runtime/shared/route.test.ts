@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bucketOf, normalizeRoute, statusClass } from './route'
+import { bucketOf, isAssetPath, normalizeRoute, statusClass } from './route'
 
 describe('normalizeRoute', () => {
   it('collapses numeric ids so one endpoint is one row', () => {
@@ -71,6 +71,41 @@ describe('statusClass', () => {
     expect(statusClass(0)).toBe('unknown')
     expect(statusClass(999)).toBe('unknown')
     expect(statusClass(Number.NaN)).toBe('unknown')
+  })
+})
+
+describe('isAssetPath', () => {
+  /**
+   * The reason this exists: a page view drags dozens of chunks in with it, and
+   * counting them buried the real endpoints in a table ranked by failure rate
+   * while diluting the denominator every rate is divided by.
+   */
+  it('recognises the build output', () => {
+    expect(isAssetPath('/_nuxt/Cn7cGL6M.js')).toBe(true)
+    expect(isAssetPath('/_nuxt/builds/meta/2627dd60.json')).toBe(true)
+    expect(isAssetPath('/_nuxt/error-500.CZqNkBuR.css')).toBe(true)
+  })
+
+  it('recognises files served from anywhere else', () => {
+    expect(isAssetPath('/favicon.ico')).toBe(true)
+    expect(isAssetPath('/images/logo.svg')).toBe(true)
+    expect(isAssetPath('/robots.txt')).toBe(true)
+  })
+
+  it('leaves application endpoints alone', () => {
+    expect(isAssetPath('/api/checkout')).toBe(false)
+    expect(isAssetPath('/users/42')).toBe(false)
+    expect(isAssetPath('/')).toBe(false)
+    expect(isAssetPath(undefined)).toBe(false)
+  })
+
+  /**
+   * A dot in a path segment is not automatically an extension — only a
+   * trailing one is. `/api/v1.2/orders` is an endpoint.
+   */
+  it('judges by the last segment, not by any dot in the path', () => {
+    expect(isAssetPath('/api/v1.2/orders')).toBe(false)
+    expect(isAssetPath('/download/report.pdf?token=x')).toBe(true)
   })
 })
 
