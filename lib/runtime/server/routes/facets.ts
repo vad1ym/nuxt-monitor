@@ -19,7 +19,10 @@ export default defineEventHandler(async (event) => {
 
   return {
     windowMs,
-    facets: (await useMonitorStore()).facetCounts({
+    // Awaited: a pending promise in a response body serialises as `{}`
+    // rather than throwing, so the dashboard receives a facet panel with no
+    // dimensions and nothing anywhere reports an error.
+    facets: await (await useMonitorStore()).facetCounts({
       since: Date.now() - windowMs,
       filter: parseFacetFilter(query),
     }),

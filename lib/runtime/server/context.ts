@@ -144,17 +144,34 @@ export function captureSync(event: MonitorEvent): void {
   })
 }
 
-/** Counts a request without waiting, for the same reason as `captureSync`. */
+/** Requests counted before the database finished opening. */
+const pendingCounts: [route: string, method: string, status: number][] = []
+
+/**
+ * Counts a request without waiting, for the same reason as `captureSync`.
+ *
+ * Queued rather than dropped while the store opens. Dropping looked harmless —
+ * a counter is only a denominator — but opening is a network round trip
+ * against an external database, and *every* request the application serves in
+ * that window arrives here. On a quiet app that is all of them, and an error
+ * rate computed against a denominator of zero reports no data rather than the
+ * failure it was asked about.
+ */
 export function countRequestSync(route: string, method: string, status: number): void {
   if (store) {
     store.countRequest(route, method, status)
     return
   }
 
-  // Dropped rather than queued: a counter is a denominator, and losing the
-  // handful from before the database opened cannot mislead the way a missing
-  // error can.
-  void useMonitorStore()
+  if (pendingCounts.length < MAX_PENDING_BEFORE_OPEN) {
+    pendingCounts.push([route, method, status])
+  }
+
+  void useMonitorStore().then((ready) => {
+    for (const [path, verb, code] of pendingCounts.splice(0)) {
+      ready.countRequest(path, verb, code)
+    }
+  })
 }
 
 /** Whether collection is actually running, for the health endpoint. */

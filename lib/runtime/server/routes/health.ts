@@ -21,7 +21,7 @@ export default defineEventHandler(async (event) => {
   const config = monitorConfig()
 
   return {
-    ...store.health(),
+    ...await store.health(),
     release: config.release || undefined,
     // Where to look when the reason is a filesystem one.
     storageDir: config.storageDir,

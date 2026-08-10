@@ -67,7 +67,12 @@ export default defineNuxtModule<MonitorOptions>({
       {
         route,
         storageDir,
-        databaseUrl: options.databaseUrl,
+        // `?? ''` rather than the bare option: `defu` drops `undefined`
+        // entirely, and Nuxt only applies a `NUXT_*` override to a key that
+        // already exists in `runtimeConfig`. Without a value here the key was
+        // absent, `NUXT_MONITOR_DATABASE_URL` was silently ignored, and the
+        // app wrote to SQLite while reporting no error at all.
+        databaseUrl: options.databaseUrl ?? '',
         release,
         retentionDays: options.retentionDays,
         maxEventsPerIssue: options.maxEventsPerIssue,

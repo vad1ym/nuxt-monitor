@@ -35,7 +35,7 @@ export default defineEventHandler(async (event) => {
   }
 
   const store = await useMonitorStore()
-  const issue = store.getIssue(fingerprint)
+  const issue = await store.getIssue(fingerprint)
 
   if (!issue) {
     throw createError({ statusCode: 404, statusMessage: 'Unknown issue' })
@@ -51,25 +51,25 @@ export default defineEventHandler(async (event) => {
     const body = await readBody<{ resolved?: boolean }>(event).catch(() => ({}))
 
     if (typeof body?.resolved === 'boolean') {
-      store.setResolved(fingerprint, body.resolved)
+      await store.setResolved(fingerprint, body.resolved)
     }
 
-    return store.getIssue(fingerprint)
+    return await store.getIssue(fingerprint)
   }
 
   // Clicking a slice in the breakdown narrows the occurrences below it, so the
   // same filter drives both.
   const filter = parseFacetFilter(getQuery(event))
-  const events = store.getEvents(fingerprint, 20, filter)
+  const events = await store.getEvents(fingerprint, 20, filter)
 
   // Resolved lazily, here rather than at capture time: an error storm would
   // otherwise turn into a burst of map parsing on the request path.
   return {
     issue,
-    facets: store.facetCounts({ fingerprint, filter }),
-    sessionCount: store.sessionCount(fingerprint, filter),
+    facets: await store.facetCounts({ fingerprint, filter }),
+    sessionCount: await store.sessionCount(fingerprint, filter),
     // What the breakdown is a breakdown of — see `eventCount`.
-    eventCount: store.eventCount(fingerprint, filter),
+    eventCount: await store.eventCount(fingerprint, filter),
     events: await Promise.all(events.map(async item => ({
       ...item,
       frames: await useResolver().resolveStackAsync(item.stack, {

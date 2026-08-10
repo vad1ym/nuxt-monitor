@@ -24,13 +24,16 @@ export default defineEventHandler(async (event) => {
   const store = await useMonitorStore()
   const wants = (name: string): boolean => !section || section === name
 
+  // Awaited rather than handed over as promises: these go into an object,
+  // and a pending promise in a response body serialises as `{}` rather than
+  // failing — the kind of break that reaches production looking like no data.
   return {
     windowMs,
-    releases: wants('releases') ? store.releases() : undefined,
-    routes: wants('routes') ? store.routes(since) : undefined,
-    sessions: wants('sessions') ? store.sessions(since) : undefined,
+    releases: wants('releases') ? await store.releases() : undefined,
+    routes: wants('routes') ? await store.routes(since) : undefined,
+    sessions: wants('sessions') ? await store.sessions(since) : undefined,
     // Environments are the facet counts over the window — the same data the
     // filter panel uses, read as a screen rather than as a control.
-    environments: wants('environments') ? store.facetCounts({ since }) : undefined,
+    environments: wants('environments') ? await store.facetCounts({ since }) : undefined,
   }
 })
