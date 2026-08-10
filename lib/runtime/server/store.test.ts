@@ -1028,16 +1028,19 @@ describe('resilience', () => {
     await small.close()
   })
 
-  // 1_200 captures, each with a forced flush against a failing write: slow
-  // enough on a cold CI runner to outlast the default 5s.
-  it('drops the oldest events rather than growing without bound', { timeout: 30_000 }, async () => {
+  it('drops the oldest events rather than growing without bound', async () => {
     breakWrites(store)
 
-    for (let i = 0; i < 1_200; i++) {
+    // Filled in two flushes rather than one per event: a failed flush requeues
+    // the whole batch, so flushing 1_200 times reinserts an ever-growing buffer
+    // and the test spends seconds proving something the cap decides in one go.
+    for (let i = 0; i < 1_100; i++) {
       store.capture(makeEvent({ message: `event ${i}` }))
-      // Force the attempt the backoff would otherwise suppress.
-      await store.flush()
     }
+    await store.flush()
+
+    store.capture(makeEvent({ message: 'newest' }))
+    await store.flush()
 
     const buffered = (store as unknown as { buffer: unknown[] }).buffer.length
 
@@ -1047,7 +1050,7 @@ describe('resilience', () => {
     // errors say more about what is happening than the oldest.
     const pending = (store as unknown as { buffer: { message: string }[] }).buffer
 
-    expect(pending.at(-1)?.message).toBe('event 1199')
+    expect(pending.at(-1)?.message).toBe('newest')
     expect(pending.at(0)?.message).not.toBe('event 0')
 
     repairWrites(store)
