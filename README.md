@@ -64,14 +64,14 @@ Requires Node 22.13+ (`node:sqlite`) and Nuxt 4.
 
 ## Documentation
 
-Full documentation is under [`docs/`](./docs); `pnpm docs:dev` serves it
-locally.
+**[vad1ym.github.io/nuxt-monitor](https://vad1ym.github.io/nuxt-monitor/)** —
+or `pnpm docs:dev` to read it locally.
 
-- [Getting started](./docs/guide/getting-started.md)
-- [Configuration](./docs/config/index.md)
-- [Authentication](./docs/guide/authentication.md)
-- [Sourcemaps](./docs/guide/sourcemaps.md)
-- [Deployment](./docs/guide/deployment.md)
+- [Getting started](https://vad1ym.github.io/nuxt-monitor/guide/getting-started)
+- [Configuration](https://vad1ym.github.io/nuxt-monitor/config/)
+- [Authentication](https://vad1ym.github.io/nuxt-monitor/guide/authentication)
+- [Sourcemaps](https://vad1ym.github.io/nuxt-monitor/guide/sourcemaps)
+- [Deployment](https://vad1ym.github.io/nuxt-monitor/guide/deployment)
 
 ## Limitations
 

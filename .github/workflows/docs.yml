@@ -1,0 +1,70 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+    # The site is built from these alone, so a change anywhere else — source,
+    # tests, workflows — has nothing to publish and should not spend a run.
+    paths:
+      - 'docs/**'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - '.github/workflows/docs.yml'
+  # So the site can be republished without an empty commit — after enabling
+  # Pages for the first time, most of all.
+  workflow_dispatch:
+
+# Read the repository, write the Pages deployment, and prove to Pages that the
+# artifact came from this workflow.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time, and never cancel one halfway: a run killed between
+# uploading and publishing leaves the site on the previous version with no sign
+# of why. Queued runs are cheap; a half-published site is not.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # `lastUpdated` in the VitePress config reads each page's git
+          # timestamp, and a shallow clone has none — every page would claim to
+          # have been updated at the moment of the build.
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm docs:build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/.vitepress/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

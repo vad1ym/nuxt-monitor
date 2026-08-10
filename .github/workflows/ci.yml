@@ -55,6 +55,11 @@ jobs:
 
   # Separate from `verify`: the docs are prose and their build says nothing
   # about the module, so failing them on three Node versions is noise.
+  #
+  # This is the check on pull requests, where nothing is deployed. The build
+  # that produces the published site lives in `docs.yml` and runs on `main`;
+  # keeping one here means a broken link or a bad code fence is caught in
+  # review rather than by a failed deployment after the merge.
   docs:
     runs-on: ubuntu-latest
 

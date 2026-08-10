@@ -14,6 +14,17 @@ export default defineConfig({
   cleanUrls: true,
   lastUpdated: true,
 
+  /**
+   * The site is served from a repository subpath, not the root of a domain.
+   *
+   * Every asset VitePress emits is referenced absolutely — `/assets/app.js` —
+   * so without this they resolve against `vad1ym.github.io` rather than
+   * `vad1ym.github.io/nuxt-monitor`, and the deployed page loads its HTML and
+   * nothing else. The failure is silent locally, where the dev server does
+   * serve from the root.
+   */
+  base: '/nuxt-monitor/',
+
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
