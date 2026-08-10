@@ -71,6 +71,7 @@
   "dependencies": {
     "@jridgewell/trace-mapping": "^0.3.31",
     "@nuxt/kit": "^4.5.1",
+    "db0": "^0.3.4",
     "defu": "^6.1.7",
     "sirv": "^3.0.2",
     "ua-parser-js": "^1.0.41"

@@ -14,6 +14,9 @@ importers:
       '@nuxt/kit':
         specifier: ^4.5.1
         version: 4.5.2(magic-string@1.1.0)(magicast@0.5.4)(rolldown@1.2.3)(unplugin@3.3.0(esbuild@0.28.1)(rolldown@1.2.3)(rollup@4.62.4)(vite@7.3.6(@types/node@26.1.2)(jiti@2.7.0)(lightningcss@1.33.0)(terser@5.49.2)(yaml@2.9.0)))
+      db0:
+        specifier: ^0.3.4
+        version: 0.3.4
       defu:
         specifier: ^6.1.7
         version: 6.1.7
