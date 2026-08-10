@@ -1,26 +1,29 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import type { MonitorFacetCounts, MonitorFacetFilter, MonitorFacetName, MonitorIssue } from '../lib/types'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import type { MonitorFacetCounts, MonitorFacetFilter, MonitorIssue } from '../lib/types'
 import { ApiError, api } from './api'
-import EnvironmentsView from './components/EnvironmentsView.vue'
+import type { View } from './route'
+import { readRoute, writeRoute } from './route'
 import HealthBanner from './components/HealthBanner.vue'
 import IssueDetail from './components/IssueDetail.vue'
 import IssueFilters from './components/IssueFilters.vue'
 import IssueList from './components/IssueList.vue'
 import LoginView from './components/LoginView.vue'
+import MonitorLogo from './components/MonitorLogo.vue'
 import OverviewView from './components/OverviewView.vue'
-import ReleasesView from './components/ReleasesView.vue'
 import RoutesView from './components/RoutesView.vue'
-import SessionsView from './components/SessionsView.vue'
 
 /**
- * The sidebar is navigation, not a control panel.
+ * Three screens, not six.
  *
- * Filters used to live there, which put a thing that changes the list beside
- * things that change the screen — and left no room for anything else. They now
- * sit above the list they act on, and the sidebar carries sections instead.
+ * Releases, Environments, Routes and Sessions were four `GROUP BY` clauses over
+ * the same events, presented as four destinations. On real data they held one,
+ * five, eleven and three rows — three clicks for three sparse tables and no
+ * conclusion. What each was actually for now lives where the question is asked:
+ * environments are the filters above the issue list, sessions and the latest
+ * deploy are figures on the overview, and routes — the only one of the four
+ * with a denominator of its own — keeps a screen under Traffic.
  */
-type View = 'overview' | 'issues' | 'releases' | 'environments' | 'routes' | 'sessions'
 
 interface Scope { side?: string, resolved?: boolean }
 
@@ -32,23 +35,48 @@ const SCOPES: Record<string, { label: string, icon: string, value: Scope }> = {
   'all': { label: 'All', icon: 'i-lucide-list', value: {} },
 }
 
-const SECTIONS: { view: View, label: string, icon: string }[] = [
-  { view: 'releases', label: 'Releases', icon: 'i-lucide-tag' },
-  { view: 'environments', label: 'Environments', icon: 'i-lucide-monitor-smartphone' },
-  { view: 'routes', label: 'Routes', icon: 'i-lucide-route' },
-  { view: 'sessions', label: 'Sessions', icon: 'i-lucide-users' },
+const NAV: { view: View, label: string, icon: string }[] = [
+  { view: 'overview', label: 'Overview', icon: 'i-lucide-layout-dashboard' },
+  { view: 'issues', label: 'Issues', icon: 'i-lucide-inbox' },
+  { view: 'traffic', label: 'Traffic', icon: 'i-lucide-route' },
+]
+
+/**
+ * One window, shared by every screen.
+ *
+ * Each screen used to own a `ref(24)`, so switching Routes to 7d and returning
+ * to the overview silently compared a week against a day. Releases had no
+ * switch at all while still showing "last seen".
+ */
+const WINDOWS = [
+  { label: '1h', hours: 1 },
+  { label: '6h', hours: 6 },
+  { label: '24h', hours: 24 },
+  { label: '7d', hours: 24 * 7 },
 ]
 
 const authenticated = ref<boolean | null>(null)
-const view = ref<View>('overview')
 const issues = ref<MonitorIssue[]>([])
 const total = ref(0)
 const loading = ref(false)
-const selected = ref<string | null>(null)
-const scope = ref('open')
-const search = ref('')
-const filter = ref<MonitorFacetFilter>({})
 const facets = ref<MonitorFacetCounts | null>(null)
+
+/**
+ * Screen state, read from the address bar.
+ *
+ * It lived in plain refs, which made the dashboard un-linkable: the fix for an
+ * error could not be discussed by pasting a URL, a reload dropped you back on
+ * the overview, and the browser's back button left the tool entirely. Every
+ * value below is in the hash, so the address is the state.
+ */
+const route = readRoute()
+
+const view = ref<View>(route.view)
+const selected = ref<string | null>(route.issue)
+const scope = ref(route.scope)
+const search = ref(route.search)
+const filter = ref<MonitorFacetFilter>(route.filter)
+const hours = ref(route.hours)
 
 const query = computed(() => ({
   ...(SCOPES[scope.value]?.value ?? {}),
@@ -114,20 +142,6 @@ function show(next: View): void {
   selected.value = null
 }
 
-/**
- * Sections hand off to the issue list with a filter already applied.
- *
- * That is what makes them more than dashboards: clicking a release or a
- * browser is the same question as "show me those", and answering it anywhere
- * else would mean rebuilding the list twice.
- */
-function browseBy(facet: MonitorFacetName, value: string): void {
-  filter.value = { [facet]: [value] }
-  scope.value = 'all'
-  selected.value = null
-  view.value = 'issues'
-}
-
 /** Typing should not fire a request per keystroke. */
 let debounce: ReturnType<typeof setTimeout> | undefined
 
@@ -135,6 +149,61 @@ watch([query, filter], () => {
   clearTimeout(debounce)
   debounce = setTimeout(refresh, 200)
 }, { deep: true })
+
+/**
+ * State out to the address bar.
+ *
+ * `replaceState` while typing, `pushState` otherwise: a search field that
+ * pushed a history entry per keystroke would make the back button useless for
+ * everything else.
+ */
+let applyingRoute = false
+
+watch([view, selected, scope, search, filter, hours], ([, , , next], [, , , previous]) => {
+  if (applyingRoute) {
+    return
+  }
+
+  const hash = writeRoute({
+    view: view.value,
+    issue: selected.value,
+    scope: scope.value,
+    search: search.value,
+    filter: filter.value,
+    hours: hours.value,
+  })
+
+  if (hash === window.location.hash) {
+    return
+  }
+
+  const typing = next !== previous
+
+  window.history[typing ? 'replaceState' : 'pushState'](null, '', hash)
+}, { deep: true })
+
+/** And back in, when the browser moves through history. */
+function applyRoute(): void {
+  const next = readRoute()
+
+  applyingRoute = true
+
+  view.value = next.view
+  selected.value = next.issue
+  scope.value = next.scope
+  search.value = next.search
+  filter.value = next.filter
+  hours.value = next.hours
+
+  // Released after the watchers above have seen the assignments, so restoring
+  // a state does not immediately write it back as a new history entry.
+  void Promise.resolve().then(() => {
+    applyingRoute = false
+  })
+}
+
+onMounted(() => window.addEventListener('hashchange', applyRoute))
+onUnmounted(() => window.removeEventListener('hashchange', applyRoute))
 
 onMounted(async () => {
   try {
@@ -159,59 +228,25 @@ onMounted(async () => {
     <div v-else-if="authenticated" class="min-h-screen flex">
       <aside class="w-52 shrink-0 border-e border-default flex flex-col">
         <div class="flex items-center gap-2 px-4 h-14 border-b border-default">
-          <UIcon name="i-lucide-radar" class="size-5 text-primary" />
+          <MonitorLogo class="h-5 w-auto text-primary" />
           <span class="font-semibold">monitor</span>
         </div>
 
-        <nav class="flex-1 p-2 space-y-4 overflow-y-auto">
-          <div>
-            <UButton
-              block
-              size="sm"
-              :color="view === 'overview' ? 'primary' : 'neutral'"
-              :variant="view === 'overview' ? 'subtle' : 'ghost'"
-              icon="i-lucide-layout-dashboard"
-              label="Overview"
-              class="justify-start"
-              @click="show('overview')"
-            />
-          </div>
-
-          <div>
-            <!-- One entry, not five. Open/Server/Client/Resolved were filters
-                 wearing navigation's clothes: they answer "which of these
-                 issues", which belongs with the list, not in a menu that
-                 chooses the screen. -->
-            <UButton
-              block
-              size="sm"
-              :color="onIssues ? 'primary' : 'neutral'"
-              :variant="onIssues ? 'subtle' : 'ghost'"
-              icon="i-lucide-inbox"
-              label="Issues"
-              class="justify-start"
-              @click="showIssues(scope)"
-            />
-          </div>
-
-          <div>
-            <p class="px-2 pb-1 text-xs font-medium uppercase tracking-wide text-dimmed">
-              Insights
-            </p>
-
-            <UButton
-              v-for="item in SECTIONS"
-              :key="item.view"
-              block
-              size="sm"
-              :color="view === item.view ? 'primary' : 'neutral'"
-              :variant="view === item.view ? 'subtle' : 'ghost'"
-              :icon="item.icon"
-              :label="item.label"
-              class="justify-start"
-              @click="show(item.view)"
-            />
-          </div>
+        <!-- Three destinations, flat. The four that used to sit under
+             "Insights" were four groupings of one dataset, not four places. -->
+        <nav class="flex-1 p-2 space-y-1 overflow-y-auto">
+          <UButton
+            v-for="item in NAV"
+            :key="item.view"
+            block
+            size="sm"
+            :color="view === item.view ? 'primary' : 'neutral'"
+            :variant="view === item.view ? 'subtle' : 'ghost'"
+            :icon="item.icon"
+            :label="item.label"
+            class="justify-start"
+            @click="show(item.view)"
+          />
         </nav>
 
         <div class="p-2 border-t border-default">
@@ -233,11 +268,11 @@ onMounted(async () => {
              the column the list below is centred in — otherwise the search
              field sits at the far left while the issues start halfway across. -->
         <header
-          v-if="onIssues"
           class="sticky top-0 z-10 h-14 border-b border-default bg-default/80 backdrop-blur"
         >
-          <div class="flex h-full max-w-5xl items-center gap-3 px-5">
+          <div class="flex h-full max-w-7xl items-center gap-3 px-5">
             <UInput
+              v-if="onIssues"
               v-model="search"
               icon="i-lucide-search"
               size="sm"
@@ -256,7 +291,20 @@ onMounted(async () => {
               </template>
             </UInput>
 
-            <span class="ms-auto text-xs text-dimmed whitespace-nowrap">
+            <!-- One window for the whole dashboard, so two screens can never
+                 quietly describe two different spans of time. -->
+            <UButtonGroup size="xs" class="ms-auto">
+              <UButton
+                v-for="option in WINDOWS"
+                :key="option.hours"
+                :color="hours === option.hours ? 'primary' : 'neutral'"
+                :variant="hours === option.hours ? 'subtle' : 'outline'"
+                :label="option.label"
+                @click="hours = option.hours"
+              />
+            </UButtonGroup>
+
+            <span v-if="onIssues" class="text-xs text-dimmed whitespace-nowrap">
               {{ total }} {{ total === 1 ? 'issue' : 'issues' }}
             </span>
           </div>
@@ -267,7 +315,9 @@ onMounted(async () => {
                to the left, and centring the column pulled the content away
                from it on a wide screen. The width cap stays — long message
                lines are hard to read edge to edge. -->
-          <div class="max-w-5xl">
+          <!-- The overview is tiles and charts, which a reading-width column
+               starves; the issue screens are prose-shaped and keep the cap. -->
+          <div :class="view === 'overview' ? 'max-w-7xl' : 'max-w-5xl'">
             <!-- Above every screen, not on one of its own: a collector that
                  stopped recording makes every other number on the page a lie,
                  so it cannot be somewhere you have to think to look. -->
@@ -275,23 +325,12 @@ onMounted(async () => {
 
             <OverviewView
               v-if="view === 'overview'"
+              :hours="hours"
               @select="openIssue"
               @browse="showIssues"
             />
 
-            <ReleasesView
-              v-else-if="view === 'releases'"
-              @browse="browseBy('release', $event)"
-            />
-
-            <EnvironmentsView
-              v-else-if="view === 'environments'"
-              @browse="browseBy"
-            />
-
-            <RoutesView v-else-if="view === 'routes'" />
-
-            <SessionsView v-else-if="view === 'sessions'" />
+            <RoutesView v-else-if="view === 'traffic'" :hours="hours" />
 
             <IssueDetail
               v-else-if="selected"

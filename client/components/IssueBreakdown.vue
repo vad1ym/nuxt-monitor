@@ -20,6 +20,17 @@ const props = defineProps<{
   sessionCount: number
   eventCount: number
   loading?: boolean
+  /**
+   * Renders the sentence without the table under it.
+   *
+   * The two halves want opposite positions on the page. The conclusion belongs
+   * above the stack — it is one line and it frames everything below it. The
+   * table is evidence, and evidence that pushes the failing line of code off
+   * the screen has cost more than it gave.
+   */
+  findingOnly?: boolean
+  /** The table without the sentence, for the other end of the page. */
+  panelOnly?: boolean
 }>()
 
 const filter = defineModel<MonitorFacetFilter>('filter', { required: true })
@@ -70,7 +81,7 @@ const finding = computed(() => {
   <div class="space-y-4">
     <!-- The conclusion, in a sentence. Only shown when there is one. -->
     <div
-      v-if="finding === 'dominant' && dominant"
+      v-if="!panelOnly && finding === 'dominant' && dominant"
       class="flex items-start gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2.5"
     >
       <UIcon name="i-lucide-crosshair" class="mt-0.5 size-4 shrink-0 text-primary" />
@@ -91,7 +102,7 @@ const finding = computed(() => {
     <!-- Says the opposite thing, and is just as actionable: a handful of
          people hitting the same error over and over is not an outage. -->
     <div
-      v-else-if="finding === 'repeats'"
+      v-else-if="!panelOnly && finding === 'repeats'"
       class="flex items-start gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2.5"
     >
       <UIcon name="i-lucide-repeat" class="mt-0.5 size-4 shrink-0 text-warning" />
@@ -107,6 +118,6 @@ const finding = computed(() => {
       </p>
     </div>
 
-    <FacetPanel v-model="filter" :facets="facets" :loading="loading" />
+    <FacetPanel v-if="!findingOnly" v-model="filter" :facets="facets" :loading="loading" />
   </div>
 </template>

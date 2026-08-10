@@ -6,18 +6,13 @@ import { formatCount, formatRate } from '../chart'
 import { relativeTime } from '../format'
 import ErrorChart from './ErrorChart.vue'
 
-const emit = defineEmits<{ select: [fingerprint: string], browse: [scope: string] }>()
+/** The window is the application's, not this screen's — see `App.vue`. */
+const props = defineProps<{ hours: number }>()
 
-const WINDOWS = [
-  { label: '1h', hours: 1 },
-  { label: '6h', hours: 6 },
-  { label: '24h', hours: 24 },
-  { label: '7d', hours: 24 * 7 },
-]
+const emit = defineEmits<{ select: [fingerprint: string], browse: [scope: string] }>()
 
 const data = ref<MonitorOverview | null>(null)
 const loading = ref(true)
-const hours = ref(24)
 
 /**
  * The headline rate answers "how bad is this", which raw counts cannot: ten
@@ -26,18 +21,37 @@ const hours = ref(24)
  */
 const rate = computed(() => formatRate(data.value?.errorRate))
 
+/** Client events per affected session — see the tile's comment. */
+const perSession = computed(() => {
+  const overview = data.value
+
+  if (!overview?.affectedSessions) {
+    return '—'
+  }
+
+  return (overview.clientErrors / overview.affectedSessions).toFixed(1)
+})
+
+/** Many events across few sessions is a retry loop, not an outage. */
+const looping = computed(() => {
+  const overview = data.value
+
+  return Boolean(overview?.affectedSessions)
+    && overview.clientErrors / overview.affectedSessions >= 5
+})
+
 async function load(): Promise<void> {
   loading.value = true
 
   try {
-    data.value = await api.overview(hours.value)
+    data.value = await api.overview(props.hours)
   }
   finally {
     loading.value = false
   }
 }
 
-watch(hours, load)
+watch(() => props.hours, load)
 onMounted(load)
 
 defineExpose({ refresh: load })
@@ -45,31 +59,17 @@ defineExpose({ refresh: load })
 
 <template>
   <div class="space-y-6">
-    <div class="flex items-center justify-between gap-4">
-      <h1 class="text-lg font-semibold">
-        Overview
-      </h1>
+    <h1 class="text-lg font-semibold">
+      Overview
+    </h1>
 
-      <div class="flex gap-0.5">
-        <UButton
-          v-for="window in WINDOWS"
-          :key="window.hours"
-          size="xs"
-          :color="hours === window.hours ? 'primary' : 'neutral'"
-          :variant="hours === window.hours ? 'subtle' : 'ghost'"
-          :label="window.label"
-          @click="hours = window.hours"
-        />
-      </div>
-    </div>
-
-    <div v-if="loading && !data" class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-      <USkeleton v-for="n in 4" :key="n" class="h-20" />
+    <div v-if="loading && !data" class="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      <USkeleton v-for="n in 5" :key="n" class="h-20" />
     </div>
 
     <template v-else-if="data">
       <!-- Four numbers, each answering a different question. -->
-      <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div class="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <div class="rounded-lg border border-default p-3">
           <p class="text-xs text-dimmed">
             Error rate
@@ -135,6 +135,50 @@ defineExpose({ refresh: load })
             of {{ formatCount(data.issueCount) }} distinct
           </p>
         </button>
+
+        <!-- The distinction a count of events cannot make: fifty errors is an
+             outage across fifty sessions and one person stuck in a retry loop
+             across two. It used to have a screen of its own, which meant only
+             someone who went looking ever saw it. -->
+        <div class="rounded-lg border border-default p-3">
+          <p class="text-xs text-dimmed">
+            People affected
+          </p>
+          <p
+            class="mt-1 text-2xl font-semibold tabular-nums"
+            :class="looping ? 'text-warning' : 'text-highlighted'"
+          >
+            {{ formatCount(data.affectedSessions) }}
+          </p>
+          <p class="text-xs text-dimmed">
+            <template v-if="data.affectedSessions">
+              {{ perSession }}× each on average
+            </template>
+            <template v-else>
+              browser sessions
+            </template>
+          </p>
+        </div>
+      </div>
+
+      <!-- "Did the last deploy break something" — a first-screen question. -->
+      <div
+        v-if="data.latestRelease"
+        class="flex items-start gap-2.5 rounded-lg border border-default bg-elevated/40 px-3 py-2.5"
+      >
+        <UIcon name="i-lucide-git-commit-horizontal" class="mt-0.5 size-4 shrink-0 text-primary" />
+
+        <p class="text-sm text-toned">
+          <strong class="font-semibold text-highlighted">
+            {{ data.latestRelease.newIssues }}
+            {{ data.latestRelease.newIssues === 1 ? 'issue' : 'issues' }} first appeared in
+            {{ data.latestRelease.release }}
+          </strong>
+          <span class="text-dimmed">
+            · {{ formatCount(data.latestRelease.events) }} events · last seen
+            {{ relativeTime(data.latestRelease.lastSeen) }}
+          </span>
+        </p>
       </div>
 
       <section class="rounded-lg border border-default p-3">

@@ -12,17 +12,12 @@ import { formatCount, formatShare } from '../chart'
  * healthy routes are listed too: a high-traffic route at 0% is the context
  * that makes 4% on a quiet one readable.
  */
-const WINDOWS = [
-  { label: '1h', hours: 1 },
-  { label: '6h', hours: 6 },
-  { label: '24h', hours: 24 },
-  { label: '7d', hours: 24 * 7 },
-]
+/** The window is the application's, not this screen's — see `App.vue`. */
+const props = defineProps<{ hours: number }>()
 
 const routes = ref<MonitorRouteStat[]>([])
 const loading = ref(true)
 const error = ref('')
-const hours = ref(24)
 
 const peak = computed(() => Math.max(1, ...routes.value.map(route => route.total)))
 
@@ -43,7 +38,7 @@ async function load(): Promise<void> {
   error.value = ''
 
   try {
-    routes.value = (await api.stats('routes', hours.value)).routes ?? []
+    routes.value = (await api.stats('routes', props.hours)).routes ?? []
   }
   catch (caught) {
     // Silence here would show an empty screen, which reads as 'no data'
@@ -55,32 +50,20 @@ async function load(): Promise<void> {
   }
 }
 
-watch(hours, load)
+watch(() => props.hours, load)
 onMounted(load)
 </script>
 
 <template>
   <div class="space-y-5">
-    <header class="flex items-start justify-between gap-4">
-      <div>
-        <h1 class="text-lg font-semibold text-highlighted">
-          Routes
-        </h1>
-        <p class="text-sm text-dimmed">
-          Traffic and failure rate per endpoint.
-        </p>
-      </div>
-
-      <UButtonGroup size="xs">
-        <UButton
-          v-for="option in WINDOWS"
-          :key="option.hours"
-          :color="hours === option.hours ? 'primary' : 'neutral'"
-          :variant="hours === option.hours ? 'subtle' : 'ghost'"
-          :label="option.label"
-          @click="hours = option.hours"
-        />
-      </UButtonGroup>
+    <header>
+      <h1 class="text-lg font-semibold text-highlighted">
+        Traffic
+      </h1>
+      <p class="text-sm text-dimmed">
+        Requests and failure rate per endpoint. Static assets are not counted —
+        they are not endpoints, and one page view drags dozens in.
+      </p>
     </header>
 
     <UAlert

@@ -48,6 +48,27 @@ function isSelected(name: MonitorFacetName, value: string): boolean {
   return Boolean(model.value[name]?.includes(value))
 }
 
+function selectedCount(name: MonitorFacetName): number {
+  return model.value[name]?.length ?? 0
+}
+
+/**
+ * What the closed control says.
+ *
+ * The value itself when one is chosen, because a dropdown labelled "Browser"
+ * hides the fact that it is filtering — and a filter you cannot see is a
+ * filter you cannot undo.
+ */
+function summary(name: MonitorFacetName, label: string): string {
+  const active = model.value[name] ?? []
+
+  if (!active.length) {
+    return label
+  }
+
+  return active.length === 1 ? active[0]! : `${label}: ${active.length}`
+}
+
 /** Selecting is a toggle: the same click that adds a value removes it. */
 function toggle(name: MonitorFacetName, value: string): void {
   const current = model.value[name] ?? []
@@ -76,69 +97,70 @@ function clear(): void {
 </script>
 
 <template>
-  <div class="space-y-5">
-    <div class="flex items-center justify-between gap-2">
-      <h2 class="text-xs font-medium uppercase tracking-wide text-dimmed">
-        Filters
-      </h2>
-
-      <UButton
-        v-if="activeCount"
-        size="xs"
-        color="neutral"
-        variant="ghost"
-        icon="i-lucide-x"
-        :label="`Clear ${activeCount}`"
-        @click="clear"
-      />
-    </div>
-
-    <div v-if="loading && !facets" class="space-y-2">
-      <USkeleton v-for="n in 4" :key="n" class="h-6 w-full" />
+  <div class="flex flex-wrap items-center gap-1.5">
+    <div v-if="loading && !facets" class="flex gap-1.5">
+      <USkeleton v-for="n in 4" :key="n" class="h-6 w-24" />
     </div>
 
     <p v-else-if="!groups.length" class="text-xs text-dimmed">
       Not enough variety to filter by yet.
     </p>
 
-    <section v-for="group in groups" :key="group.name" class="space-y-1">
-      <h3 class="flex items-center gap-1.5 text-xs font-medium text-muted">
-        <UIcon :name="group.icon" class="size-3.5 text-dimmed" />
-        {{ group.label }}
-      </h3>
+    <UPopover v-for="group in groups" v-else :key="group.name">
+      <UButton
+        size="xs"
+        :color="selectedCount(group.name) ? 'primary' : 'neutral'"
+        :variant="selectedCount(group.name) ? 'subtle' : 'outline'"
+        :icon="group.icon"
+        :label="summary(group.name, group.label)"
+        trailing-icon="i-lucide-chevron-down"
+        class="max-w-56"
+      />
 
-      <ul>
-        <li v-for="row in group.values" :key="row.value">
-          <button
-            type="button"
-            class="relative w-full flex items-center gap-2 overflow-hidden rounded px-1.5 py-1 text-left text-xs transition-colors cursor-pointer"
-            :class="isSelected(group.name, row.value)
-              ? 'text-highlighted'
-              : 'text-toned hover:bg-elevated/40'"
-            :aria-pressed="isSelected(group.name, row.value)"
-            @click="toggle(group.name, row.value)"
-          >
-            <!-- The bar is the comparison; it sits behind the text so the row
-                 stays one line and reads as a label, not a chart. -->
-            <span
-              class="absolute inset-y-0 start-0 -z-10 rounded"
-              :class="isSelected(group.name, row.value) ? 'bg-primary/25' : 'bg-elevated/60'"
-              :style="{ width: `${Math.max(row.share * 100, 1.5)}%` }"
-            />
+      <template #content>
+        <ul class="w-64 max-h-72 overflow-y-auto p-1">
+          <li v-for="row in group.values" :key="row.value">
+            <button
+              type="button"
+              class="relative w-full flex items-center gap-2 overflow-hidden rounded px-1.5 py-1 text-left text-xs transition-colors cursor-pointer"
+              :class="isSelected(group.name, row.value)
+                ? 'text-highlighted'
+                : 'text-toned hover:bg-elevated/40'"
+              :aria-pressed="isSelected(group.name, row.value)"
+              @click="toggle(group.name, row.value)"
+            >
+              <!-- The bar is the comparison; it sits behind the text so the row
+                   stays one line and reads as a label, not a chart. -->
+              <span
+                class="absolute inset-y-0 start-0 -z-10 rounded"
+                :class="isSelected(group.name, row.value) ? 'bg-primary/25' : 'bg-elevated/60'"
+                :style="{ width: `${Math.max(row.share * 100, 1.5)}%` }"
+              />
 
-            <UIcon
-              v-if="isSelected(group.name, row.value)"
-              name="i-lucide-check"
-              class="size-3 shrink-0 text-primary"
-            />
+              <UIcon
+                v-if="isSelected(group.name, row.value)"
+                name="i-lucide-check"
+                class="size-3 shrink-0 text-primary"
+              />
 
-            <span class="min-w-0 flex-1 truncate font-mono">{{ row.value }}</span>
+              <span class="min-w-0 flex-1 truncate font-mono">{{ row.value }}</span>
 
-            <span class="shrink-0 tabular-nums text-dimmed">{{ formatShare(row.share) }}</span>
-            <span class="w-8 shrink-0 text-end tabular-nums text-muted">{{ row.count }}</span>
-          </button>
-        </li>
-      </ul>
-    </section>
+              <span class="shrink-0 tabular-nums text-dimmed">{{ formatShare(row.share) }}</span>
+              <span class="w-8 shrink-0 text-end tabular-nums text-muted">{{ row.count }}</span>
+            </button>
+          </li>
+        </ul>
+      </template>
+    </UPopover>
+
+    <UButton
+      v-if="activeCount"
+      size="xs"
+      color="neutral"
+      variant="ghost"
+      icon="i-lucide-x"
+      :label="`Clear ${activeCount}`"
+      @click="clear"
+    />
   </div>
 </template>

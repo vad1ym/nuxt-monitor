@@ -93,6 +93,7 @@ export class DisabledStore implements Pick<
       // Undefined, not zero: nothing was measured, and "0% errors" would be a
       // reassuring lie from a module that is not collecting anything.
       errorRate: undefined,
+      affectedSessions: 0,
       trend: [],
       topRoutes: [],
       recent: [],

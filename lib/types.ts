@@ -294,6 +294,22 @@ export interface MonitorOverview {
   /** The issue behind the most occurrences, and its share of them. */
   topIssue?: { issue: MonitorIssue, share: number }
   recent: MonitorIssue[]
+  /**
+   * How many distinct sessions saw an error, and how often each did.
+   *
+   * Carried on the overview because it is the one question a count of events
+   * cannot answer: fifty errors is an outage across fifty sessions and one
+   * person stuck in a retry loop across two. It had a screen of its own, which
+   * meant the distinction was only ever seen by someone who went looking.
+   */
+  affectedSessions: number
+  /**
+   * The most recent release that introduced an issue, if any did.
+   *
+   * "Did the last deploy break something" is a first-screen question, not one
+   * worth navigating to a section for.
+   */
+  latestRelease?: { release: string, newIssues: number, events: number, lastSeen: number }
 }
 
 /** One release, and what happened while it was deployed. */

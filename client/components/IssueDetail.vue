@@ -47,6 +47,26 @@ const locationMapped = computed(() =>
 )
 
 /**
+ * What tells this occurrence apart from its neighbours.
+ *
+ * Time alone did not: a run of occurrences seconds apart all render as
+ * "5m ago", so the picker offered twenty identical labels. Browser, status and
+ * time together are what actually vary, and the first two are also what makes
+ * one occurrence worth opening over another.
+ */
+const occurrenceLabel = computed(() => {
+  const event = current.value
+
+  if (!event) {
+    return ''
+  }
+
+  const status = typeof event.context?.statusCode === 'number' ? String(event.context.statusCode) : undefined
+
+  return [event.facets?.browser, status, relativeTime(event.timestamp)].filter(Boolean).join(' · ')
+})
+
+/**
  * Request details are promoted out of the context list: route, method and
  * status answer "which call broke" before anything else does.
  */
@@ -253,15 +273,37 @@ onMounted(loadBaseline)
         </dl>
       </header>
 
-      <!-- What these occurrences have in common, before any single stack. -->
+      <!-- The conclusion only. One line, and it frames the stack below it —
+           the table it used to drag along now sits at the foot of the page. -->
       <IssueBreakdown
         v-model:filter="filter"
+        finding-only
         :facets="detail.facets"
         :baseline="baseline"
         :session-count="detail.sessionCount"
         :event-count="detail.eventCount"
         :loading="loading"
       />
+
+      <!-- The evidence behind the sentence at the top, and the control that
+           narrows the occurrences above. One row of dropdowns rather than five
+           stacked lists: as a column it ran to forty rows and pushed the stack
+           — the reason anybody opened the issue — off the screen. -->
+      <section>
+        <h2 class="mb-2 text-xs font-medium uppercase tracking-wide text-dimmed">
+          Narrow by
+        </h2>
+
+        <IssueBreakdown
+          v-model:filter="filter"
+          panel-only
+          :facets="detail.facets"
+          :baseline="baseline"
+          :session-count="detail.sessionCount"
+          :event-count="detail.eventCount"
+          :loading="loading"
+        />
+      </section>
 
       <div v-if="!detail.events.length" class="py-10 text-center">
         <p class="text-sm text-muted">
@@ -278,17 +320,44 @@ onMounted(loadBaseline)
         />
       </div>
 
-      <div v-else-if="detail.events.length > 1" class="flex flex-wrap items-center gap-1.5">
-        <span class="text-xs text-dimmed me-1">Occurrence:</span>
+      <!-- Stepped through, not picked from a row of buttons.
+           Twenty-two of them read "5m ago", eighteen identically: a control
+           whose labels do not distinguish its options cannot be used to
+           choose. The label now leads with what actually differs between
+           occurrences, and the arrows carry the position. -->
+      <div v-else-if="detail.events.length > 1" class="flex flex-wrap items-center gap-2">
+        <UButtonGroup size="xs">
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-chevron-left"
+            aria-label="Previous occurrence"
+            :disabled="selected === 0"
+            @click="selected--"
+          />
+          <UButton
+            color="neutral"
+            variant="outline"
+            icon="i-lucide-chevron-right"
+            aria-label="Next occurrence"
+            :disabled="selected >= detail.events.length - 1"
+            @click="selected++"
+          />
+        </UButtonGroup>
+
+        <span class="text-sm text-toned">
+          <span class="tabular-nums">{{ selected + 1 }} of {{ detail.events.length }}</span>
+          <span v-if="occurrenceLabel" class="text-dimmed"> · {{ occurrenceLabel }}</span>
+        </span>
+
         <UButton
-          v-for="(event, index) in detail.events"
-          :key="index"
+          v-if="selected !== 0"
           size="xs"
-          :color="index === selected ? 'primary' : 'neutral'"
-          :variant="index === selected ? 'subtle' : 'ghost'"
-          :label="relativeTime(event.timestamp)"
-          :title="absoluteTime(event.timestamp)"
-          @click="selected = index"
+          color="neutral"
+          variant="ghost"
+          label="Latest"
+          class="ms-auto"
+          @click="selected = 0"
         />
       </div>
 

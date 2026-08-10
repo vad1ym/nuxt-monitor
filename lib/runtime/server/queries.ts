@@ -464,6 +464,28 @@ export async function overview(db: Database, windowMs = 24 * 60 * 60 * 1_000, no
     SELECT * FROM issues WHERE last_seen >= ? ORDER BY count DESC LIMIT 1
   `).get(since) as Record<string, unknown> | undefined
 
+  /**
+   * How many distinct people the window touched.
+   *
+   * Only browser events carry a session — a server error belongs to a request,
+   * not to a tab — so this describes the client side and says so on screen.
+   */
+  const affected = await db.prepare(`
+    SELECT COUNT(DISTINCT session) AS sessions
+    FROM events
+    WHERE ts >= ? AND session IS NOT NULL
+  `).get(since) as Record<string, number> | undefined
+
+  /**
+   * The newest release that introduced something.
+   *
+   * Reusing `releases()` rather than repeating its window function: the
+   * definition of "introduced" is subtle enough that two copies of it would
+   * drift, and this is the same question the releases table answers.
+   */
+  const deployed = (await releases(db, 20))
+    .find(release => release.newIssues > 0 && release.release !== 'unknown')
+
   const recent = await db.prepare(`
     SELECT * FROM issues WHERE last_seen >= ? ORDER BY last_seen DESC LIMIT 5
   `).all(since) as Record<string, unknown>[]
@@ -498,6 +520,15 @@ export async function overview(db: Database, windowMs = 24 * 60 * 60 * 1_000, no
       ? { issue: toIssue(top), share: totalEvents ? Number(top.count) / totalEvents : 0 }
       : undefined,
     recent: recent.map(toIssue),
+    affectedSessions: Number(affected?.sessions ?? 0),
+    latestRelease: deployed
+      ? {
+          release: deployed.release,
+          newIssues: deployed.newIssues,
+          events: deployed.events,
+          lastSeen: deployed.lastSeen,
+        }
+      : undefined,
   }
 }
 

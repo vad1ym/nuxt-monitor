@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
 import { api } from '../api'
+import MonitorLogo from './MonitorLogo.vue'
 
 const emit = defineEmits<{ authenticated: [] }>()
 
@@ -37,7 +38,7 @@ async function submit(): Promise<void> {
     <UCard class="w-full max-w-sm">
       <template #header>
         <div class="flex items-center gap-2">
-          <UIcon name="i-lucide-radar" class="size-5 text-primary" />
+          <MonitorLogo class="h-6 w-auto text-primary" />
           <h1 class="text-lg font-semibold">
             monitor
           </h1>
