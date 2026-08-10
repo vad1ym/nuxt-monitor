@@ -60,6 +60,51 @@ describe('resolveAuth', () => {
     // The exact shape runtimeConfig produces when nothing is configured.
     expect(resolveAuth({ username: 'admin', password: '', passwordHash: '', secret: '' })).toBeUndefined()
   })
+
+  it('defaults `optional` to false, so a session is required', () => {
+    expect(resolveAuth({ password: 'x' })!.optional).toBe(false)
+  })
+})
+
+/**
+ * `auth.optional` serves the dashboard with no credential at all.
+ *
+ * The value reaching `resolveAuth` has already been through the module, which
+ * ands it with `nuxt.options.dev` — so it is only ever true in a development
+ * build. These cover the resolver's half of that contract; `module.test.ts`
+ * covers the half that decides it.
+ */
+describe('resolveAuth with auth.optional', () => {
+  it('resolves without any password', () => {
+    const auth = resolveAuth({ optional: true })
+
+    expect(auth).toBeDefined()
+    expect(auth!.optional).toBe(true)
+    expect(auth!.passwordHash).toBe('')
+  })
+
+  it('still resolves a password when one is configured too', () => {
+    const auth = resolveAuth({ optional: true, password: 'hunter2' })
+
+    expect(auth!.optional).toBe(true)
+    expect(verifyPassword('hunter2', auth!.passwordHash)).toBe(true)
+  })
+
+  /**
+   * An empty hash must never be a password that anything satisfies. The gate
+   * skips the session check outright when `optional` is set, so this is
+   * defence in depth for the login route, which does still compare.
+   */
+  it('leaves an empty hash unusable as a credential', () => {
+    const auth = resolveAuth({ optional: true })
+
+    expect(verifyPassword('', auth!.passwordHash)).toBe(false)
+    expect(verifyPassword('anything', auth!.passwordHash)).toBe(false)
+  })
+
+  it('is off unless asked for', () => {
+    expect(resolveAuth({ optional: false })).toBeUndefined()
+  })
 })
 
 /**

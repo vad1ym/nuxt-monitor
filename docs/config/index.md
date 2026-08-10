@@ -84,6 +84,26 @@ run more than one instance.
 - Type: `number` (seconds)
 - Default: `604800` (7 days)
 
+### auth.optional
+
+- Type: `boolean`
+- Default: `true` in development, always `false` in production
+
+Serves the dashboard without a password, so you can read your own errors in dev
+without configuring a credential first.
+
+**Ignored in a production build.** Not "defaults to false" — the value is
+resolved at build time and discarded, so `optional: true` left in a config file
+cannot open the dashboard once deployed.
+
+```ts
+monitor: {
+  auth: { optional: false }, // require the login form in dev too
+}
+```
+
+Set it to `false` to rehearse the real login locally.
+
 ## release
 
 - Type: `string`

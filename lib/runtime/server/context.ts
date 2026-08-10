@@ -29,6 +29,8 @@ export interface MonitorRuntimeConfig {
     passwordHash?: string
     secret?: string
     sessionTtl?: number
+    /** Resolved at build time; always `false` in a production build. */
+    optional?: boolean
   }
 }
 
@@ -124,6 +126,12 @@ export function requireDashboardAccess(event: H3Event): void {
 
   if (!resolved) {
     throw createError({ statusCode: 404, statusMessage: 'Not Found' })
+  }
+
+  // Development only, and resolved into the build rather than read from the
+  // environment — a production artefact never reaches this branch.
+  if (resolved.optional) {
+    return
   }
 
   if (!hasValidSession(event, resolved)) {

@@ -22,6 +22,20 @@ export interface MonitorAuthOptions {
   secret?: string
   /** Session lifetime in seconds. Default: 7 days. */
   sessionTtl?: number
+  /**
+   * Serve the dashboard without a password. Development only.
+   *
+   * Defaults to `true` in dev, where an unprotected dashboard on localhost is
+   * a convenience rather than an exposure, and setting a password just to read
+   * your own errors is friction with nothing behind it.
+   *
+   * **Ignored in a production build.** Not "defaults to false" — the value is
+   * discarded at build time, so `optional: true` committed to a config file
+   * cannot open the dashboard once deployed. A monitoring dashboard lists your
+   * routes, your stack traces and your source, which is reconnaissance handed
+   * over for free; that is not a mistake a config flag should be able to make.
+   */
+  optional?: boolean
 }
 
 export interface MonitorOptions {

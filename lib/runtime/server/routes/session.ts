@@ -13,5 +13,8 @@ export default defineEventHandler((event) => {
     throw createError({ statusCode: 404, statusMessage: 'Not Found' })
   }
 
-  return { authenticated: hasValidSession(event, auth) }
+  // In a development build with `auth.optional` there is nothing to log into,
+  // and `passwordHash` may be empty — so the SPA must be told it is already
+  // through rather than shown a login form no password can satisfy.
+  return { authenticated: auth.optional || hasValidSession(event, auth) }
 })

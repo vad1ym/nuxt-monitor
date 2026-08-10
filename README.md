@@ -37,8 +37,9 @@ export default defineNuxtConfig({
 })
 ```
 
-The dashboard is at `/_monitor`. Without a password it answers `404` — errors
-are still collected, so you can set one later and find them waiting.
+The dashboard is at `/_monitor`. It opens without a password in development; in
+production, without one configured it answers `404` — errors are still
+collected, so you can set one later and find them waiting.
 
 Requires Node 22.13+ (`node:sqlite`) and Nuxt 4.
 

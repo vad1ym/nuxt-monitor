@@ -5,6 +5,10 @@ your production application. It has to be protected, and the module refuses to
 guess on your behalf: with no credentials configured, every dashboard route
 answers `404`.
 
+In development that rule is relaxed: the dashboard is served without a
+password so you can read your own errors without configuring anything. See
+[In development](#in-development) for why that cannot follow you to production.
+
 ## Setting a password
 
 The convenient form, fine in development:
@@ -51,6 +55,37 @@ The build warns once if it finds no password, since forgetting entirely is the
 common mistake. It does not bake the decision in: an install that supplies the
 password at start-up is perfectly ordinary, and refusing it at build time would
 lock those deployments out with no way to recover.
+
+## In development
+
+`nuxt dev` serves the dashboard without a password. Requiring a credential to
+read your own errors on localhost is friction with nothing behind it, so
+[`auth.optional`](../config/#auth-optional) defaults to on there.
+
+To rehearse the real login locally — checking a reverse proxy, or the cookie
+flags — turn it off:
+
+```ts
+monitor: {
+  auth: {
+    optional: false,
+    password: process.env.MONITOR_PASSWORD,
+  },
+}
+```
+
+::: warning It cannot leak into production
+`auth.optional` is resolved **at build time** and discarded unless the build is
+a dev one. `optional: true` committed to `nuxt.config.ts` and forgotten has no
+effect on a deployed server: the production artefact has no flag left to flip.
+
+This is on purpose. The alternative — reading `import.meta.dev` when the
+request arrives — would leave an open dashboard one stray `NODE_ENV` away, and
+a dashboard hands over your routes, stack traces and source for free.
+:::
+
+Production is unchanged: with no credentials configured the dashboard answers
+`404`, and errors are collected either way.
 
 ## How the session works
 

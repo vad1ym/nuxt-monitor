@@ -81,6 +81,7 @@ export default defineNuxtModule<MonitorOptions>({
           password: options.auth?.password,
           secret: options.auth?.secret,
           sessionTtl: options.auth?.sessionTtl,
+          optional: resolveOptionalAuth(options.auth?.optional, nuxt.options.dev),
         },
         // Needed to turn a browser-reported URL back into a file on disk.
         baseURL: nuxt.options.app.baseURL,
@@ -127,6 +128,29 @@ export default defineNuxtModule<MonitorOptions>({
     registerDashboard(nuxt, resolver, route)
   },
 })
+
+/**
+ * Whether the dashboard may be served without a password.
+ *
+ * Decided here, at build time, and deliberately not at request time.
+ * `import.meta.dev` is a runtime value, so gating on it in the handler would
+ * leave the unauthenticated dashboard one stray `NODE_ENV` away from a
+ * production server. Resolving it into the build instead means the production
+ * artefact simply has no flag left to flip: whatever the config said, what
+ * ships is `false`.
+ *
+ * That asymmetry is the point. A dashboard lists your routes, your stack
+ * traces and your source — reconnaissance handed over for free — so the
+ * failure mode of an accidentally-committed `optional: true` has to be
+ * "nothing happens in production", not "the dashboard is open".
+ *
+ * Defaults to on in dev: an unprotected dashboard on localhost is a
+ * convenience, and requiring a password to read your own errors is friction
+ * with nothing behind it.
+ */
+export function resolveOptionalAuth(configured: boolean | undefined, dev: boolean): boolean {
+  return dev && configured !== false
+}
 
 /**
  * The version string stamped on every event.

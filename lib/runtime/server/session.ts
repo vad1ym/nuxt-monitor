@@ -18,6 +18,13 @@ export interface MonitorAuthConfig {
   passwordHash?: string
   secret?: string
   sessionTtl?: number
+  /**
+   * Serve the dashboard without credentials.
+   *
+   * Resolved at build time and already forced to `false` in a production
+   * build, so this is only ever true in dev — see `MonitorAuthOptions`.
+   */
+  optional?: boolean
 }
 
 export interface ResolvedAuth {
@@ -25,6 +32,14 @@ export interface ResolvedAuth {
   passwordHash: string
   secret: string
   ttl: number
+  /**
+   * Whether a session is required at all.
+   *
+   * Only ever true in a development build. `passwordHash` may be empty in that
+   * case, which is exactly why the login route has to check this before
+   * treating a request as a credential check.
+   */
+  optional: boolean
 }
 
 /**
@@ -40,13 +55,17 @@ export function resolveAuth(config: MonitorAuthConfig): ResolvedAuth | undefined
   const passwordHash = config.passwordHash
     || (config.password ? hashPassword(config.password) : '')
 
-  if (!passwordHash) {
+  // `optional` is the one way to resolve without a credential. It is decided
+  // at build time and is always false in production, so this cannot become a
+  // way to serve the dashboard unauthenticated on a deployed server.
+  if (!passwordHash && !config.optional) {
     return undefined
   }
 
   return {
     username: config.username || 'admin',
     passwordHash,
+    optional: Boolean(config.optional),
     // Derived from the credential itself, never from `passwordHash`.
     //
     // Hashing a plaintext password salts it randomly, so the hash — and any

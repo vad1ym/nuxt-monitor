@@ -36,12 +36,16 @@ export default defineNuxtConfig({
 })
 ```
 
-Start the app and open `/_monitor`. Sign in as `admin` with the password you set.
+Start the app and open `/_monitor`. In development it opens straight away — no
+password needed. Sign in as `admin` in production.
 
-::: warning Without a password the dashboard does not exist
+::: warning Without a password the dashboard does not exist in production
 Every dashboard route answers `404` while no credentials resolve — not `403`,
 which would confirm there is something behind it worth attacking. Errors are
 still collected, so you can set a password later and find them waiting.
+
+The dev convenience cannot follow you: [`auth.optional`](../config/#auth-optional)
+is resolved at build time and discarded in a production build.
 :::
 
 ## Check that it works

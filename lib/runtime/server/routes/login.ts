@@ -11,6 +11,13 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, statusMessage: 'Not Found' })
   }
 
+  // Nothing to log into: a development build with `auth.optional` and no
+  // password configured has an empty `passwordHash`, which no input can
+  // satisfy. Saying so beats a 401 that looks like a wrong password.
+  if (auth.optional && !auth.passwordHash) {
+    return { ok: true }
+  }
+
   const ip = clientAddress(event)
   const delay = loginThrottle.delayFor(ip)
 
