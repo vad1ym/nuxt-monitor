@@ -5,6 +5,9 @@ hero:
   name: nuxt-monitor
   text: Error monitoring that stays on your machine
   tagline: No DSN, no account, no sourcemap upload.
+  image:
+    src: /logo.png
+    alt: nuxt-monitor
   actions:
     - theme: brand
       text: Get started

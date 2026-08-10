@@ -25,7 +25,15 @@ export default defineConfig({
    */
   base: '/nuxt-monitor/',
 
+  // Spelled with the base included: `head` is emitted verbatim, unlike the
+  // links VitePress rewrites for you.
+  head: [
+    ['link', { rel: 'icon', type: 'image/png', href: '/nuxt-monitor/favicon.png' }],
+  ],
+
   themeConfig: {
+    logo: '/logo.png',
+
     nav: [
       { text: 'Guide', link: '/guide/getting-started' },
       { text: 'Config', link: '/config/' },
