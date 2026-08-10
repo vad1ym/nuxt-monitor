@@ -54,27 +54,15 @@ derived from what it produced:
     …
 ```
 
-Resolution then searches the running build first and every archived one after
-it. That is safe — and it is why the archive is keyed this way — because a
-bundler's asset names carry a content hash: `eH5xbD7-.js` names one build's
-output and nothing else. Measured on consecutive builds of the example:
-fourteen assets each, zero shared names.
+Resolution searches the running build first, then every archived one. That is
+safe because asset names carry a content hash — `eH5xbD7-.js` names one build's
+output and nothing else — and it is why the archive is keyed by build rather
+than by release. A release name is reused across rebuilds, so keying by it meant
+one build deleted another's maps.
 
-::: warning Not keyed by release, and this matters
-A release name does not identify a build. `dev` is reused on every rebuild, and
-a tag gets built again after a failed deploy. An archive keyed by release meant
-the second build deleted the first one's maps — and every event already
-recorded against it lost its source permanently, which is the exact failure the
-archive exists to prevent.
-:::
-
-`keepSourcemapsFor` bounds the archive at five builds. Maps are large and
-deploys are frequent, so an unbounded archive is a directory that only grows on
-the same disk as your database.
-
-The archive does not need `release` set. A release is still worth setting — it
-is what tells you *when* something started — but map resolution no longer
-depends on it.
+`keepSourcemapsFor` bounds the archive at five builds. Map resolution does not
+need `release` set; a release is still worth setting, since it tells you *when*
+something started.
 
 ## In development
 
@@ -88,11 +76,10 @@ serves modules under. Client stacks arrive through an endpoint that needs no
 credentials, so an unchecked fetch here would be a request to any address the
 process can reach, chosen by whoever posted the stack.
 
-When that fetch comes back empty the archive is still searched, which covers a
-case that looks like a bug until you know it: a dev server reads the same
-database as the production build beside it, so the issues on its dashboard are
-often not from the process displaying them. Their frames name hashed assets
-Vite never served, the fetch 404s — and the map is on disk in the archive.
+When that fetch comes back empty the archive is still searched. A dev server
+reads the same database as the production build beside it, so its dashboard
+often shows issues from another process entirely — frames naming assets Vite
+never served, whose maps are on disk in the archive.
 
 ::: info Server-side traces in dev
 Server frames from a dev server resolve less reliably: Vite serves only the
@@ -128,7 +115,6 @@ A client stack names a file, and that name is chosen by whoever posted it.
 Client frames may therefore only resolve against the published build assets —
 never an arbitrary path on disk.
 
-A frame spelling itself `/_nuxt/../../../../etc/passwd` used to resolve to
-`/app/etc/passwd.map`. Path normalisation now happens before the containment
-check, and server frames — which this process produced itself — are the only
-ones allowed to name absolute paths.
+Server frames — which this process produced itself — are the only ones allowed
+to name absolute paths. The same containment applies to the `sources` a map
+points at, so a map cannot lead a client frame outside its own directory.

@@ -2,9 +2,7 @@
 
 ## Requirements
 
-- **Node 22.13 or newer.** `node:sqlite` landed in 22.5 but stayed behind
-  `--experimental-sqlite` until 22.13, where `require('node:sqlite')` still
-  throws *No such built-in module*.
+- **Node 22.13 or newer** — `node:sqlite` is behind a flag before that.
 - **Nuxt 4.**
 
 ## Install
@@ -39,13 +37,10 @@ export default defineNuxtConfig({
 Start the app and open `/_monitor`. In development it opens straight away — no
 password needed. Sign in as `admin` in production.
 
-::: warning Without a password the dashboard does not exist in production
-Every dashboard route answers `404` while no credentials resolve — not `403`,
-which would confirm there is something behind it worth attacking. Errors are
-still collected, so you can set a password later and find them waiting.
-
-The dev convenience cannot follow you: [`auth.optional`](../config/#auth-optional)
-is resolved at build time and discarded in a production build.
+::: warning No password, no dashboard in production
+Every route answers `404` while no credentials resolve — not `403`, which would
+confirm there is something worth attacking. Errors are still collected, so you
+can set a password later and find them waiting.
 :::
 
 ## Check that it works
@@ -73,33 +68,22 @@ problem rather than a collection problem — see [Sourcemaps](./sourcemaps).
 
 ## What is collected
 
-**Server errors** arrive through Nitro's `error` hook, which every server
-failure path funnels through: request and response handlers, plugins, cached
-function failures, and the process-level `unhandledRejection` and
-`uncaughtException` traps.
+**Server errors** — Nitro's `error` hook, which every failure path funnels
+through: handlers, plugins, cached functions, `unhandledRejection` and
+`uncaughtException`.
 
-**Client errors** arrive through a browser plugin that posts to
-`/_monitor/api/ingest`. It listens on Vue's `vue:error` as well as the window
-handlers, because Nuxt removes its own Vue error handler once the app
-hydrates — anything listening only to `app:error` stops seeing component
-errors from that point on.
+**Client errors** — a browser plugin posting to `/_monitor/api/ingest`. It
+listens on `vue:error` as well as the window handlers, since Nuxt drops its own
+Vue error handler once the app hydrates.
 
-**Request counts** are recorded as counters — a route shape, a method and a
-status class, never bodies, headers or addresses. They exist so an error count
-has a denominator: ten failures out of ten requests and ten out of a million
-are different situations.
+**Request counts** — a route shape, a method and a status class, never bodies or
+headers. They give the error count a denominator: ten failures out of ten
+requests and ten out of a million are different situations.
 
-By default every 4xx is ignored. A 404 says a client asked for something that
-is not there, which is not a fault in your application and would otherwise
-bury the ones that are. See [`ignore`](../config/#ignore) to change that.
+Every 4xx is ignored by default; see [`ignore`](../config/#ignore).
 
 ## Where the data goes
 
-A single SQLite file at `.monitor/monitor.db`, beside your project. Add it to
-`.gitignore`:
-
-```
-.monitor
-```
-
-Nothing is sent anywhere. There is no account, no DSN and no upload step.
+A single SQLite file at `.monitor/monitor.db`. Add `.monitor` to `.gitignore`.
+Nothing is sent anywhere — no account, no DSN, no upload step. For PostgreSQL or
+MySQL, see [Storage](./storage#using-an-external-database).

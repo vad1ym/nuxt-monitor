@@ -1,8 +1,8 @@
 # Deployment
 
-This module is honest about its shape: it is one process writing one file. That
-makes it excellent on a server you control and wrong in several other places.
-Better to know which you are in before you rely on it.
+On SQLite this is one process writing one file — excellent on a server you
+control, wrong in a few other places. An external database changes that; see
+[Storage](./storage#using-an-external-database).
 
 ## A single server
 
@@ -18,31 +18,29 @@ archive. Both survive deploys precisely because they live outside `.output`.
 
 ## Several instances
 
-Each process opens its own database, so each replica sees only its own errors.
-Behind a load balancer you get whichever instance your dashboard request landed
-on, which is a partial view that does not announce itself as partial.
+Point every replica at the same [external
+database](./storage#using-an-external-database) and the dashboard shows all of
+them:
 
-There is no shared-storage mode. If you run more than one instance and need one
-view, this is the wrong tool.
+```bash
+NUXT_MONITOR_DATABASE_URL=postgresql://user:pass@host/monitor
+```
 
-What does work, if you have a reason to accept the trade:
+On SQLite each process opens its own file, so each replica sees only its own
+errors — a partial view that does not announce itself as partial.
 
-- **Pin the dashboard to one instance** and accept that it reports on that one.
-- **Run it on a single instance** — a worker, a cron box, an admin node — that
-  handles a representative slice of traffic.
-
-Set `auth.secret` explicitly in either case, or a session issued by one
-instance will be rejected by the next.
+Either way, set `auth.secret` explicitly, or a session issued by one instance is
+rejected by the next.
 
 ## Serverless
 
-Do not. SQLite on an ephemeral filesystem loses everything when the instance is
-recycled, which on most platforms is constantly. Concurrent lambdas each get
-their own database, or worse, fight over one on a network filesystem that does
-not support the locking SQLite needs.
+Not on SQLite: an ephemeral filesystem loses everything when the instance is
+recycled, and concurrent lambdas either get their own database each or fight
+over one on a filesystem without the locking SQLite needs. The module will run
+— an unopenable database just disables collection — but what you get is not
+monitoring.
 
-The module will *run* — it will not crash, because a database it cannot open
-just disables collection — but what you get is not monitoring.
+With an external database it works, since nothing is kept on local disk.
 
 ## Behind a proxy
 
@@ -81,6 +79,6 @@ monitor: { enabled: process.env.NODE_ENV !== 'test' }
 
 - A password is set, and the dashboard asks for it.
 - A release is set, and the Releases screen shows it.
-- `.monitor` is on a persistent volume.
+- `.monitor` is on a persistent volume, or `databaseUrl` points elsewhere.
 - An error you caused on purpose appears, resolved to source.
 - `/_monitor/api/health` says `enabled: true`.

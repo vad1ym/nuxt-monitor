@@ -41,6 +41,22 @@ monitor: {
 prompt rather than `argv` keeps the password out of your shell history and out
 of the process list.
 
+The hash goes to stdout and nothing else, so it can be piped — or passed
+directly where no prompt is available, accepting that it is then visible to
+anything that can read the process list:
+
+```bash
+npx monitor hash-password > .hash
+npx monitor hash-password "$PASSWORD"
+```
+
+The format carries its own parameters, so a hash made today stays verifiable if
+the defaults change:
+
+```
+scrypt$16384$8$1$<salt base64>$<derived key base64>
+```
+
 ## Setting it at runtime instead
 
 `NUXT_MONITOR_AUTH_PASSWORD` is read when the server starts rather than when it
@@ -76,16 +92,10 @@ monitor: {
 
 ::: warning It cannot leak into production
 `auth.optional` is resolved **at build time** and discarded unless the build is
-a dev one. `optional: true` committed to `nuxt.config.ts` and forgotten has no
-effect on a deployed server: the production artefact has no flag left to flip.
-
-This is on purpose. The alternative — reading `import.meta.dev` when the
-request arrives — would leave an open dashboard one stray `NODE_ENV` away, and
-a dashboard hands over your routes, stack traces and source for free.
+a dev one, so `optional: true` left in a config file has no effect on a deployed
+server. Reading `import.meta.dev` per request instead would leave an open
+dashboard one stray `NODE_ENV` away.
 :::
-
-Production is unchanged: with no credentials configured the dashboard answers
-`404`, and errors are collected either way.
 
 ## How the session works
 
@@ -110,20 +120,13 @@ which is the behaviour you want from a password change.
 Set `auth.secret` yourself if you need sessions to survive a password change,
 or if you run more than one instance and want a session to work across them.
 
-::: tip This was a real bug
-The secret used to be derived from the *stored hash*, which is salted
-randomly. A new salt is generated on every boot, so every restart silently
-invalidated all sessions. If you ever configured `auth.secret` to work around
-mysterious logouts, you can remove it.
-:::
-
 ## Cross-origin requests
 
 Requests that change something — resolving an issue, signing out — must come
-from the dashboard's own origin. `SameSite=Lax` already blocks the ordinary
-cross-site form post, but it does not cover a sibling subdomain: on a host
-with wildcard DNS, `evil.internal.example.com` is same-site with
-`monitor.internal.example.com` and the browser will attach the cookie.
+from the dashboard's own origin. `SameSite=Lax` blocks the ordinary cross-site
+post but not a sibling subdomain: with wildcard DNS,
+`evil.internal.example.com` is same-site with `monitor.internal.example.com`
+and the browser attaches the cookie.
 
 Signing in is deliberately exempt. It acts on nobody's behalf, and requiring
 an `Origin` header would break every non-browser client.

@@ -17,252 +17,161 @@ export default defineNuxtConfig({
 
 ## enabled
 
-- Type: `boolean`
-- Default: `true`
+`boolean`, default `true`
 
-Master switch. `false` registers nothing at all — no hooks, no routes, no
-database.
+Master switch. `false` registers nothing — no hooks, no routes, no database.
 
 ## route
 
-- Type: `string`
-- Default: `'/_monitor'`
+`string`, default `'/_monitor'`
 
-Where the dashboard and its API are mounted. `/_monitor/` and `_monitor` both mean
-the same thing.
-
-The boundary is a path segment, so a route of your own at `/_monitoring` is
-unaffected and its errors are still collected.
+Where the dashboard and its API are mounted. The boundary is a path segment, so
+a route of your own at `/_monitoring` is unaffected.
 
 ## storageDir
 
-- Type: `string`
-- Default: `'.monitor'`
+`string`, default `'.monitor'`
 
-Directory for the database and the sourcemap archive, relative to your project
-root. Resolved to an absolute path at build time, because the process working
-directory in production is not necessarily the app root.
-
-Add it to `.gitignore`.
+Directory for the SQLite file and the sourcemap archive, relative to your
+project root. Add it to `.gitignore`.
 
 ## databaseUrl
 
-- Type: `string`
-- Default: `''` (SQLite under `storageDir`)
+`string`, default `''` (SQLite under `storageDir`)
 
-Connection string for an external database. Unset — the default — keeps
-everything in a SQLite file, which needs no service to run.
+Connection string for an external database. Install the matching driver; it is
+loaded only when a url asks for it.
 
-```ts
-monitor: {
-  databaseUrl: process.env.NUXT_MONITOR_DATABASE_URL,
-}
-```
-
-Recognised schemes:
-
-| Scheme | Engine | Driver to install |
+| Scheme | Engine | Driver |
 | --- | --- | --- |
 | `postgresql://`, `postgres://` | PostgreSQL | `pg` |
 | `mysql://`, `mariadb://` | MySQL, MariaDB | `mysql2` |
 
-The driver is loaded only when a url asks for it, so a default install needs
-neither. Anything else throws at start-up rather than falling back to SQLite:
-an application that starts, serves a working dashboard, and writes its errors
-somewhere other than where you configured them is the worst of the available
-failures, and you would find out during an incident.
+An unknown scheme throws at start-up rather than falling back to SQLite — an
+app that runs while writing its errors somewhere you did not configure is worse
+than one that refuses to start.
 
-Read at **runtime**, so `NUXT_MONITOR_DATABASE_URL` can point one build at a
-different database per environment — a credential does not belong in a build
-artefact.
-
-::: warning maxDatabaseMb does not apply
-[`maxDatabaseMb`](#maxdatabasemb) measures pages in use through a SQLite
-PRAGMA, which has no counterpart the module can rely on elsewhere — the
-equivalent query is frequently unreadable on managed hosting. On an external
-database `health.bytes` reports `0` and the ceiling is not enforced;
-`retentionDays` and `maxIssues` are what bound growth there.
-:::
-
-An external database also lifts the one-instance limit: several replicas can
-share one, and the dashboard then shows all of them rather than whichever you
-happened to reach.
+[`maxDatabaseMb`](#maxdatabasemb) does not apply here; see
+[Storage](../guide/storage#using-an-external-database).
 
 ## auth
 
-- Type: `object`
+See [Authentication](../guide/authentication).
 
-See [Authentication](../guide/authentication) for the full picture.
+| Option | Type | Default |
+| --- | --- | --- |
+| `auth.username` | `string` | `'admin'` |
+| `auth.password` | `string` | — |
+| `auth.passwordHash` | `string` | — |
+| `auth.secret` | `string` | derived from the password |
+| `auth.sessionTtl` | `number` (seconds) | `604800` (7 days) |
+| `auth.optional` | `boolean` | `true` in dev, always `false` in production |
 
-### auth.username
+`passwordHash` wins over `password` — produce one with `npx monitor
+hash-password`. Changing the password invalidates every session, unless you set
+`secret` yourself.
 
-- Type: `string`
-- Default: `'admin'`
-
-### auth.password
-
-- Type: `string`
-
-Plaintext. Convenient in development; in production prefer `passwordHash` so
-the secret is not sitting in your config file or your build output.
-
-### auth.passwordHash
-
-- Type: `string`
-
-A scrypt hash from `npx monitor hash-password`. Wins over `password`.
-
-### auth.secret
-
-- Type: `string`
-
-Secret for signing session cookies. Derived from the password when absent,
-which means changing the password invalidates every outstanding session.
-
-Set it explicitly if you need sessions to survive a password change, or if you
-run more than one instance.
-
-### auth.sessionTtl
-
-- Type: `number` (seconds)
-- Default: `604800` (7 days)
-
-### auth.optional
-
-- Type: `boolean`
-- Default: `true` in development, always `false` in production
-
-Serves the dashboard without a password, so you can read your own errors in dev
-without configuring a credential first.
-
-**Ignored in a production build.** Not "defaults to false" — the value is
-resolved at build time and discarded, so `optional: true` left in a config file
-cannot open the dashboard once deployed.
-
-```ts
-monitor: {
-  auth: { optional: false }, // require the login form in dev too
-}
-```
-
-Set it to `false` to rehearse the real login locally.
+`auth.optional` serves the dashboard without a password in development. It is
+resolved at build time and discarded in a production build, so leaving it in a
+config file cannot open a deployed dashboard.
 
 ## release
 
-- Type: `string`
-- Default: `''`, then `NUXT_MONITOR_RELEASE`, then the CI commit SHA
+`string`, default `''`
 
-Version of the application, recorded on every event and used to pick the right
-sourcemaps after a deploy. Read at build time. See
-[Releases](../guide/releases).
+Version recorded on every event, so an incident starts from *appeared in 1.4.0*
+rather than a timestamp somebody matches against a deploy log. The Releases
+screen counts how many issues **first appeared** in each one, which is what
+separates "this release is noisy" from "this release introduced something".
+
+```ts
+monitor: { release: process.env.npm_package_version }
+```
+
+Read at **build time**, so the value describes the build it is stamped into.
+Unset, it falls back to `NUXT_MONITOR_RELEASE`, then to whatever SHA your CI
+exposes — `GITHUB_SHA`, `VERCEL_GIT_COMMIT_SHA`, `CF_PAGES_COMMIT_SHA`,
+`COMMIT_REF`. A 40-character SHA is shortened to seven; strings are capped at 64.
+
+Sourcemaps survive a deploy whether or not you set this — the archive is keyed
+by build. See [Sourcemaps](../guide/sourcemaps#across-deploys).
+
+::: warning A release set on the server overrides the client's
+`NUXT_MONITOR_RELEASE` in the server environment applies to client events too.
+Do not set it at runtime if you report different releases from browser and
+server.
+:::
 
 ## retentionDays
 
-- Type: `number`
-- Default: `14`
+`number`, default `14`
 
 How long events are kept. Applied at start-up and every six hours. Request
 counters are kept three times longer.
 
 ## maxEventsPerIssue
 
-- Type: `number`
-- Default: `100`
+`number`, default `100`
 
-Occurrences kept within one issue, oldest evicted first. The issue's total
-count is not affected — it keeps counting past what it stores.
+Occurrences stored per issue, oldest evicted first. The issue's own count keeps
+counting past what it stores.
 
 ## maxIssues
 
-- Type: `number`
-- Default: `5000`
+`number`, default `5000`
 
-Ceiling on distinct issues. Stale and rare ones are evicted first, resolved
-ones before that. See [Grouping](../guide/grouping#when-grouping-is-wrong) for
-why this axis is the one that runs away.
+Ceiling on distinct issues; stale and rare ones go first, resolved before that.
+See [why this axis runs away](../guide/grouping#when-grouping-is-wrong).
 
 ## maxDatabaseMb
 
-- Type: `number`
-- Default: `256`
+`number`, default `256`
 
-Ceiling on stored bytes, measured as pages in use rather than the size of the
-file. Oldest events are evicted first. `0` disables it.
-
-The most recent 200 events survive whatever this is set to. See
-[Storage](../guide/storage).
+Ceiling on stored bytes, measured as pages in use rather than file size. `0`
+disables it. The most recent 200 events survive whatever you set. SQLite only —
+see [Storage](../guide/storage).
 
 ## keepSourcemapsFor
 
-- Type: `number`
-- Default: `5`
+`number`, default `5`
 
-How many builds' sourcemaps to keep, newest first. `0` keeps none, at the cost
-of losing older traces on every deploy.
-
-Keyed by build, not by release — a release name is reused across rebuilds, and
-keying by it meant one build deleted another's maps.
-
-Maps are large — this is a disk budget, not a retention policy.
+How many builds' sourcemaps to keep, newest first. Maps are large — this is a
+disk budget, not a retention policy.
 
 ## scrubKeys
 
-- Type: `string[]`
-- Default: `[]`
+`string[]`, default `[]`
 
-Extra key patterns to redact, on top of the built-in set. Matching is
-substring-based and case-insensitive. See [Privacy](../guide/privacy).
+Extra key patterns to redact, on top of the built-in set. Substring match,
+case-insensitive. See [Privacy](../guide/privacy).
 
 ## ignore
 
-- Type: `object`
+What never reaches the database. Filtering on the way in, because noise that is
+stored still costs disk and still dilutes the counts.
 
-What never reaches the database. Filtering on the way in rather than on the way
-out: noise that is stored still costs disk, still has to be paged past, and
-still dilutes the counts that tell you which fault is spreading.
+| Option | Type | Default |
+| --- | --- | --- |
+| `ignore.statuses` | `number[]` | every 4xx |
+| `ignore.messages` | `string[]` | `[]` |
+| `ignore.routes` | `string[]` | `[]` |
+| `ignore.types` | `string[]` | `[]` |
 
-### ignore.statuses
-
-- Type: `number[]`
-- Default: `[400, 401, 402, 403, 404, 405, 406, 408, 409, 410, 422, 429]`
-
-HTTP statuses to skip. Every 4xx by default — a 404 says a client asked for
-something that is not there, which is not a fault in your application.
-
-Set to `[]` to record them.
-
-### ignore.messages
-
-- Type: `string[]`
-- Default: `[]`
-
-Substrings, or `/regex/` strings.
+A 404 says a client asked for something that is not there, which is not a fault
+in your application — set `statuses: []` to record them anyway. Messages and
+routes match as substrings or `/regex/` strings.
 
 ```ts
 ignore: {
   messages: ['ResizeObserver loop', '/^Loading chunk \\d+ failed/'],
+  types: ['AbortError'],
 }
 ```
 
-### ignore.routes
-
-- Type: `string[]`
-- Default: `[]`
-
-Request paths to skip, as substrings or `/regex/` strings.
-
-### ignore.types
-
-- Type: `string[]`
-- Default: `[]`
-
-Error types to skip — `AbortError` for cancelled navigations, for instance.
-
 ## Environment variables
 
-Options live under `runtimeConfig.monitor`, so Nuxt's own convention applies: any
-of them can be overridden at start-up by the matching `NUXT_MONITOR_*` variable,
-with nesting spelled as `_`.
+Options live under `runtimeConfig.monitor`, so any of them can be overridden at
+start-up by the matching `NUXT_MONITOR_*` variable, with nesting spelled as `_`.
 
 | Variable | Effect |
 | --- | --- |
@@ -270,12 +179,11 @@ with nesting spelled as `_`.
 | `NUXT_MONITOR_AUTH_PASSWORD_HASH` | Hash |
 | `NUXT_MONITOR_AUTH_SECRET` | Session signing secret |
 | `NUXT_MONITOR_STORAGE_DIR` | Storage directory |
-| `NUXT_MONITOR_DATABASE_URL` | External database connection string |
+| `NUXT_MONITOR_DATABASE_URL` | External database |
 | `NUXT_MONITOR_RETENTION_DAYS` | Retention window |
 
-These are read when the server starts, which is what makes one build
-deployable to several environments.
+These are read when the server starts, which is what makes one build deployable
+to several environments.
 
 `NUXT_MONITOR_RELEASE` is the exception: it is read at **build time**, because a
-release describes the build it is stamped into rather than whatever the process
-happens to see later.
+release describes the build it is stamped into.
