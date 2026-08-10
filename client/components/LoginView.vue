@@ -40,7 +40,7 @@ async function submit(): Promise<void> {
         <div class="flex items-center gap-2">
           <MonitorLogo class="h-8 w-auto" />
           <h1 class="text-lg font-semibold">
-            monitor
+            <span class="text-primary">nuxt-</span>monitor
           </h1>
         </div>
         <p class="text-sm text-muted mt-1">

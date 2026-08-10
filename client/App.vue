@@ -318,7 +318,9 @@ onMounted(async () => {
       <aside class="w-52 shrink-0 border-e border-default flex flex-col">
         <div class="flex items-center gap-2 px-4 h-14 border-b border-default">
           <MonitorLogo class="h-6 w-auto" />
-          <span class="font-semibold">monitor</span>
+          <!-- The package name in full, with the prefix carrying the brand
+               colour: `monitor` alone does not name what this is. -->
+          <span class="font-semibold"><span class="text-primary">nuxt-</span>monitor</span>
         </div>
 
         <!-- Three destinations, flat. The four that used to sit under
