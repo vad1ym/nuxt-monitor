@@ -14,10 +14,10 @@ import { monitorConfig, requireDashboardAccess, useMonitorStore } from '../conte
  * an unauthenticated endpoint that confirms `nuxt-monitor` is installed and how
  * much it is holding is a reconnaissance gift for no gain.
  */
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   requireDashboardAccess(event)
 
-  const store = useMonitorStore()
+  const store = await useMonitorStore()
   const config = monitorConfig()
 
   return {

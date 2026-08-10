@@ -45,6 +45,32 @@ directory in production is not necessarily the app root.
 
 Add it to `.gitignore`.
 
+## databaseUrl
+
+- Type: `string`
+- Default: `''` (SQLite under `storageDir`)
+
+Connection string for an external database. Unset — the default — keeps
+everything in a SQLite file, which needs no service to run.
+
+::: warning Not implemented yet
+Only SQLite is supported today. Setting this throws on start-up rather than
+silently falling back: an application that starts, serves a working dashboard,
+and writes its errors somewhere other than where you configured them is the
+worst of the available failures, and you would find out during an incident.
+
+MySQL and Postgres connectors are the next step; the storage layer behind this
+option is already engine-agnostic.
+:::
+
+Read at **runtime**, so `NUXT_MONITOR_DATABASE_URL` can point one build at a
+different database per environment — a credential does not belong in a build
+artefact.
+
+Note that [`maxDatabaseMb`](#maxdatabasemb) is SQLite-only: it measures pages
+in use through a PRAGMA. On an external database it does not apply, and
+`retentionDays` and `maxIssues` are what bound growth.
+
 ## auth
 
 - Type: `object`
@@ -227,6 +253,7 @@ with nesting spelled as `_`.
 | `NUXT_MONITOR_AUTH_PASSWORD_HASH` | Hash |
 | `NUXT_MONITOR_AUTH_SECRET` | Session signing secret |
 | `NUXT_MONITOR_STORAGE_DIR` | Storage directory |
+| `NUXT_MONITOR_DATABASE_URL` | External database connection string |
 | `NUXT_MONITOR_RETENTION_DAYS` | Retention window |
 
 These are read when the server starts, which is what makes one build

@@ -45,6 +45,18 @@ export interface MonitorOptions {
   route?: string
   /** Directory for the SQLite database, relative to the app root. Default: `.monitor`. */
   storageDir?: string
+  /**
+   * Connection string for an external database.
+   *
+   * Unset — the default — stores everything in a SQLite file under
+   * `storageDir`, which needs no service and is what the module is designed
+   * around.
+   *
+   * Read at **runtime**, so `NUXT_MONITOR_DATABASE_URL` can point one build at
+   * a different database per environment. A credential does not belong in a
+   * config file, and it certainly does not belong in a build artefact.
+   */
+  databaseUrl?: string
   /** Dashboard credentials. Without a password in production the UI is disabled. */
   auth?: MonitorAuthOptions
   /**

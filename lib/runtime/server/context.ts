@@ -1,6 +1,6 @@
 import type { H3Event } from 'h3'
 import { createError, useRuntimeConfig } from '#imports'
-import type { MonitorIgnoreOptions, MonitorSide } from '../../types'
+import type { MonitorEvent, MonitorIgnoreOptions, MonitorSide } from '../../types'
 import { DisabledStore } from './disabled-store'
 import { MonitorStore } from './store'
 import type { ResolvedAuth } from './session'
@@ -9,6 +9,8 @@ import { hasValidSession, resolveAuth } from './session'
 export interface MonitorRuntimeConfig {
   route: string
   storageDir: string
+  /** Connection string for an external database. Empty means SQLite. */
+  databaseUrl: string
   /** Empty when unset — `runtimeConfig` serializes absent values as ''. */
   release: string
   retentionDays: number
@@ -54,16 +56,35 @@ let store: MonitorCollector | undefined
  */
 export type MonitorCollector = MonitorStore | DisabledStore
 
-export function useMonitorStore(): MonitorCollector {
+/**
+ * The store, once it is open.
+ *
+ * Held separately from `store` so `captureSync` can tell "not opened yet" from
+ * "opened and unusable" without awaiting anything.
+ */
+let opening: Promise<MonitorCollector> | undefined
+
+export async function useMonitorStore(): Promise<MonitorCollector> {
   if (store) {
     return store
   }
 
+  // Opening is asynchronous now, and several requests can arrive during it.
+  // Without this they would each open their own database — several connections
+  // to one SQLite file, each with its own buffer and its own timers.
+  opening ??= openStore()
+  store = await opening
+
+  return store
+}
+
+async function openStore(): Promise<MonitorCollector> {
   const config = monitorConfig()
 
   try {
-    store = new MonitorStore({
+    return await MonitorStore.open({
       dir: config.storageDir,
+      url: config.databaseUrl || undefined,
       retentionDays: config.retentionDays,
       maxEventsPerIssue: config.maxEventsPerIssue,
       maxIssues: config.maxIssues,
@@ -82,25 +103,70 @@ export function useMonitorStore(): MonitorCollector {
     const reason = error instanceof Error ? error.message : String(error)
 
     console.error(
-      `[monitor] could not open the database at ${config.storageDir}, so error `
+      `[monitor] could not open the database at ${config.databaseUrl || config.storageDir}, so error `
       + `collection is disabled for this process. The application is unaffected. ${reason}`,
     )
 
-    store = new DisabledStore(reason)
+    return new DisabledStore(reason)
+  }
+}
+
+/**
+ * Captures without waiting for the database to be ready.
+ *
+ * The server collector runs inside Nitro's `error` hook and the browser
+ * collector inside a request handler; neither may hold a response open while a
+ * connection is established. Once the store is open this is a synchronous
+ * buffer push exactly as before — only the very first errors of a process
+ * reach the queue below.
+ */
+const pending: MonitorEvent[] = []
+
+/** Bounded, in case the database never opens at all. */
+const MAX_PENDING_BEFORE_OPEN = 100
+
+export function captureSync(event: MonitorEvent): void {
+  if (store) {
+    store.capture(event)
+    return
   }
 
-  return store
+  if (pending.length < MAX_PENDING_BEFORE_OPEN) {
+    pending.push(event)
+  }
+
+  void useMonitorStore().then((ready) => {
+    // Drained in arrival order, and only once: `pending` is emptied by the
+    // first opener, so a second caller finds nothing to replay.
+    for (const queued of pending.splice(0)) {
+      ready.capture(queued)
+    }
+  })
+}
+
+/** Counts a request without waiting, for the same reason as `captureSync`. */
+export function countRequestSync(route: string, method: string, status: number): void {
+  if (store) {
+    store.countRequest(route, method, status)
+    return
+  }
+
+  // Dropped rather than queued: a counter is a denominator, and losing the
+  // handful from before the database opened cannot mislead the way a missing
+  // error can.
+  void useMonitorStore()
 }
 
 /** Whether collection is actually running, for the health endpoint. */
-export function isCollectionEnabled(): boolean {
-  return !(useMonitorStore() instanceof DisabledStore)
+export async function isCollectionEnabled(): Promise<boolean> {
+  return !(await useMonitorStore() instanceof DisabledStore)
 }
 
 /** Exposed for tests and for a clean shutdown. */
-export function closeMonitorStore(): void {
-  store?.close()
+export async function closeMonitorStore(): Promise<void> {
+  await store?.close()
   store = undefined
+  opening = undefined
 }
 
 let auth: ResolvedAuth | undefined | null = null

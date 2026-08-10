@@ -75,7 +75,7 @@ export default defineEventHandler(async (event) => {
     return null
   }
 
-  const store = useMonitorStore()
+  const store = await useMonitorStore()
   const options = { extraKeys: config.scrubKeys }
 
   // Parsed once per batch rather than per event: every event in one post came

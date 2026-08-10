@@ -20,10 +20,10 @@ function makeEvent(overrides: Partial<MonitorEvent> = {}): MonitorEvent {
   }
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'monitor-test-'))
   // Large flush size so tests drive flushing explicitly.
-  store = new MonitorStore({
+  store = await MonitorStore.open({
     dir,
     retentionDays: 14,
     maxEventsPerIssue: 5,
@@ -32,34 +32,76 @@ beforeEach(() => {
   })
 })
 
-afterEach(() => {
-  store.close()
+afterEach(async () => {
+  await store.close()
   rmSync(dir, { recursive: true, force: true })
 })
 
+describe('overlapping flushes', () => {
+  /**
+   * Writing used to be synchronous, so a flush ran to completion before
+   * anything else could start one. Now the interval timer, the size trigger
+   * and an explicit call can all overlap, and two `BEGIN`s on one connection
+   * do not nest.
+   *
+   * The SQLite connector happens to execute synchronously inside each
+   * `await`, so these pass with or without the serialisation in `flush` —
+   * measured, not assumed. They are kept as a guard for the connectors where
+   * that is not true: on any real async driver an unserialised flush tears its
+   * transaction, and these are what would catch it.
+   */
+  it('writes every event exactly once when callers overlap', async () => {
+    // Distinct stacks, so each is its own issue and a lost write shows up as
+    // a missing row rather than a smaller count.
+    for (let i = 0; i < 50; i++) {
+      store.capture(makeEvent({
+        message: `event ${i}`,
+        stack: `Error: x\n    at f (/app/e${i}.ts:1:1)`,
+      }))
+    }
+
+    await Promise.all([store.flush(), store.flush(), store.flush()])
+
+    expect((await store.listIssues()).total).toBe(50)
+    expect((store as unknown as { buffer: unknown[] }).buffer.length).toBe(0)
+  })
+
+  it('leaves nothing buffered when a capture lands mid-flush', async () => {
+    store.capture(makeEvent({ message: 'first', stack: 'Error: x\n    at f (/app/a.ts:1:1)' }))
+
+    const racing = store.flush()
+    store.capture(makeEvent({ message: 'second', stack: 'Error: x\n    at f (/app/b.ts:1:1)' }))
+
+    await racing
+    await store.flush()
+
+    expect((await store.listIssues()).total).toBe(2)
+  })
+})
+
 describe('capture and flush', () => {
-  it('holds events in memory until flushed', () => {
+  it('holds events in memory until flushed', async () => {
     store.capture(makeEvent())
 
     // listIssues flushes first, so read through the raw path instead: a fresh
     // store over the same file sees only what was committed.
-    const other = new MonitorStore({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
-    expect(other.listIssues().total).toBe(0)
-    other.close()
+    const other = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+    expect((await other.listIssues()).total).toBe(0)
+    await other.close()
   })
 
-  it('writes buffered events on flush', () => {
+  it('writes buffered events on flush', async () => {
     store.capture(makeEvent())
-    store.flush()
+    await store.flush()
 
-    const { issues, total } = store.listIssues()
+    const { issues, total } = await store.listIssues()
     expect(total).toBe(1)
     expect(issues[0]!.message).toBe('boom')
     expect(issues[0]!.count).toBe(1)
   })
 
-  it('flushes early once the batch size is reached', () => {
-    const eager = new MonitorStore({
+  it('flushes early once the batch size is reached', async () => {
+    const eager = await MonitorStore.open({
       dir: mkdtempSync(join(tmpdir(), 'monitor-eager-')),
       retentionDays: 14,
       maxEventsPerIssue: 100,
@@ -69,101 +111,101 @@ describe('capture and flush', () => {
 
     eager.capture(makeEvent())
     eager.capture(makeEvent())
-    expect(eager.listIssues().issues[0]?.count).toBe(2)
+    expect((await eager.listIssues()).issues[0]?.count).toBe(2)
 
-    eager.close()
+    await eager.close()
   })
 
-  it('groups repeats into one issue and counts them', () => {
+  it('groups repeats into one issue and counts them', async () => {
     for (let i = 0; i < 5; i++) {
       store.capture(makeEvent({ message: `User ${i} not found` }))
     }
-    store.flush()
+    await store.flush()
 
-    const { issues, total } = store.listIssues()
+    const { issues, total } = await store.listIssues()
     expect(total).toBe(1)
     expect(issues[0]!.count).toBe(5)
   })
 
-  it('keeps distinct faults apart', () => {
+  it('keeps distinct faults apart', async () => {
     store.capture(makeEvent({ stack: 'E: a\n    at a (/app/a.ts:1:1)' }))
     store.capture(makeEvent({ stack: 'E: b\n    at b (/app/b.ts:1:1)' }))
-    store.flush()
+    await store.flush()
 
-    expect(store.listIssues().total).toBe(2)
+    expect((await store.listIssues()).total).toBe(2)
   })
 
-  it('tracks first and last seen across occurrences', () => {
+  it('tracks first and last seen across occurrences', async () => {
     store.capture(makeEvent({ timestamp: 1_000 }))
     store.capture(makeEvent({ timestamp: 5_000 }))
-    store.flush()
+    await store.flush()
 
-    const issue = store.listIssues().issues[0]!
+    const issue = (await store.listIssues()).issues[0]!
     expect(issue.firstSeen).toBe(1_000)
     expect(issue.lastSeen).toBe(5_000)
   })
 
-  it('is a no-op when there is nothing buffered', () => {
-    expect(() => store.flush()).not.toThrow()
+  it('is a no-op when there is nothing buffered', async () => {
+    await expect(store.flush()).resolves.toBeUndefined()
   })
 })
 
 describe('events', () => {
-  it('round-trips context, breadcrumbs and tags', () => {
+  it('round-trips context, breadcrumbs and tags', async () => {
     store.capture(makeEvent({
       context: { route: '/api/x', method: 'GET' },
       breadcrumbs: [{ type: 'navigation', timestamp: 1, message: '/' }],
       tags: ['request'],
     }))
 
-    const fp = store.listIssues().issues[0]!.fingerprint
-    const [event] = store.getEvents(fp)
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const [event] = await store.getEvents(fp)
 
     expect(event!.context).toEqual({ route: '/api/x', method: 'GET' })
     expect(event!.breadcrumbs?.[0]?.message).toBe('/')
     expect(event!.tags).toEqual(['request'])
   })
 
-  it('caps stored events per issue, keeping the newest', () => {
+  it('caps stored events per issue, keeping the newest', async () => {
     for (let i = 0; i < 12; i++) {
       store.capture(makeEvent({ timestamp: 1_000 + i }))
     }
-    store.flush()
+    await store.flush()
 
-    const fp = store.listIssues().issues[0]!.fingerprint
-    const events = store.getEvents(fp, 100)
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const events = await store.getEvents(fp, 100)
 
     // maxEventsPerIssue is 5 for these tests.
     expect(events).toHaveLength(5)
     expect(events[0]!.timestamp).toBe(1_011)
 
     // The count still reflects every occurrence, not just what was kept.
-    expect(store.getIssue(fp)!.count).toBe(12)
+    expect((await store.getIssue(fp))!.count).toBe(12)
   })
 })
 
 describe('filters', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     store.capture(makeEvent({ side: 'server', stack: 'E\n    at s (/app/s.ts:1:1)' }))
     store.capture(makeEvent({ side: 'client', stack: 'E\n    at c (/app/c.ts:1:1)' }))
-    store.flush()
+    await store.flush()
   })
 
-  it('filters by side', () => {
-    expect(store.listIssues({ side: 'client' }).total).toBe(1)
-    expect(store.listIssues({ side: 'client' }).issues[0]!.side).toBe('client')
+  it('filters by side', async () => {
+    expect((await store.listIssues({ side: 'client' })).total).toBe(1)
+    expect((await store.listIssues({ side: 'client' })).issues[0]!.side).toBe('client')
   })
 
-  it('filters by resolved state', () => {
-    const fp = store.listIssues({ side: 'server' }).issues[0]!.fingerprint
-    store.setResolved(fp, true)
+  it('filters by resolved state', async () => {
+    const fp = (await store.listIssues({ side: 'server' })).issues[0]!.fingerprint
+    await store.setResolved(fp, true)
 
-    expect(store.listIssues({ resolved: true }).total).toBe(1)
-    expect(store.listIssues({ resolved: false }).total).toBe(1)
+    expect((await store.listIssues({ resolved: true })).total).toBe(1)
+    expect((await store.listIssues({ resolved: false })).total).toBe(1)
   })
 
-  it('paginates', () => {
-    const page = store.listIssues({ limit: 1, offset: 0 })
+  it('paginates', async () => {
+    const page = await store.listIssues({ limit: 1, offset: 0 })
 
     expect(page.issues).toHaveLength(1)
     // The total describes the whole filtered set, not the page.
@@ -172,13 +214,13 @@ describe('filters', () => {
 })
 
 describe('list metadata', () => {
-  it('records where the error happened and which request caused it', () => {
+  it('records where the error happened and which request caused it', async () => {
     store.capture(makeEvent({
       stack: 'TypeError: boom\n    at handler (/app/server/api/orders.ts:42:9)',
       context: { url: '/api/orders?page=2', method: 'POST', statusCode: 500 },
     }))
 
-    const issue = store.listIssues().issues[0]!
+    const issue = (await store.listIssues()).issues[0]!
 
     // Enough to know where to look without opening the issue.
     expect(issue.culprit).toBe('api/orders.ts:42')
@@ -187,7 +229,7 @@ describe('list metadata', () => {
     expect(issue.status).toBe(500)
   })
 
-  it('skips library frames when naming the location', () => {
+  it('skips library frames when naming the location', async () => {
     store.capture(makeEvent({
       stack: [
         'TypeError: boom',
@@ -196,28 +238,28 @@ describe('list metadata', () => {
       ].join('\n'),
     }))
 
-    expect(store.listIssues().issues[0]!.culprit).toBe('pages/index.vue:12')
+    expect((await store.listIssues()).issues[0]!.culprit).toBe('pages/index.vue:12')
   })
 
-  it('keeps the location from the most recent occurrence', () => {
+  it('keeps the location from the most recent occurrence', async () => {
     const stack = (line: number): string =>
       `TypeError: boom\n    at setup (/app/pages/index.vue:${line}:3)`
 
     store.capture(makeEvent({ stack: stack(10) }))
-    store.flush()
+    await store.flush()
     store.capture(makeEvent({ stack: stack(20) }))
-    store.flush()
+    await store.flush()
 
     // Same issue — line numbers do not fork it — but the newer line is shown.
-    const { issues, total } = store.listIssues()
+    const { issues, total } = await store.listIssues()
     expect(total).toBe(1)
     expect(issues[0]!.culprit).toBe('pages/index.vue:20')
   })
 
-  it('leaves the fields empty when there is nothing to record', () => {
+  it('leaves the fields empty when there is nothing to record', async () => {
     store.capture(makeEvent({ stack: undefined, context: undefined }))
 
-    const issue = store.listIssues().issues[0]!
+    const issue = (await store.listIssues()).issues[0]!
 
     expect(issue.culprit).toBeUndefined()
     expect(issue.route).toBeUndefined()
@@ -225,7 +267,7 @@ describe('list metadata', () => {
 })
 
 describe('search', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     store.capture(makeEvent({
       message: 'Cannot read properties of null',
       type: 'TypeError',
@@ -238,56 +280,56 @@ describe('search', () => {
       stack: 'ValidationError: x\n    at handler (/app/server/api/orders.ts:5:1)',
       context: { url: '/api/orders' },
     }))
-    store.flush()
+    await store.flush()
   })
 
-  it('matches the message', () => {
-    expect(store.listIssues({ search: 'could not be placed' }).total).toBe(1)
+  it('matches the message', async () => {
+    expect((await store.listIssues({ search: 'could not be placed' })).total).toBe(1)
   })
 
-  it('matches the file a person half-remembers', () => {
-    expect(store.listIssues({ search: 'checkout.vue' }).issues[0]!.message)
+  it('matches the file a person half-remembers', async () => {
+    expect((await store.listIssues({ search: 'checkout.vue' })).issues[0]!.message)
       .toContain('Cannot read properties')
   })
 
-  it('matches the route', () => {
-    expect(store.listIssues({ search: '/api/orders' }).total).toBe(1)
+  it('matches the route', async () => {
+    expect((await store.listIssues({ search: '/api/orders' })).total).toBe(1)
   })
 
-  it('is case-insensitive', () => {
-    expect(store.listIssues({ search: 'ORDER' }).total).toBe(1)
+  it('is case-insensitive', async () => {
+    expect((await store.listIssues({ search: 'ORDER' })).total).toBe(1)
   })
 
-  it('treats wildcards as literal characters', () => {
+  it('treats wildcards as literal characters', async () => {
     // A bare `%` would otherwise match every row, which is not what a person
     // typing into a search box expects.
-    expect(store.listIssues({ search: '%' }).total).toBe(0)
-    expect(store.listIssues({ search: '_' }).total).toBe(0)
+    expect((await store.listIssues({ search: '%' })).total).toBe(0)
+    expect((await store.listIssues({ search: '_' })).total).toBe(0)
   })
 
-  it('filters by exact type', () => {
-    expect(store.listIssues({ type: 'ValidationError' }).total).toBe(1)
-    expect(store.listIssues({ type: 'TypeError' }).total).toBe(1)
-    expect(store.listIssues({ type: 'RangeError' }).total).toBe(0)
+  it('filters by exact type', async () => {
+    expect((await store.listIssues({ type: 'ValidationError' })).total).toBe(1)
+    expect((await store.listIssues({ type: 'TypeError' })).total).toBe(1)
+    expect((await store.listIssues({ type: 'RangeError' })).total).toBe(0)
   })
 
-  it('combines with the other filters', () => {
-    expect(store.listIssues({ search: 'order', side: 'server' }).total).toBe(1)
-    expect(store.listIssues({ search: 'order', side: 'client' }).total).toBe(0)
+  it('combines with the other filters', async () => {
+    expect((await store.listIssues({ search: 'order', side: 'server' })).total).toBe(1)
+    expect((await store.listIssues({ search: 'order', side: 'client' })).total).toBe(0)
   })
 })
 
 describe('request counters and overview', () => {
-  it('reports no error rate when nothing was counted', () => {
+  it('reports no error rate when nothing was counted', async () => {
     store.capture(makeEvent())
 
     // "No data" and "no failures" are different answers; reporting 0% for the
     // first would be a lie the whole screen is built on.
-    expect(store.overview().errorRate).toBeUndefined()
-    expect(store.overview().requestCount).toBe(0)
+    expect((await store.overview()).errorRate).toBeUndefined()
+    expect((await store.overview()).requestCount).toBe(0)
   })
 
-  it('computes the error rate from counted requests', () => {
+  it('computes the error rate from counted requests', async () => {
     for (let i = 0; i < 97; i++) {
       store.countRequest('/api/orders', 'GET', 200)
     }
@@ -295,35 +337,35 @@ describe('request counters and overview', () => {
       store.countRequest('/api/orders', 'GET', 500)
     }
 
-    const overview = store.overview()
+    const overview = await store.overview()
 
     expect(overview.requestCount).toBe(100)
     expect(overview.failedRequestCount).toBe(3)
     expect(overview.errorRate).toBeCloseTo(0.03)
   })
 
-  it('does not count 4xx as a failed request', () => {
+  it('does not count 4xx as a failed request', async () => {
     store.countRequest('/api/x', 'GET', 200)
     store.countRequest('/api/x', 'GET', 404)
 
     // A client asking for something absent is not the server failing.
-    expect(store.overview().failedRequestCount).toBe(0)
-    expect(store.overview().requestCount).toBe(2)
+    expect((await store.overview()).failedRequestCount).toBe(0)
+    expect((await store.overview()).requestCount).toBe(2)
   })
 
-  it('collapses ids so one endpoint is one counter row', () => {
+  it('collapses ids so one endpoint is one counter row', async () => {
     for (let i = 0; i < 50; i++) {
       store.countRequest(`/users/${i}`, 'GET', 500)
     }
 
-    const { topRoutes } = store.overview()
+    const { topRoutes } = await store.overview()
 
     expect(topRoutes).toHaveLength(1)
     expect(topRoutes[0]!.route).toBe('/users/:id')
     expect(topRoutes[0]!.failed).toBe(50)
   })
 
-  it('ranks routes by how many requests failed', () => {
+  it('ranks routes by how many requests failed', async () => {
     store.countRequest('/api/quiet', 'GET', 500)
     for (let i = 0; i < 10; i++) {
       store.countRequest('/api/broken', 'GET', 500)
@@ -332,24 +374,24 @@ describe('request counters and overview', () => {
       store.countRequest('/api/broken', 'GET', 200)
     }
 
-    const { topRoutes } = store.overview()
+    const { topRoutes } = await store.overview()
 
     expect(topRoutes[0]!.route).toBe('/api/broken')
     expect(topRoutes[0]!.rate).toBeCloseTo(0.1)
   })
 
-  it('omits routes that never failed', () => {
+  it('omits routes that never failed', async () => {
     store.countRequest('/api/healthy', 'GET', 200)
 
-    expect(store.overview().topRoutes).toHaveLength(0)
+    expect((await store.overview()).topRoutes).toHaveLength(0)
   })
 
-  it('separates server and client error counts', () => {
+  it('separates server and client error counts', async () => {
     store.capture(makeEvent({ side: 'server', stack: 'E\n    at s (/app/s.ts:1:1)' }))
     store.capture(makeEvent({ side: 'client', stack: 'E\n    at c (/app/c.ts:1:1)' }))
     store.capture(makeEvent({ side: 'client', stack: 'E\n    at c (/app/c.ts:1:1)' }))
 
-    const overview = store.overview()
+    const overview = await store.overview()
 
     expect(overview.serverErrors).toBe(1)
     expect(overview.clientErrors).toBe(2)
@@ -357,59 +399,59 @@ describe('request counters and overview', () => {
     expect(overview.issueCount).toBe(2)
   })
 
-  it('names the issue behind the most occurrences and its share', () => {
+  it('names the issue behind the most occurrences and its share', async () => {
     for (let i = 0; i < 8; i++) {
       store.capture(makeEvent({ message: 'the loud one', stack: 'E\n    at a (/app/a.ts:1:1)' }))
     }
     store.capture(makeEvent({ message: 'the quiet one', stack: 'E\n    at b (/app/b.ts:1:1)' }))
     store.capture(makeEvent({ message: 'another quiet one', stack: 'E\n    at c (/app/c.ts:1:1)' }))
 
-    const { topIssue } = store.overview()
+    const { topIssue } = await store.overview()
 
     expect(topIssue?.issue.message).toBe('the loud one')
     expect(topIssue?.share).toBeCloseTo(0.8)
   })
 
-  it('reports a trend bucketed over time', () => {
+  it('reports a trend bucketed over time', async () => {
     store.capture(makeEvent({ side: 'server' }))
     store.capture(makeEvent({ side: 'client', stack: 'E\n    at c (/app/c.ts:1:1)' }))
 
-    const { trend } = store.overview()
+    const { trend } = await store.overview()
 
     expect(trend.length).toBeGreaterThan(0)
     expect(trend.reduce((sum, point) => sum + point.server + point.client, 0)).toBe(2)
   })
 
-  it('lists the most recent issues', () => {
+  it('lists the most recent issues', async () => {
     store.capture(makeEvent({ message: 'older', timestamp: Date.now() - 5_000, stack: 'E\n    at a (/a.ts:1:1)' }))
     store.capture(makeEvent({ message: 'newer', timestamp: Date.now(), stack: 'E\n    at b (/b.ts:1:1)' }))
 
-    expect(store.overview().recent[0]!.message).toBe('newer')
+    expect((await store.overview()).recent[0]!.message).toBe('newer')
   })
 
-  it('excludes anything older than the window', () => {
+  it('excludes anything older than the window', async () => {
     const old = Date.now() - 48 * 60 * 60 * 1_000
 
     store.capture(makeEvent({ timestamp: old }))
     store.countRequest('/api/x', 'GET', 500, old)
 
-    const overview = store.overview(24 * 60 * 60 * 1_000)
+    const overview = await store.overview(24 * 60 * 60 * 1_000)
 
     expect(overview.totalEvents).toBe(0)
     expect(overview.requestCount).toBe(0)
   })
 
-  it('aggregates repeated requests rather than storing a row each', () => {
+  it('aggregates repeated requests rather than storing a row each', async () => {
     for (let i = 0; i < 1_000; i++) {
       store.countRequest('/api/orders', 'GET', 200)
     }
 
-    expect(store.overview().requestCount).toBe(1_000)
+    expect((await store.overview()).requestCount).toBe(1_000)
   })
 })
 
 describe('migration', () => {
-  it('adds new columns to a database created by an older version', () => {
+  it('adds new columns to a database created by an older version', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'monitor-old-'))
     const db = new DatabaseSync(join(dir, 'monitor.db'))
 
@@ -428,62 +470,61 @@ describe('migration', () => {
     `)
     db.close()
 
-    const upgraded = new MonitorStore({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+    const upgraded = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
 
     // Writing must work rather than failing on the missing column.
-    expect(() => {
-      upgraded.capture(makeEvent())
-      upgraded.flush()
-    }).not.toThrow()
+    upgraded.capture(makeEvent())
+    // Writing must work rather than failing on the missing column.
+    await expect(upgraded.flush()).resolves.toBeUndefined()
 
-    expect(upgraded.listIssues().total).toBe(1)
+    expect((await upgraded.listIssues()).total).toBe(1)
 
-    upgraded.close()
+    await upgraded.close()
     rmSync(dir, { recursive: true, force: true })
   })
 })
 
 describe('resolve', () => {
-  it('reopens a resolved issue when it happens again', () => {
+  it('reopens a resolved issue when it happens again', async () => {
     store.capture(makeEvent())
-    store.flush()
+    await store.flush()
 
-    const fp = store.listIssues().issues[0]!.fingerprint
-    store.setResolved(fp, true)
-    expect(store.getIssue(fp)!.resolved).toBe(true)
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    await store.setResolved(fp, true)
+    expect((await store.getIssue(fp))!.resolved).toBe(true)
 
     store.capture(makeEvent())
-    store.flush()
+    await store.flush()
 
-    expect(store.getIssue(fp)!.resolved).toBe(false)
+    expect((await store.getIssue(fp))!.resolved).toBe(false)
   })
 
-  it('reports when the fingerprint is unknown', () => {
-    expect(store.setResolved('nope', true)).toBe(false)
+  it('reports when the fingerprint is unknown', async () => {
+    expect(await store.setResolved('nope', true)).toBe(false)
   })
 })
 
 describe('purge', () => {
-  it('drops events past the retention window and issues left empty', () => {
+  it('drops events past the retention window and issues left empty', async () => {
     const old = Date.now() - 30 * 24 * 60 * 60 * 1_000
 
     store.capture(makeEvent({ timestamp: old }))
-    store.flush()
-    expect(store.listIssues().total).toBe(1)
+    await store.flush()
+    expect((await store.listIssues()).total).toBe(1)
 
-    const result = store.purge()
+    const result = await store.purge()
 
     expect(result.events).toBe(1)
     expect(result.issues).toBe(1)
-    expect(store.listIssues().total).toBe(0)
+    expect((await store.listIssues()).total).toBe(0)
   })
 
-  it('keeps events inside the window', () => {
+  it('keeps events inside the window', async () => {
     store.capture(makeEvent())
-    store.flush()
+    await store.flush()
 
-    expect(store.purge().events).toBe(0)
-    expect(store.listIssues().total).toBe(1)
+    expect((await store.purge()).events).toBe(0)
+    expect((await store.listIssues()).total).toBe(1)
   })
 })
 
@@ -497,7 +538,7 @@ describe('byte ceiling', () => {
   let bounded: MonitorStore
 
   /** Fills the database well past `maxBytes` with distinct issues. */
-  function fill(target: MonitorStore, count: number): void {
+  async function fill(target: MonitorStore, count: number): Promise<void> {
     for (let i = 0; i < count; i++) {
       target.capture(makeEvent({
         // Distinct messages mean distinct fingerprints, which is the axis that
@@ -507,17 +548,17 @@ describe('byte ceiling', () => {
       }))
     }
 
-    target.flush()
+    await target.flush()
   }
 
-  afterEach(() => {
-    bounded?.close()
+  afterEach(async () => {
+    await bounded?.close()
   })
 
-  it('evicts until the stored data fits', () => {
+  it('evicts until the stored data fits', async () => {
     const CEILING = 2 * 1_024 * 1_024
 
-    bounded = new MonitorStore({
+    bounded = await MonitorStore.open({
       dir,
       retentionDays: 14,
       maxEventsPerIssue: 100_000,
@@ -526,18 +567,18 @@ describe('byte ceiling', () => {
       flushInterval: 60_000,
     })
 
-    fill(bounded, 4_000)
-    expect(bounded.bytes()).toBeGreaterThan(CEILING)
+    await fill(bounded, 4_000)
+    expect(await bounded.bytes()).toBeGreaterThan(CEILING)
 
-    bounded.purge()
+    await bounded.purge()
 
-    expect(bounded.bytes()).toBeLessThanOrEqual(CEILING)
+    expect(await bounded.bytes()).toBeLessThanOrEqual(CEILING)
     // And it stopped at the ceiling rather than emptying the table.
-    expect(bounded.listIssues().total).toBeGreaterThan(0)
+    expect((await bounded.listIssues()).total).toBeGreaterThan(0)
   })
 
-  it('drops the oldest events, not an arbitrary selection', () => {
-    bounded = new MonitorStore({
+  it('drops the oldest events, not an arbitrary selection', async () => {
+    bounded = await MonitorStore.open({
       dir,
       retentionDays: 14,
       maxEventsPerIssue: 100_000,
@@ -555,13 +596,13 @@ describe('byte ceiling', () => {
       bounded.capture(makeEvent({ timestamp: now - (COUNT - i) * 1_000, stack }))
     }
 
-    bounded.flush()
-    bounded.purge()
+    await bounded.flush()
+    await bounded.purge()
 
-    const [issue] = bounded.listIssues().issues
+    const [issue] = (await bounded.listIssues()).issues
     expect(issue).toBeDefined()
 
-    const events = bounded.getEvents(issue!.fingerprint, 100)
+    const events = await bounded.getEvents(issue!.fingerprint, 100)
     expect(events.length).toBeGreaterThan(0)
 
     // The survivors are a suffix of the range: the newest event is still here
@@ -572,8 +613,8 @@ describe('byte ceiling', () => {
     expect(events.every(event => event.timestamp > oldest)).toBe(true)
   })
 
-  it('does nothing when the ceiling is disabled', () => {
-    bounded = new MonitorStore({
+  it('does nothing when the ceiling is disabled', async () => {
+    bounded = await MonitorStore.open({
       dir,
       retentionDays: 14,
       maxEventsPerIssue: 100,
@@ -582,12 +623,12 @@ describe('byte ceiling', () => {
       flushInterval: 60_000,
     })
 
-    fill(bounded, 500)
-    const before = bounded.listIssues().total
+    await fill(bounded, 500)
+    const before = (await bounded.listIssues()).total
 
-    bounded.purge()
+    await bounded.purge()
 
-    expect(bounded.listIssues().total).toBe(before)
+    expect((await bounded.listIssues()).total).toBe(before)
   })
 
   /**
@@ -597,8 +638,8 @@ describe('byte ceiling', () => {
    * errors, which reads as "nothing is wrong" rather than "the limit is too
    * low" — so the recent end survives and the condition is reported instead.
    */
-  it('keeps recent events rather than emptying itself for an impossible ceiling', () => {
-    bounded = new MonitorStore({
+  it('keeps recent events rather than emptying itself for an impossible ceiling', async () => {
+    bounded = await MonitorStore.open({
       dir,
       retentionDays: 14,
       maxEventsPerIssue: 100,
@@ -607,20 +648,20 @@ describe('byte ceiling', () => {
       flushInterval: 60_000,
     })
 
-    fill(bounded, 2_000)
+    await fill(bounded, 2_000)
 
-    expect(() => bounded.purge()).not.toThrow()
-    expect(bounded.listIssues().total).toBeGreaterThan(0)
-    expect(bounded.bytes()).toBeGreaterThan(1)
+    await expect(bounded.purge()).resolves.toBeDefined()
+    expect((await bounded.listIssues()).total).toBeGreaterThan(0)
+    expect(await bounded.bytes()).toBeGreaterThan(1)
   })
 })
 
 describe('health', () => {
-  it('reports what is stored and that collection is running', () => {
+  it('reports what is stored and that collection is running', async () => {
     store.capture(makeEvent())
-    store.flush()
+    await store.flush()
 
-    const health = store.health()
+    const health = await store.health()
 
     expect(health.enabled).toBe(true)
     expect(health.issues).toBe(1)
@@ -631,23 +672,23 @@ describe('health', () => {
     expect(health.overCeiling).toBe(false)
   })
 
-  it('counts what is still buffered', () => {
+  it('counts what is still buffered', async () => {
     store.capture(makeEvent())
 
     // Nothing written yet, so the buffer is the only place it exists.
-    expect(store.health().pending).toBe(1)
+    expect((await store.health()).pending).toBe(1)
 
-    store.flush()
+    await store.flush()
 
-    expect(store.health().pending).toBe(0)
+    expect((await store.health()).pending).toBe(0)
   })
 
   /**
    * The distinction the endpoint exists for: a ceiling that cannot be met is
    * silently deleting today's errors, and the issue list alone cannot say so.
    */
-  it('says when the byte ceiling cannot be met', () => {
-    const cramped = new MonitorStore({
+  it('says when the byte ceiling cannot be met', async () => {
+    const cramped = await MonitorStore.open({
       dir,
       retentionDays: 14,
       maxEventsPerIssue: 100,
@@ -661,20 +702,20 @@ describe('health', () => {
         cramped.capture(makeEvent({ message: `boom ${i}` }))
       }
 
-      cramped.flush()
-      cramped.purge()
+      await cramped.flush()
+      await cramped.purge()
 
-      expect(cramped.health().overCeiling).toBe(true)
-      expect(cramped.health().maxBytes).toBe(1)
+      expect((await cramped.health()).overCeiling).toBe(true)
+      expect((await cramped.health()).maxBytes).toBe(1)
     }
     finally {
-      cramped.close()
+      await cramped.close()
     }
   })
 
   /** And the flag is a condition, not a latch: a healthy store never sets it. */
-  it('stays quiet while the ceiling is met', () => {
-    const roomy = new MonitorStore({
+  it('stays quiet while the ceiling is met', async () => {
+    const roomy = await MonitorStore.open({
       dir,
       retentionDays: 14,
       maxEventsPerIssue: 100,
@@ -685,48 +726,48 @@ describe('health', () => {
 
     try {
       roomy.capture(makeEvent())
-      roomy.flush()
-      roomy.purge()
+      await roomy.flush()
+      await roomy.purge()
 
-      expect(roomy.health().overCeiling).toBe(false)
+      expect((await roomy.health()).overCeiling).toBe(false)
     }
     finally {
-      roomy.close()
+      await roomy.close()
     }
   })
 })
 
 describe('durability', () => {
-  it('survives a reopen of the same file', () => {
+  it('survives a reopen of the same file', async () => {
     store.capture(makeEvent())
-    store.close()
+    await store.close()
 
-    const reopened = new MonitorStore({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+    const reopened = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
 
-    expect(reopened.listIssues().total).toBe(1)
-    reopened.close()
+    expect((await reopened.listIssues()).total).toBe(1)
+    await reopened.close()
 
     // Keep afterEach's close() harmless.
-    store = new MonitorStore({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+    store = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
   })
 
-  it('flushes pending events on close', () => {
+  it('flushes pending events on close', async () => {
     store.capture(makeEvent())
-    store.close()
+    await store.close()
 
-    const reopened = new MonitorStore({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
-    expect(reopened.listIssues().total).toBe(1)
-    reopened.close()
+    const reopened = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+    expect((await reopened.listIssues()).total).toBe(1)
+    await reopened.close()
 
-    store = new MonitorStore({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+    store = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
   })
 
-  it('ignores captures after close instead of throwing', () => {
-    store.close()
+  it('ignores captures after close instead of throwing', async () => {
+    await store.close()
 
     expect(() => store.capture(makeEvent())).not.toThrow()
 
-    store = new MonitorStore({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+    store = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
   })
 })
 
@@ -736,13 +777,13 @@ describe('facets', () => {
     return makeEvent({ facets, ...overrides })
   }
 
-  it('counts each dimension independently, most common first', () => {
+  it('counts each dimension independently, most common first', async () => {
     store.capture(withFacets({ browser: 'Chrome', os: 'Windows' }))
     store.capture(withFacets({ browser: 'Chrome', os: 'macOS' }))
     store.capture(withFacets({ browser: 'Safari', os: 'iOS' }))
-    store.flush()
+    await store.flush()
 
-    const facets = store.facetCounts()
+    const facets = await store.facetCounts()
 
     expect(facets.browser).toEqual([
       { value: 'Chrome', count: 2, share: 2 / 3 },
@@ -752,55 +793,55 @@ describe('facets', () => {
     expect(facets.os.map(row => row.value).sort()).toEqual(['Windows', 'iOS', 'macOS'].sort())
   })
 
-  it('reports events without a facet as unknown rather than dropping them', () => {
+  it('reports events without a facet as unknown rather than dropping them', async () => {
     store.capture(withFacets({ browser: 'Chrome' }))
     store.capture(makeEvent())
-    store.flush()
+    await store.flush()
 
-    expect(store.facetCounts().browser).toContainEqual({
+    expect((await store.facetCounts()).browser).toContainEqual({
       value: 'unknown',
       count: 1,
       share: 0.5,
     })
   })
 
-  it('narrows the counts to one issue when scoped to a fingerprint', () => {
+  it('narrows the counts to one issue when scoped to a fingerprint', async () => {
     const first = store.capture(withFacets({ browser: 'Chrome' }))
     store.capture(withFacets({ browser: 'Safari' }, { message: 'different' }))
-    store.flush()
+    await store.flush()
 
-    const facets = store.facetCounts({ fingerprint: first })
+    const facets = await store.facetCounts({ fingerprint: first })
 
     expect(facets.browser).toEqual([{ value: 'Chrome', count: 1, share: 1 }])
   })
 
-  it('applies a filter to the counts of the other dimensions', () => {
+  it('applies a filter to the counts of the other dimensions', async () => {
     store.capture(withFacets({ browser: 'Chrome', os: 'Windows' }))
     store.capture(withFacets({ browser: 'Safari', os: 'iOS' }))
-    store.flush()
+    await store.flush()
 
-    const facets = store.facetCounts({ filter: { browser: ['Safari'] } })
+    const facets = await store.facetCounts({ filter: { browser: ['Safari'] } })
 
     expect(facets.os).toEqual([{ value: 'iOS', count: 1, share: 1 }])
   })
 
-  it('records the route shape rather than the raw path', () => {
+  it('records the route shape rather than the raw path', async () => {
     store.capture(makeEvent({ context: { url: '/users/1' } }))
     store.capture(makeEvent({ context: { url: '/users/2' } }))
-    store.flush()
+    await store.flush()
 
     // Both are the same endpoint, so a breakdown must show one row.
-    expect(store.facetCounts().route).toEqual([{ value: '/users/:id', count: 2, share: 1 }])
+    expect((await store.facetCounts()).route).toEqual([{ value: '/users/:id', count: 2, share: 1 }])
   })
 
-  it('filters the occurrences of an issue by facet', () => {
+  it('filters the occurrences of an issue by facet', async () => {
     const fp = store.capture(withFacets({ browser: 'Chrome' }))
     store.capture(withFacets({ browser: 'Safari' }))
-    store.flush()
+    await store.flush()
 
-    expect(store.getEvents(fp)).toHaveLength(2)
+    expect(await store.getEvents(fp)).toHaveLength(2)
 
-    const filtered = store.getEvents(fp, 20, { browser: ['Safari'] })
+    const filtered = await store.getEvents(fp, 20, { browser: ['Safari'] })
 
     expect(filtered).toHaveLength(1)
     expect(filtered[0]!.facets?.browser).toBe('Safari')
@@ -810,21 +851,21 @@ describe('facets', () => {
    * The number that separates a retry loop from an outage: many events across
    * few sessions is one person, few events across many sessions is everybody.
    */
-  it('counts distinct sessions, not events', () => {
+  it('counts distinct sessions, not events', async () => {
     const fp = store.capture(withFacets({ session: 'a' }))
     store.capture(withFacets({ session: 'a' }))
     store.capture(withFacets({ session: 'b' }))
-    store.flush()
+    await store.flush()
 
-    expect(store.getIssue(fp)!.count).toBe(3)
-    expect(store.sessionCount(fp)).toBe(2)
+    expect((await store.getIssue(fp))!.count).toBe(3)
+    expect(await store.sessionCount(fp)).toBe(2)
   })
 
   /**
    * `issue.count` counts every occurrence ever seen; the breakdown can only
    * describe the events still stored. The two must not be confused on screen.
    */
-  it('counts stored events separately from the issue total', () => {
+  it('counts stored events separately from the issue total', async () => {
     const fp = store.capture(withFacets({ browser: 'Chrome' }))
 
     // maxEventsPerIssue is 5 in these tests, so the cap trims the rest.
@@ -832,26 +873,26 @@ describe('facets', () => {
       store.capture(withFacets({ browser: 'Chrome' }))
     }
 
-    store.flush()
+    await store.flush()
 
-    expect(store.getIssue(fp)!.count).toBe(9)
-    expect(store.eventCount(fp)).toBe(5)
-    expect(store.eventCount(fp, { browser: ['Safari'] })).toBe(0)
+    expect((await store.getIssue(fp))!.count).toBe(9)
+    expect(await store.eventCount(fp)).toBe(5)
+    expect(await store.eventCount(fp, { browser: ['Safari'] })).toBe(0)
   })
 
-  it('reports no sessions for server errors, which carry none', () => {
+  it('reports no sessions for server errors, which carry none', async () => {
     const fp = store.capture(makeEvent())
-    store.flush()
+    await store.flush()
 
-    expect(store.sessionCount(fp)).toBe(0)
+    expect(await store.sessionCount(fp)).toBe(0)
   })
 
   /**
    * The facet columns were added after the first release, so a database
    * written by an older version must keep working rather than fail on read.
    */
-  it('opens a database created before the facet columns existed', () => {
-    store.close()
+  it('opens a database created before the facet columns existed', async () => {
+    await store.close()
 
     const legacy = new DatabaseSync(join(dir, 'monitor.db'))
     legacy.exec('DROP TABLE events')
@@ -866,12 +907,12 @@ describe('facets', () => {
     legacy.prepare('INSERT INTO events (fingerprint, ts) VALUES (?, ?)').run('old', Date.now())
     legacy.close()
 
-    store = new MonitorStore({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+    store = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
     store.capture(withFacets({ browser: 'Chrome' }))
-    store.flush()
+    await store.flush()
 
     // The pre-existing row has no browser and is reported as unknown.
-    expect(store.facetCounts().browser).toContainEqual({
+    expect((await store.facetCounts()).browser).toContainEqual({
       value: 'unknown',
       count: 1,
       share: 0.5,
@@ -887,46 +928,64 @@ describe('facets', () => {
  */
 describe('resilience', () => {
   /** Makes the next write fail, the way a locked or full database would. */
+  /** The real `exec` for each store `breakWrites` has replaced. */
+  const originalExec = new WeakMap<MonitorStore, unknown>()
+
   function breakWrites(target: MonitorStore): void {
-    const db = (target as unknown as { db: { exec: (sql: string) => void } }).db
+    const db = (target as unknown as {
+      db: { exec: (sql: string) => Promise<unknown> }
+    }).db
     const real = db.exec.bind(db)
 
-    db.exec = (sql: string) => {
+    originalExec.set(target, db.exec)
+
+    // Rejecting rather than throwing: `exec` is asynchronous now, so a
+    // synchronous throw would escape the `await` the store wraps it in and
+    // never reach the catch that requeues the batch.
+    db.exec = async (sql: string) => {
       if (sql === 'COMMIT') {
         throw new Error('database is locked')
       }
-      real(sql)
+
+      return real(sql)
     }
   }
 
   function repairWrites(target: MonitorStore): void {
-    const holder = target as unknown as { db: { exec: unknown } }
-    delete (holder.db as { exec?: unknown }).exec
+    // Restored explicitly rather than deleted: db0's `exec` is an own property
+    // of the connection object, not something inherited, so deleting it left
+    // the store with no `exec` at all.
+    const holder = target as unknown as { db: { exec?: unknown } }
+    const original = originalExec.get(target)
+
+    if (original) {
+      holder.db.exec = original
+    }
   }
 
-  it('keeps events when the write fails instead of dropping them', () => {
+  it('keeps events when the write fails instead of dropping them', async () => {
     breakWrites(store)
     store.capture(makeEvent({ message: 'survives a locked database' }))
-    store.flush()
+    await store.flush()
 
     // Nothing was written, but nothing was lost either.
-    expect(store.listIssues().total).toBe(0)
+    expect((await store.listIssues()).total).toBe(0)
 
     repairWrites(store)
-    store.flush()
+    await store.flush()
 
-    expect(store.listIssues().issues[0]?.message).toBe('survives a locked database')
+    expect((await store.listIssues()).issues[0]?.message).toBe('survives a locked database')
   })
 
-  it('keeps request counters when their write fails', () => {
+  it('keeps request counters when their write fails', async () => {
     breakWrites(store)
     store.countRequest('/checkout', 'GET', 500)
-    store.flush()
+    await store.flush()
 
     repairWrites(store)
-    store.flush()
+    await store.flush()
 
-    expect(store.overview().requestCount).toBe(1)
+    expect((await store.overview()).requestCount).toBe(1)
   })
 
   /**
@@ -934,8 +993,8 @@ describe('resilience', () => {
    * threshold on the next event. Without a backoff every subsequent request
    * would drag a doomed synchronous transaction onto its own hot path.
    */
-  it('stops flushing from the request path while writes are failing', () => {
-    const small = new MonitorStore({
+  it('stops flushing from the request path while writes are failing', async () => {
+    const small = await MonitorStore.open({
       dir,
       retentionDays: 14,
       maxEventsPerIssue: 5,
@@ -947,28 +1006,37 @@ describe('resilience', () => {
 
     let flushes = 0
     const real = small.flush.bind(small)
-    small.flush = () => { flushes++; real() }
+    small.flush = () => { flushes++; return real() }
 
-    for (let i = 0; i < 20; i++) {
+    // The first flush has to finish before the rest are captured: `capture`
+    // no longer waits for the write, so the failure that sets the backoff
+    // lands a tick later. Without settling it here the loop runs to
+    // completion before the store knows writes are failing.
+    small.capture(makeEvent({ message: 'event 0' }))
+    small.capture(makeEvent({ message: 'event 1' }))
+    await small.flush()
+
+    for (let i = 2; i < 20; i++) {
       small.capture(makeEvent({ message: `event ${i}` }))
     }
 
-    // One attempt, not one per event past the threshold.
-    expect(flushes).toBe(1)
+    // One attempt from the request path, not one per event past the
+    // threshold; the explicit flush above is the second.
+    expect(flushes).toBe(2)
 
     repairWrites(small)
-    small.close()
+    await small.close()
   })
 
   // 1_200 captures, each with a forced flush against a failing write: slow
   // enough on a cold CI runner to outlast the default 5s.
-  it('drops the oldest events rather than growing without bound', { timeout: 30_000 }, () => {
+  it('drops the oldest events rather than growing without bound', { timeout: 30_000 }, async () => {
     breakWrites(store)
 
     for (let i = 0; i < 1_200; i++) {
       store.capture(makeEvent({ message: `event ${i}` }))
       // Force the attempt the backoff would otherwise suppress.
-      store.flush()
+      await store.flush()
     }
 
     const buffered = (store as unknown as { buffer: unknown[] }).buffer.length
@@ -983,19 +1051,20 @@ describe('resilience', () => {
     expect(pending.at(0)?.message).not.toBe('event 0')
 
     repairWrites(store)
-    store.flush()
+    await store.flush()
 
-    expect(store.listIssues().total).toBeGreaterThan(0)
+    expect((await store.listIssues()).total).toBeGreaterThan(0)
   })
 
-  it('does not throw out of a read when trimming fails', () => {
+  it('does not throw out of a read when trimming fails', async () => {
     store.capture(makeEvent())
-    store.flush()
+    await store.flush()
 
-    const holder = store as unknown as { trimEventsFor: () => void }
-    holder.trimEventsFor = () => { throw new Error('database is locked') }
+    const holder = store as unknown as { trimEventsFor: () => Promise<void> }
+    holder.trimEventsFor = () => Promise.reject(new Error('database is locked'))
 
-    expect(() => store.listIssues()).not.toThrow()
+    // The events are written; only the cap failed. A read must still answer.
+    await expect(store.listIssues()).resolves.toBeDefined()
   })
 })
 
@@ -1005,28 +1074,28 @@ describe('retention', () => {
    * with no caller outside the tests, so the documented guarantee about how
    * long data is kept was simply false.
    */
-  it('applies retention on startup without being asked', () => {
+  it('applies retention on startup without being asked', async () => {
     const old = Date.now() - 30 * 24 * 60 * 60 * 1_000
 
     store.capture(makeEvent({ timestamp: old }))
-    store.flush()
-    expect(store.listIssues().total).toBe(1)
-    store.close()
+    await store.flush()
+    expect((await store.listIssues()).total).toBe(1)
+    await store.close()
 
     // A fresh process over the same database.
-    store = new MonitorStore({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+    store = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
 
-    expect(store.listIssues().total).toBe(0)
+    expect((await store.listIssues()).total).toBe(0)
   })
 
-  it('keeps events inside the window', () => {
+  it('keeps events inside the window', async () => {
     store.capture(makeEvent({ timestamp: Date.now() - 24 * 60 * 60 * 1_000 }))
-    store.flush()
-    store.close()
+    await store.flush()
+    await store.close()
 
-    store = new MonitorStore({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+    store = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
 
-    expect(store.listIssues().total).toBe(1)
+    expect((await store.listIssues()).total).toBe(1)
   })
 })
 
@@ -1036,12 +1105,12 @@ describe('per-occurrence message', () => {
    * different ids group together — and each still has its own text. Reading
    * the message off the issue showed the newest id on every row.
    */
-  it('keeps the message each occurrence reported', () => {
+  it('keeps the message each occurrence reported', async () => {
     const fp = store.capture(makeEvent({ message: 'User 111 not found' }))
     store.capture(makeEvent({ message: 'User 222 not found' }))
-    store.flush()
+    await store.flush()
 
-    const messages = store.getEvents(fp).map(event => event.message)
+    const messages = (await store.getEvents(fp)).map(event => event.message)
 
     expect(messages).toContain('User 111 not found')
     expect(messages).toContain('User 222 not found')
@@ -1057,8 +1126,8 @@ describe('per-occurrence message', () => {
  * traffic rather than with the size of the application.
  */
 describe('issue ceiling', () => {
-  function makeStore(maxIssues: number): MonitorStore {
-    return new MonitorStore({
+  async function makeStore(maxIssues: number): Promise<MonitorStore> {
+    return await MonitorStore.open({
       dir,
       retentionDays: 14,
       maxEventsPerIssue: 5,
@@ -1067,9 +1136,9 @@ describe('issue ceiling', () => {
     })
   }
 
-  it('evicts down to the ceiling when fingerprints run away', () => {
-    store.close()
-    store = makeStore(10)
+  it('evicts down to the ceiling when fingerprints run away', async () => {
+    await store.close()
+    store = await makeStore(10)
 
     // Each message is unique in a way normalisation cannot strip, so each
     // becomes its own issue.
@@ -1079,15 +1148,15 @@ describe('issue ceiling', () => {
         stack: `Error: x\n    at f (/app/w${i}.ts:1:1)`,
       }))
     }
-    store.flush()
-    store.purge()
+    await store.flush()
+    await store.purge()
 
-    expect(store.listIssues({ limit: 200 }).total).toBe(10)
+    expect((await store.listIssues({ limit: 200 })).total).toBe(10)
   })
 
-  it('keeps what is recent and frequent, drops what is stale and rare', () => {
-    store.close()
-    store = makeStore(2)
+  it('keeps what is recent and frequent, drops what is stale and rare', async () => {
+    await store.close()
+    store = await makeStore(2)
 
     const hour = 60 * 60 * 1_000
     const now = Date.now()
@@ -1114,18 +1183,18 @@ describe('issue ceiling', () => {
       timestamp: now - hour,
     }))
 
-    store.flush()
-    store.purge()
+    await store.flush()
+    await store.purge()
 
-    const messages = store.listIssues().issues.map(issue => issue.message)
+    const messages = (await store.listIssues()).issues.map(issue => issue.message)
 
     expect(messages).toContain('happening right now')
     expect(messages).not.toContain('ancient one-off')
   })
 
-  it('leaves no orphaned events behind an evicted issue', () => {
-    store.close()
-    store = makeStore(1)
+  it('leaves no orphaned events behind an evicted issue', async () => {
+    await store.close()
+    store = await makeStore(1)
 
     for (let i = 0; i < 5; i++) {
       store.capture(makeEvent({
@@ -1133,11 +1202,11 @@ describe('issue ceiling', () => {
         stack: `Error: x\n    at f (/app/d${i}.ts:1:1)`,
       }))
     }
-    store.flush()
-    store.purge()
+    await store.flush()
+    await store.purge()
 
-    const orphans = (store as unknown as {
-      db: { prepare: (sql: string) => { get: () => { n: number } } }
+    const orphans = await (store as unknown as {
+      db: { prepare: (sql: string) => { get: () => Promise<{ n: number }> } }
     }).db.prepare(
       'SELECT COUNT(*) AS n FROM events WHERE fingerprint NOT IN (SELECT fingerprint FROM issues)',
     ).get()
@@ -1145,12 +1214,12 @@ describe('issue ceiling', () => {
     expect(Number(orphans.n)).toBe(0)
   })
 
-  it('does nothing while the database is under the ceiling', () => {
+  it('does nothing while the database is under the ceiling', async () => {
     store.capture(makeEvent())
-    store.flush()
+    await store.flush()
 
-    expect(store.purge().issues).toBe(0)
-    expect(store.listIssues().total).toBe(1)
+    expect((await store.purge()).issues).toBe(0)
+    expect((await store.listIssues()).total).toBe(1)
   })
 })
 
@@ -1161,23 +1230,23 @@ describe('counter bucket alignment', () => {
    * denominator lost up to a minute of traffic while the errors in that same
    * minute were still counted, inflating every rate on the overview.
    */
-  it('counts the bucket the window starts inside', () => {
+  it('counts the bucket the window starts inside', async () => {
     const now = Date.now()
     // Half a minute in: floor(at / 60_000) is before `now - windowMs`.
     const at = now - 30_000
 
     store.countRequest('/api/x', 'GET', 200, at)
-    store.flush()
+    await store.flush()
 
-    expect(store.overview(60_000, now).requestCount).toBe(1)
+    expect((await store.overview(60_000, now)).requestCount).toBe(1)
   })
 
-  it('still excludes traffic from before the window', () => {
+  it('still excludes traffic from before the window', async () => {
     const now = Date.now()
 
     store.countRequest('/api/x', 'GET', 200, now - 10 * 60_000)
-    store.flush()
+    await store.flush()
 
-    expect(store.overview(60_000, now).requestCount).toBe(0)
+    expect((await store.overview(60_000, now)).requestCount).toBe(0)
   })
 })

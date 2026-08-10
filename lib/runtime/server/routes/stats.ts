@@ -13,7 +13,7 @@ import { toWindow } from './window'
  * `section` narrows the work when only one is needed; without it everything
  * comes back.
  */
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   requireDashboardAccess(event)
 
   const query = getQuery(event)
@@ -21,7 +21,7 @@ export default defineEventHandler((event) => {
   const since = Date.now() - windowMs
   const section = typeof query.section === 'string' ? query.section : undefined
 
-  const store = useMonitorStore()
+  const store = await useMonitorStore()
   const wants = (name: string): boolean => !section || section === name
 
   return {

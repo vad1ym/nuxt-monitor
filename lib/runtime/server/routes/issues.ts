@@ -2,11 +2,11 @@ import { defineEventHandler, getQuery } from '#imports'
 import { parseSide, requireDashboardAccess, useMonitorStore } from '../context'
 import { parseFacetFilter } from '../facets'
 
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   requireDashboardAccess(event)
 
   const query = getQuery(event)
-  const store = useMonitorStore()
+  const store = await useMonitorStore()
 
   const resolved = query.resolved === undefined
     ? undefined

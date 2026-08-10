@@ -1,4 +1,4 @@
-import type { DatabaseSync } from 'node:sqlite'
+import type { Database } from 'db0'
 
 /**
  * The database shape, and how an existing one is brought up to it.
@@ -79,10 +79,16 @@ CREATE INDEX IF NOT EXISTS idx_events_ts      ON events(ts DESC);
  * added later have to be applied separately — otherwise upgrading the module
  * would make an existing `.monitor` database fail on the first write.
  */
-export function migrate(db: DatabaseSync): void {
-  db.exec(SCHEMA)
+export async function migrate(db: Database): Promise<void> {
+  // One statement at a time: `exec` on an external driver does not accept a
+  // multi-statement string, and SQLite is indifferent either way.
+  for (const statement of SCHEMA.split(';')) {
+    if (statement.trim()) {
+      await db.exec(statement)
+    }
+  }
 
-  addColumns(db, 'issues', [
+  await addColumns(db, 'issues', [
     ['culprit', 'TEXT'],
     ['route', 'TEXT'],
     ['method', 'TEXT'],
@@ -91,7 +97,7 @@ export function migrate(db: DatabaseSync): void {
 
   // Facets, added after the first release. Existing rows keep NULL and show
   // up as "unknown" in a breakdown rather than breaking the query.
-  addColumns(db, 'events', [
+  await addColumns(db, 'events', [
     ['message', 'TEXT'],
     ['session', 'TEXT'],
     ['browser', 'TEXT'],
@@ -104,15 +110,15 @@ export function migrate(db: DatabaseSync): void {
   ])
 }
 
-function addColumns(db: DatabaseSync, table: string, columns: [string, string][]): void {
-  const existing = new Set(
-    (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[])
-      .map(column => column.name),
-  )
+async function addColumns(db: Database, table: string, columns: [string, string][]): Promise<void> {
+  // The table name is one of two literals from the call sites above, never
+  // user input.
+  const rows = await db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]
+  const existing = new Set(rows.map(column => column.name))
 
   for (const [name, type] of columns) {
     if (!existing.has(name)) {
-      db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`)
+      await db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`)
     }
   }
 }

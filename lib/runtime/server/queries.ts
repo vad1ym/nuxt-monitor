@@ -1,4 +1,4 @@
-import type { DatabaseSync } from 'node:sqlite'
+import type { Database } from 'db0'
 import type {
   MonitorEvent,
   MonitorFacetCounts,
@@ -28,7 +28,7 @@ import { BUCKET_MS } from './schema'
  * these doing it again on every internal call.
  */
 
-export function listIssues(db: DatabaseSync, filter: {
+export async function listIssues(db: Database, filter: {
   side?: MonitorSide
   resolved?: boolean
   /** Free text, matched against message, type, location and route. */
@@ -39,7 +39,7 @@ export function listIssues(db: DatabaseSync, filter: {
   facets?: MonitorFacetFilter
   limit?: number
   offset?: number
-} = {}): { issues: MonitorIssue[], total: number } {
+} = {}): Promise<{ issues: MonitorIssue[], total: number }> {
   // Pending events belong in the answer; a just-thrown error the user is
   // looking for would otherwise be missing for up to a second.
   const where: string[] = []
@@ -91,11 +91,11 @@ export function listIssues(db: DatabaseSync, filter: {
   const limit = Math.min(filter.limit ?? 50, 200)
   const offset = filter.offset ?? 0
 
-  const rows = db.prepare(`
+  const rows = await db.prepare(`
     SELECT * FROM issues ${clause} ORDER BY last_seen DESC LIMIT ? OFFSET ?
   `).all(...params, limit, offset) as Record<string, unknown>[]
 
-  const total = db.prepare(`
+  const total = await db.prepare(`
     SELECT COUNT(*) AS n FROM issues ${clause}
   `).get(...params) as { n: number }
 
@@ -105,9 +105,8 @@ export function listIssues(db: DatabaseSync, filter: {
   }
 }
 
-export function getIssue(db: DatabaseSync, fp: string): MonitorIssue | undefined {
-  const row = db
-    .prepare('SELECT * FROM issues WHERE fingerprint = ?')
+export async function getIssue(db: Database, fp: string): Promise<MonitorIssue | undefined> {
+  const row = await db.prepare('SELECT * FROM issues WHERE fingerprint = ?')
     .get(fp) as Record<string, unknown> | undefined
 
   return row ? toIssue(row) : undefined
@@ -119,16 +118,16 @@ export function getIssue(db: DatabaseSync, fp: string): MonitorIssue | undefined
  * Takes the same facet filter as the breakdown, so clicking a slice — "show
  * me the iOS 16 ones" — narrows the stacks on screen to that slice.
  */
-export function getEvents(db: DatabaseSync, fp: string, limit = 20, filter?: MonitorFacetFilter): MonitorEvent[] {
+export async function getEvents(db: Database, fp: string, limit = 20, filter?: MonitorFacetFilter): Promise<MonitorEvent[]> {
   const facets = facetClause(filter)
 
-  const rows = db.prepare(`
+  const rows = await db.prepare(`
     SELECT * FROM events
     WHERE fingerprint = ? ${facets.sql}
     ORDER BY ts DESC LIMIT ?
   `).all(fp, ...facets.params, Math.min(limit, 100)) as Record<string, unknown>[]
 
-  const issue = getIssue(db, fp)
+  const issue = await getIssue(db, fp)
 
   return rows.map(row => ({
     // Side and type are part of the fingerprint, so every occurrence behind
@@ -158,11 +157,11 @@ export function getEvents(db: DatabaseSync, fp: string, limit = 20, filter?: Mon
  * `scope.fingerprint` restricts to one issue (the breakdown inside an issue);
  * without it the counts cover the whole window (the panel beside the list).
  */
-export function facetCounts(db: DatabaseSync, scope: {
+export async function facetCounts(db: Database, scope: {
   fingerprint?: string
   since?: number
   filter?: MonitorFacetFilter
-} = {}): MonitorFacetCounts {
+} = {}): Promise<MonitorFacetCounts> {
   const where: string[] = []
   const params: (string | number)[] = []
 
@@ -191,7 +190,7 @@ export function facetCounts(db: DatabaseSync, scope: {
   for (const name of FACET_NAMES) {
     const column = facetColumn(name)
 
-    const rows = db.prepare(`
+    const rows = await db.prepare(`
       SELECT COALESCE(${column}, 'unknown') AS value, COUNT(*) AS n
       FROM events
       ${clause}
@@ -222,10 +221,10 @@ export function facetCounts(db: DatabaseSync, scope: {
  * in an event count. Server events have no session, so they are counted by
  * event instead — a server error is per-request by nature.
  */
-export function sessionCount(db: DatabaseSync, fp: string, filter?: MonitorFacetFilter): number {
+export async function sessionCount(db: Database, fp: string, filter?: MonitorFacetFilter): Promise<number> {
   const facets = facetClause(filter)
 
-  const row = db.prepare(`
+  const row = await db.prepare(`
     SELECT COUNT(DISTINCT session) AS n
     FROM events
     WHERE fingerprint = ? AND session IS NOT NULL ${facets.sql}
@@ -242,10 +241,10 @@ export function sessionCount(db: DatabaseSync, fp: string, filter?: MonitorFacet
  * filter removes more. A breakdown has to add up to what it is a breakdown
  * of, so the screen showing slices shows this number beside them.
  */
-export function eventCount(db: DatabaseSync, fp: string, filter?: MonitorFacetFilter): number {
+export async function eventCount(db: Database, fp: string, filter?: MonitorFacetFilter): Promise<number> {
   const facets = facetClause(filter)
 
-  const row = db.prepare(`
+  const row = await db.prepare(`
     SELECT COUNT(*) AS n FROM events WHERE fingerprint = ? ${facets.sql}
   `).get(fp, ...facets.params) as { n: number }
 
@@ -261,8 +260,8 @@ export function eventCount(db: DatabaseSync, fp: string, filter?: MonitorFacetFi
  * traffic it served — and "1.4.0 introduced 7 issues", which is a statement
  * about the deploy and the first thing anyone asks after one.
  */
-export function releases(db: DatabaseSync, limit = 50): MonitorRelease[] {
-  const rows = db.prepare(`
+export async function releases(db: Database, limit = 50): Promise<MonitorRelease[]> {
+  const rows = await db.prepare(`
     WITH per_release AS (
       SELECT
         COALESCE(release, 'unknown') AS release,
@@ -320,8 +319,8 @@ export function releases(db: DatabaseSync, limit = 50): MonitorRelease[] {
  * than "what is on fire right now". Routes with no failures are included —
  * a healthy high-traffic route is context for the ones that are not.
  */
-export function routes(db: DatabaseSync, since: number, limit = 100): MonitorRouteStat[] {
-  const rows = db.prepare(`
+export async function routes(db: Database, since: number, limit = 100): Promise<MonitorRouteStat[]> {
+  const rows = await db.prepare(`
     SELECT
       route,
       SUM(count)                                              AS total,
@@ -354,8 +353,8 @@ export function routes(db: DatabaseSync, since: number, limit = 100): MonitorRou
  * Sessions are per-tab and only exist for client events, so this describes the
  * browser side; server errors have no session by nature.
  */
-export function sessions(db: DatabaseSync, since: number): MonitorSessionStats {
-  const totals = db.prepare(`
+export async function sessions(db: Database, since: number): Promise<MonitorSessionStats> {
+  const totals = await db.prepare(`
     SELECT
       COUNT(DISTINCT session) AS affected,
       COUNT(*)                AS events
@@ -365,7 +364,7 @@ export function sessions(db: DatabaseSync, since: number): MonitorSessionStats {
 
   // The sessions hit hardest. A session with fifty errors is one person stuck
   // in a loop, and that is worth being able to see directly.
-  const worst = db.prepare(`
+  const worst = await db.prepare(`
     SELECT
       session,
       COUNT(*)                     AS events,
@@ -400,7 +399,7 @@ export function sessions(db: DatabaseSync, since: number): MonitorSessionStats {
  * separately can disagree, and a disagreement in a monitoring tool costs
  * more trust than it saves effort.
  */
-export function overview(db: DatabaseSync, windowMs = 24 * 60 * 60 * 1_000, now = Date.now()): MonitorOverview {
+export async function overview(db: Database, windowMs = 24 * 60 * 60 * 1_000, now = Date.now()): Promise<MonitorOverview> {
   const since = now - windowMs
 
   /**
@@ -414,7 +413,7 @@ export function overview(db: DatabaseSync, windowMs = 24 * 60 * 60 * 1_000, now 
    */
   const sinceBucket = bucketOf(since, BUCKET_MS)
 
-  const totals = db.prepare(`
+  const totals = await db.prepare(`
     SELECT
       COALESCE(SUM(CASE WHEN side = 'server' THEN count END), 0) AS server,
       COALESCE(SUM(CASE WHEN side = 'client' THEN count END), 0) AS client,
@@ -424,7 +423,7 @@ export function overview(db: DatabaseSync, windowMs = 24 * 60 * 60 * 1_000, now 
     WHERE last_seen >= ?
   `).get(since) as Record<string, number>
 
-  const requests = db.prepare(`
+  const requests = await db.prepare(`
     SELECT
       COALESCE(SUM(count), 0) AS total,
       COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0) AS failed
@@ -432,7 +431,7 @@ export function overview(db: DatabaseSync, windowMs = 24 * 60 * 60 * 1_000, now 
     WHERE bucket >= ?
   `).get(sinceBucket) as Record<string, number>
 
-  const trend = db.prepare(`
+  const trend = await db.prepare(`
     SELECT
       (ts / ?) * ? AS bucket,
       SUM(CASE WHEN i.side = 'server' THEN 1 ELSE 0 END) AS server,
@@ -444,7 +443,7 @@ export function overview(db: DatabaseSync, windowMs = 24 * 60 * 60 * 1_000, now 
     ORDER BY bucket
   `).all(BUCKET_MS, BUCKET_MS, since) as Record<string, number>[]
 
-  const topRoutes = db.prepare(`
+  const topRoutes = await db.prepare(`
     SELECT
       route,
       SUM(count) AS total,
@@ -457,11 +456,11 @@ export function overview(db: DatabaseSync, windowMs = 24 * 60 * 60 * 1_000, now 
     LIMIT 5
   `).all(sinceBucket) as Record<string, number | string>[]
 
-  const top = db.prepare(`
+  const top = await db.prepare(`
     SELECT * FROM issues WHERE last_seen >= ? ORDER BY count DESC LIMIT 1
   `).get(since) as Record<string, unknown> | undefined
 
-  const recent = db.prepare(`
+  const recent = await db.prepare(`
     SELECT * FROM issues WHERE last_seen >= ? ORDER BY last_seen DESC LIMIT 5
   `).all(since) as Record<string, unknown>[]
 
@@ -498,10 +497,9 @@ export function overview(db: DatabaseSync, windowMs = 24 * 60 * 60 * 1_000, now 
   }
 }
 
-export function setResolved(db: DatabaseSync, fp: string, resolved: boolean): boolean {
-  const result = db
-    .prepare('UPDATE issues SET resolved = ? WHERE fingerprint = ?')
+export async function setResolved(db: Database, fp: string, resolved: boolean): Promise<boolean> {
+  const result = await db.prepare('UPDATE issues SET resolved = ? WHERE fingerprint = ?')
     .run(resolved ? 1 : 0, fp)
 
-  return Number(result.changes) > 0
+  return Number((result as { changes?: number }).changes ?? 0) > 0
 }

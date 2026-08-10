@@ -40,27 +40,27 @@ export class DisabledStore implements Pick<
 
   countRequest(): void {}
 
-  flush(): void {}
+  async flush(): Promise<void> {}
 
-  close(): void {}
+  async close(): Promise<void> {}
 
-  purge(): { events: number, issues: number } {
+  async purge(): Promise<{ events: number, issues: number }> {
     return { events: 0, issues: 0 }
   }
 
-  listIssues(): { issues: MonitorIssue[], total: number } {
+  async listIssues(): Promise<{ issues: MonitorIssue[], total: number }> {
     return { issues: [], total: 0 }
   }
 
-  getIssue(): MonitorIssue | undefined {
+  async getIssue(): Promise<MonitorIssue | undefined> {
     return undefined
   }
 
-  getEvents(): MonitorEvent[] {
+  async getEvents(): Promise<MonitorEvent[]> {
     return []
   }
 
-  facetCounts(): MonitorFacetCounts {
+  async facetCounts(): Promise<MonitorFacetCounts> {
     // Every dimension present and empty, so the dashboard renders "nothing to
     // filter by" rather than failing on a missing key.
     const counts = {} as MonitorFacetCounts
@@ -72,15 +72,15 @@ export class DisabledStore implements Pick<
     return counts
   }
 
-  sessionCount(): number {
+  async sessionCount(): Promise<number> {
     return 0
   }
 
-  eventCount(): number {
+  async eventCount(): Promise<number> {
     return 0
   }
 
-  overview(windowMs = 24 * 60 * 60 * 1_000): MonitorOverview {
+  async overview(windowMs = 24 * 60 * 60 * 1_000): Promise<MonitorOverview> {
     return {
       windowMs,
       serverErrors: 0,
@@ -99,19 +99,19 @@ export class DisabledStore implements Pick<
     }
   }
 
-  releases(): MonitorRelease[] {
+  async releases(): Promise<MonitorRelease[]> {
     return []
   }
 
-  routes(): MonitorRouteStat[] {
+  async routes(): Promise<MonitorRouteStat[]> {
     return []
   }
 
-  sessions(): MonitorSessionStats {
+  async sessions(): Promise<MonitorSessionStats> {
     return { affected: 0, events: 0, worst: [] }
   }
 
-  setResolved(): boolean {
+  async setResolved(): Promise<boolean> {
     return false
   }
 
@@ -122,7 +122,7 @@ export class DisabledStore implements Pick<
    * has to say *why*, or a dashboard showing no errors is indistinguishable
    * from an application having none.
    */
-  health(): MonitorHealth {
+  async health(): Promise<MonitorHealth> {
     return {
       enabled: false,
       reason: this.reason,

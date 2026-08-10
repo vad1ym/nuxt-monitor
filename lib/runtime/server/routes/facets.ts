@@ -11,7 +11,7 @@ import { parseFacetFilter } from '../facets'
  * search box, while the panel beside it only needs to move when the filter or
  * the window does.
  */
-export default defineEventHandler((event) => {
+export default defineEventHandler(async (event) => {
   requireDashboardAccess(event)
 
   const query = getQuery(event)
@@ -19,7 +19,7 @@ export default defineEventHandler((event) => {
 
   return {
     windowMs,
-    facets: useMonitorStore().facetCounts({
+    facets: (await useMonitorStore()).facetCounts({
       since: Date.now() - windowMs,
       filter: parseFacetFilter(query),
     }),

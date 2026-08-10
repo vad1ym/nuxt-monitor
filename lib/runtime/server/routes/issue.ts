@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: 'Missing fingerprint' })
   }
 
-  const store = useMonitorStore()
+  const store = await useMonitorStore()
   const issue = store.getIssue(fingerprint)
 
   if (!issue) {

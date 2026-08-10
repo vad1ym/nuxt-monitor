@@ -29,6 +29,7 @@ export default defineNuxtModule<MonitorOptions>({
     enabled: true,
     route: '/_monitor',
     storageDir: '.monitor',
+    databaseUrl: '',
     release: '',
     retentionDays: 14,
     maxEventsPerIssue: 100,
@@ -66,6 +67,7 @@ export default defineNuxtModule<MonitorOptions>({
       {
         route,
         storageDir,
+        databaseUrl: options.databaseUrl,
         release,
         retentionDays: options.retentionDays,
         maxEventsPerIssue: options.maxEventsPerIssue,

@@ -4,8 +4,7 @@ import type { MonitorEvent, MonitorFacets } from '../../types'
 import { scrub, scrubUrl } from '../shared/scrub'
 import { parseUserAgent } from '../shared/user-agent'
 import type { MonitorRuntimeConfig } from './context'
-import { closeMonitorStore, monitorConfig, useMonitorStore } from './context'
-import type { MonitorStore } from './store'
+import { captureSync, closeMonitorStore, countRequestSync, monitorConfig } from './context'
 
 /**
  * Server-side collection.
@@ -17,7 +16,6 @@ import type { MonitorStore } from './store'
  */
 export default defineNitroPlugin((nitroApp) => {
   const config = monitorConfig()
-  const store = useMonitorStore()
 
   nitroApp.hooks.hook('error', (error: Error, context: { event?: H3Event, tags?: string[] }) => {
     try {
@@ -32,14 +30,16 @@ export default defineNitroPlugin((nitroApp) => {
       // failures — the only ones the rate is about — would all be missing
       // from the denominator.
       if (context.event) {
-        countOnce(context.event, store, statusOf(error, context.event))
+        countOnce(context.event, statusOf(error, context.event))
       }
 
       if (isDuplicate(error, context.event)) {
         return
       }
 
-      store.capture(toEvent(error, context, config))
+      // Synchronous by design: the hook runs while the response is being
+      // produced, so opening the database must never be awaited here.
+      captureSync(toEvent(error, context, config))
     }
     catch {
       // Capture must never add a second failure to the one being reported.
@@ -60,7 +60,7 @@ export default defineNitroPlugin((nitroApp) => {
         return
       }
 
-      countOnce(event, store, getResponseStatus(event) || 200)
+      countOnce(event, getResponseStatus(event) || 200)
     }
     catch {
       // Counting must never interfere with serving.
@@ -75,9 +75,9 @@ export default defineNitroPlugin((nitroApp) => {
    * every edit certainly does — one leaked connection and one leaked interval
    * per reload. `closeMonitorStore` flushes first, so nothing buffered is lost.
    */
-  nitroApp.hooks.hook('close', () => {
+  nitroApp.hooks.hook('close', async () => {
     try {
-      closeMonitorStore()
+      await closeMonitorStore()
     }
     catch {
       // Shutdown is not a place to throw.
@@ -112,7 +112,7 @@ function isMonitorRoute(event: H3Event, route: string): boolean {
  * instance — and counting twice would quietly inflate the denominator that
  * every rate on the overview is divided by.
  */
-function countOnce(event: H3Event, store: MonitorStore, status: number): void {
+function countOnce(event: H3Event, status: number): void {
   const state = event.context as { _monitorCounted?: boolean }
 
   if (state._monitorCounted) {
@@ -121,7 +121,7 @@ function countOnce(event: H3Event, store: MonitorStore, status: number): void {
 
   state._monitorCounted = true
 
-  store.countRequest(event.path ?? '/', event.method ?? 'GET', status)
+  countRequestSync(event.path ?? '/', event.method ?? 'GET', status)
 }
 
 /**

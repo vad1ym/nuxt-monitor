@@ -1,7 +1,4 @@
-import { mkdirSync } from 'node:fs'
-import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
-import type { StatementSync } from 'node:sqlite'
+import type { Database, Statement } from 'db0'
 import type {
   MonitorEvent,
   MonitorFacetCounts,
@@ -21,10 +18,14 @@ import { bucketOf, normalizeRoute, statusClass } from '../shared/route'
 import { culpritOf } from './rows'
 import * as queries from './queries'
 import { BUCKET_MS, migrate } from './schema'
+import { openDatabase } from './db'
+import type { MonitorDatabase } from './db'
 
 export interface StoreOptions {
   /** Directory holding `monitor.db`. Created if missing. */
   dir: string
+  /** Connection string for an external database. SQLite in `dir` when unset. */
+  url?: string
   retentionDays: number
   maxEventsPerIssue: number
   /** Ceiling on distinct issues. Oldest and rarest evicted first. */
@@ -101,7 +102,8 @@ const MIN_KEPT_EVENTS = 200
  * in memory and are flushed together inside one transaction.
  */
 export class MonitorStore {
-  private db: DatabaseSync
+  private db: Database
+  private connection: MonitorDatabase
   private buffer: (MonitorEvent & { fingerprint: string })[] = []
   /** `bucket route method class` → count, aggregated between flushes. */
   private counters = new Map<string, number>()
@@ -119,42 +121,66 @@ export class MonitorStore {
   private nextDropReport = 0
   /** True while the byte ceiling cannot be met. Surfaced in health. */
   private overCeiling = false
+  /** The flush in flight, so a second caller queues behind it rather than racing. */
+  private flushing: Promise<void> | undefined
   private nextCeilingReport = 0
   /** Reused prepared statements, keyed by role. */
-  private statements = new Map<string, StatementSync>()
+  private statements = new Map<string, Statement>()
 
-  constructor(private options: StoreOptions) {
-    mkdirSync(options.dir, { recursive: true })
+  /**
+   * Opens a store, ready to use.
+   *
+   * A factory rather than a constructor because opening and migrating are
+   * asynchronous now, and a half-migrated store handed out by a constructor
+   * that could not await would fail on its first write instead of here, where
+   * the caller is already prepared to turn collection off.
+   */
+  static async open(options: StoreOptions): Promise<MonitorStore> {
+    const connection = openDatabase({ dir: options.dir, url: options.url })
+    const store = new MonitorStore(options, connection)
 
-    this.db = new DatabaseSync(join(options.dir, 'monitor.db'))
+    await store.prepareDatabase()
 
-    // Before any table exists, and before WAL: SQLite only accepts a change to
-    // `auto_vacuum` on an empty database, and silently keeps the old mode
-    // otherwise. Without it, deleting rows returns pages to a freelist that
-    // the file never gives back to the disk — so a database that once spiked
-    // to 500 MB stays 500 MB on disk forever, which is precisely what a size
-    // ceiling exists to prevent. Existing databases keep their mode; there the
-    // ceiling still bounds what is stored, just not what the file occupies.
-    this.db.exec('PRAGMA auto_vacuum = INCREMENTAL')
+    return store
+  }
 
-    // WAL lets the dashboard read while collection keeps writing. NORMAL
-    // trades a durability window on power loss for far fewer fsyncs, which is
-    // the right side of that trade for error telemetry.
-    this.db.exec('PRAGMA journal_mode = WAL')
-    this.db.exec('PRAGMA synchronous = NORMAL')
-    migrate(this.db)
+  private constructor(private options: StoreOptions, connection: MonitorDatabase) {
+    this.connection = connection
+    this.db = connection.db
 
     this.flushSize = options.flushSize ?? 100
     this.maxIssues = options.maxIssues ?? 5_000
     this.maxBytes = options.maxBytes ?? 0
     this.ignore = compileIgnore(options.ignore)
+  }
 
-    const interval = options.flushInterval ?? 1_000
-    this.timer = setInterval(() => this.flush(), interval)
+  /** Schema, pragmas and the background timers. */
+  private async prepareDatabase(): Promise<void> {
+    if (this.connection.dialect === 'sqlite') {
+      // Before any table exists, and before WAL: SQLite only accepts a change
+      // to `auto_vacuum` on an empty database, and silently keeps the old mode
+      // otherwise. Without it, deleting rows returns pages to a freelist that
+      // the file never gives back to the disk — so a database that once spiked
+      // to 500 MB stays 500 MB on disk forever, which is precisely what a size
+      // ceiling exists to prevent. Existing databases keep their mode; there
+      // the ceiling still bounds what is stored, not what the file occupies.
+      await this.db.exec('PRAGMA auto_vacuum = INCREMENTAL')
+
+      // WAL lets the dashboard read while collection keeps writing. NORMAL
+      // trades a durability window on power loss for far fewer fsyncs, which
+      // is the right side of that trade for error telemetry.
+      await this.db.exec('PRAGMA journal_mode = WAL')
+      await this.db.exec('PRAGMA synchronous = NORMAL')
+    }
+
+    await migrate(this.db)
+
+    const interval = this.options.flushInterval ?? 1_000
+    this.timer = setInterval(() => void this.flush(), interval)
     // Must not hold the process open — a CLI build should still exit.
     this.timer.unref?.()
 
-    this.startPurging(options.purgeInterval ?? 6 * 60 * 60 * 1_000)
+    await this.startPurging(this.options.purgeInterval ?? 6 * 60 * 60 * 1_000)
   }
 
   /**
@@ -168,21 +194,21 @@ export class MonitorStore {
    * Once at startup, because a long-lived process is not the only shape — a
    * server restarted daily would otherwise never reach the first interval.
    */
-  private startPurging(interval: number): void {
-    this.safePurge()
+  private async startPurging(interval: number): Promise<void> {
+    await this.safePurge()
 
-    this.purgeTimer = setInterval(() => this.safePurge(), interval)
+    this.purgeTimer = setInterval(() => void this.safePurge(), interval)
     this.purgeTimer.unref?.()
   }
 
   /** Retention must never take the application down with it. */
-  private safePurge(): void {
+  private async safePurge(): Promise<void> {
     if (this.closed) {
       return
     }
 
     try {
-      this.purge()
+      await this.purge()
     }
     catch (error) {
       console.error('[monitor] failed to apply retention', error)
@@ -194,11 +220,11 @@ export class MonitorStore {
    *
    * These four run on the write path — `flush` fires every second and again on
    * every dashboard read — so re-preparing them each time meant parsing the
-   * same SQL several times per request for no benefit. `node:sqlite`
-   * statements are reusable; the cache is keyed by role rather than by SQL
-   * text so a typo cannot silently create a second entry.
+   * same SQL several times per request for no benefit. Prepared statements are
+   * reusable; the cache is keyed by role rather than by SQL text so a typo
+   * cannot silently create a second entry.
    */
-  private statement(key: string, sql: string): StatementSync {
+  private statement(key: string, sql: string): Statement {
     let prepared = this.statements.get(key)
 
     if (!prepared) {
@@ -227,10 +253,15 @@ export class MonitorStore {
     // Size-triggered flushes are suppressed while writes are failing. A failed
     // batch stays in the buffer, so the buffer is still over the threshold on
     // the very next event — without this, every subsequent request would drag
-    // a synchronous, doomed SQLite transaction onto its own hot path. The
-    // interval timer keeps retrying in the background instead.
+    // another doomed transaction onto its own hot path. The interval timer
+    // keeps retrying in the background instead.
+    //
+    // Deliberately not awaited, and `capture` stays synchronous: it is called
+    // from Nitro's error hook and from the ingest handler, and making the
+    // response wait on a database write is exactly the cost this buffering
+    // exists to avoid.
     if (this.buffer.length >= this.flushSize && !this.writesFailing()) {
-      this.flush()
+      void this.flush()
     }
 
     return fp
@@ -263,14 +294,15 @@ export class MonitorStore {
     this.counters.set(key, (this.counters.get(key) ?? 0) + 1)
 
     // A bound on distinct routes seen between flushes, in case normalisation
-    // meets something it cannot collapse.
+    // meets something it cannot collapse. Not awaited, for the same reason as
+    // in `capture` — this runs on every request.
     if (this.counters.size > 5_000) {
-      this.flushCounters()
+      void this.flushCounters()
     }
   }
 
   /** Writes buffered counters. */
-  private flushCounters(): void {
+  private async flushCounters(): Promise<void> {
     if (this.counters.size === 0) {
       return
     }
@@ -284,19 +316,19 @@ export class MonitorStore {
       ON CONFLICT(bucket, route, method, class) DO UPDATE SET count = count + excluded.count
     `)
 
-    this.db.exec('BEGIN')
+    await this.db.exec('BEGIN')
 
     try {
       for (const [key, count] of batch) {
         const [bucket, route, method, statusGroup] = key.split(KEY_SEPARATOR)
 
-        upsert.run(Number(bucket), route!, method!, statusGroup!, count)
+        await upsert.run(Number(bucket), route!, method!, statusGroup!, count)
       }
 
-      this.db.exec('COMMIT')
+      await this.db.exec('COMMIT')
     }
     catch (error) {
-      this.rollback()
+      await this.rollback()
       console.error('[monitor] failed to flush request counters', error)
 
       // Merged back rather than dropped: a rolled-back transaction wrote
@@ -315,9 +347,9 @@ export class MonitorStore {
    * A rollback on an already-broken connection throws again, and that throw
    * would escape a `catch` block whose whole job is to contain the first one.
    */
-  private rollback(): void {
+  private async rollback(): Promise<void> {
     try {
-      this.db.exec('ROLLBACK')
+      await this.db.exec('ROLLBACK')
     }
     catch {
       // Nothing to undo if the transaction never opened.
@@ -347,9 +379,27 @@ export class MonitorStore {
     this.reportDrops()
   }
 
-  /** Writes buffered events. Safe to call when the buffer is empty. */
-  flush(): void {
-    this.flushCounters()
+  /**
+   * Writes buffered events. Safe to call when the buffer is empty.
+   *
+   * Serialised against itself. Writing used to be synchronous, so a flush ran
+   * to completion before anything else could start one; now the timer, the
+   * size trigger and `close` can all arrive while one is mid-transaction, and
+   * two overlapping `BEGIN`s on one connection do not nest — the second
+   * commits the first's work and the pairing comes apart. Callers that fire
+   * and forget therefore join the in-flight flush rather than starting a
+   * second.
+   */
+  flush(): Promise<void> {
+    this.flushing = this.flushing
+      ? this.flushing.then(() => this.runFlush())
+      : this.runFlush()
+
+    return this.flushing
+  }
+
+  private async runFlush(): Promise<void> {
+    await this.flushCounters()
 
     if (this.closed || this.buffer.length === 0) {
       return
@@ -385,13 +435,13 @@ export class MonitorStore {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
-    this.db.exec('BEGIN')
+    await this.db.exec('BEGIN')
 
     try {
       for (const event of batch) {
         const context = event.context ?? {}
 
-        upsertIssue.run(
+        await upsertIssue.run(
           event.fingerprint,
           event.type,
           event.message.slice(0, 1_000),
@@ -406,7 +456,7 @@ export class MonitorStore {
 
         const facets = event.facets ?? {}
 
-        insertEvent.run(
+        await insertEvent.run(
           event.fingerprint,
           event.timestamp,
           event.stack ?? null,
@@ -427,10 +477,10 @@ export class MonitorStore {
         )
       }
 
-      this.db.exec('COMMIT')
+      await this.db.exec('COMMIT')
     }
     catch (error) {
-      this.rollback()
+      await this.rollback()
       // Never rethrow: this runs detached from the request, and a failed
       // write must not become a second error to report.
       console.error('[monitor] failed to flush events', error)
@@ -453,7 +503,7 @@ export class MonitorStore {
     // `flush` — and `flush` is called from every read path, where nothing
     // catches it and the dashboard answers 500.
     try {
-      this.trimEventsFor(new Set(batch.map(event => event.fingerprint)))
+      await this.trimEventsFor(new Set(batch.map(event => event.fingerprint)))
     }
     catch (error) {
       // The events are safely written; only the cap was not applied. Retention
@@ -492,7 +542,7 @@ export class MonitorStore {
    * Throttled like the drop report and for the same reason: this fires on
    * every sweep while the condition lasts, and a line each would bury it.
    */
-  private reportOverCeiling(now = Date.now()): void {
+  private async reportOverCeiling(now = Date.now()): Promise<void> {
     this.overCeiling = true
 
     if (now < this.nextCeilingReport) {
@@ -501,7 +551,7 @@ export class MonitorStore {
 
     this.nextCeilingReport = now + DROP_REPORT_INTERVAL_MS
     console.warn(
-      `[monitor] the database holds ${Math.round(this.bytes() / 1_024)} KB, above the configured `
+      `[monitor] the database holds ${Math.round(await this.bytes() / 1_024)} KB, above the configured `
       + `ceiling of ${Math.round(this.maxBytes / 1_024)} KB, and the most recent `
       + `${MIN_KEPT_EVENTS} events are kept anyway. Raise \`maxDatabaseMb\`.`,
     )
@@ -517,7 +567,7 @@ export class MonitorStore {
   }
 
   /** Applies the per-issue event cap, oldest first. */
-  private trimEventsFor(fingerprints: Set<string>): void {
+  private async trimEventsFor(fingerprints: Set<string>): Promise<void> {
     const trim = this.statement('trim', `
       DELETE FROM events
       WHERE fingerprint = ?
@@ -527,7 +577,7 @@ export class MonitorStore {
     `)
 
     for (const fp of fingerprints) {
-      trim.run(fp, fp, this.options.maxEventsPerIssue)
+      await trim.run(fp, fp, this.options.maxEventsPerIssue)
     }
   }
 
@@ -546,15 +596,15 @@ export class MonitorStore {
    * and which happened twice is the safest thing to lose, and a frequent
    * recent one is what somebody is most likely looking for.
    */
-  private enforceIssueCeiling(): number {
-    const { n } = this.db.prepare('SELECT COUNT(*) AS n FROM issues').get() as { n: number }
+  private async enforceIssueCeiling(): Promise<number> {
+    const { n } = await this.db.prepare('SELECT COUNT(*) AS n FROM issues').get() as { n: number }
     const excess = Number(n) - this.maxIssues
 
     if (excess <= 0) {
       return 0
     }
 
-    const evicted = this.db.prepare(`
+    const evicted = await this.db.prepare(`
       DELETE FROM issues WHERE fingerprint IN (
         SELECT fingerprint FROM issues
         -- Resolved first: somebody has already dealt with those.
@@ -563,11 +613,11 @@ export class MonitorStore {
       )
     `).run(excess)
 
-    this.db.prepare(`
+    await this.db.prepare(`
       DELETE FROM events WHERE fingerprint NOT IN (SELECT fingerprint FROM issues)
     `).run()
 
-    return Number(evicted.changes)
+    return Number((evicted as { changes?: number }).changes ?? 0)
   }
 
   /**
@@ -579,11 +629,19 @@ export class MonitorStore {
    * the ceiling permanently exceeded after one spike, and every sweep would
    * then delete data to satisfy a number that deleting cannot move.
    */
-  bytes(): number {
-    const pageCount = this.pragma('page_count')
-    const freeList = this.pragma('freelist_count')
+  async bytes(): Promise<number> {
+    // SQLite only. An external database has its own disk and its own
+    // monitoring, and `information_schema` is frequently not readable on
+    // managed hosting — so the byte ceiling simply does not apply there, and
+    // reporting 0 is how `health` and `enforceByteCeiling` are told so.
+    if (this.connection.dialect !== 'sqlite') {
+      return 0
+    }
 
-    return Math.max(0, pageCount - freeList) * this.pragma('page_size')
+    const pageCount = await this.pragma('page_count')
+    const freeList = await this.pragma('freelist_count')
+
+    return Math.max(0, pageCount - freeList) * await this.pragma('page_size')
   }
 
   /**
@@ -594,10 +652,10 @@ export class MonitorStore {
    * is not draining, a ceiling quietly deleting today's errors all look
    * exactly like "no errors happened" from the dashboard.
    */
-  health(): MonitorHealth {
+  async health(): Promise<MonitorHealth> {
     return {
       enabled: true,
-      bytes: this.bytes(),
+      bytes: await this.bytes(),
       maxBytes: this.maxBytes,
       overCeiling: this.overCeiling,
       // Buffered but not yet written. Steadily above zero means flushes are
@@ -607,23 +665,23 @@ export class MonitorStore {
       dropped: this.dropped,
       // Zero when writes are healthy; a timestamp while backing off.
       retryAfter: this.retryAfter,
-      issues: this.count('issues'),
-      events: this.count('events'),
+      issues: await this.count('issues'),
+      events: await this.count('events'),
       retentionDays: this.options.retentionDays,
       maxIssues: this.maxIssues,
     }
   }
 
-  private count(table: 'issues' | 'events'): number {
+  private async count(table: 'issues' | 'events'): Promise<number> {
     // The table name is one of two literals, never user input.
-    const row = this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
+    const row = await this.db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
 
     return Number(row.n)
   }
 
   /** Reads a single-value PRAGMA. */
-  private pragma(name: string): number {
-    const row = this.db.prepare(`PRAGMA ${name}`).get() as Record<string, unknown> | undefined
+  private async pragma(name: string): Promise<number> {
+    const row = await this.db.prepare(`PRAGMA ${name}`).get() as Record<string, unknown> | undefined
     const value = row ? Object.values(row)[0] : 0
 
     return Number(value ?? 0)
@@ -652,8 +710,8 @@ export class MonitorStore {
    * tool can be in. Better to exceed a misconfigured limit and keep the most
    * recent errors than to answer honestly with nothing.
    */
-  private enforceByteCeiling(): number {
-    if (this.maxBytes <= 0 || this.bytes() <= this.maxBytes) {
+  private async enforceByteCeiling(): Promise<number> {
+    if (this.maxBytes <= 0 || await this.bytes() <= this.maxBytes) {
       // Cleared here rather than only being set: a ceiling raised after the
       // warning, or traffic that quietened down, must stop reporting a
       // condition that no longer holds.
@@ -673,8 +731,8 @@ export class MonitorStore {
 
     // Bounded rather than `while (over)`: a ceiling smaller than a single page
     // can never be met, and an unbounded loop would spin against it.
-    for (let pass = 0; pass < MAX_EVICTION_PASSES && this.bytes() > this.maxBytes; pass++) {
-      const remaining = Number((total.get() as { n: number }).n)
+    for (let pass = 0; pass < MAX_EVICTION_PASSES && await this.bytes() > this.maxBytes; pass++) {
+      const remaining = Number((await total.get() as { n: number }).n)
       const allowed = Math.min(EVICTION_CHUNK, remaining - MIN_KEPT_EVENTS)
 
       if (allowed <= 0) {
@@ -682,11 +740,11 @@ export class MonitorStore {
         // this application's errors occupy. Say so, once a minute at most,
         // because silently keeping a database over its stated ceiling is
         // exactly the kind of thing that should not be discovered later.
-        this.reportOverCeiling()
+        await this.reportOverCeiling()
         break
       }
 
-      const changes = Number(drop.run(allowed).changes)
+      const changes = Number((await drop.run(allowed) as { changes?: number }).changes ?? 0)
 
       if (changes === 0) {
         break
@@ -697,12 +755,12 @@ export class MonitorStore {
       // Freed pages are returned to the file here. Without this the measured
       // size does drop — `bytes()` counts used pages — but the file on disk
       // does not, and the disk is what runs out.
-      this.reclaim()
+      await this.reclaim()
     }
 
     // Issues whose every event has just been evicted would otherwise linger as
     // rows nothing can reach.
-    this.db.prepare(`
+    await this.db.prepare(`
       DELETE FROM issues
       WHERE fingerprint NOT IN (SELECT DISTINCT fingerprint FROM events)
     `).run()
@@ -716,9 +774,13 @@ export class MonitorStore {
    * A no-op on databases created before `auto_vacuum` was set, which is why
    * nothing here depends on it having worked.
    */
-  private reclaim(): void {
+  private async reclaim(): Promise<void> {
+    if (this.connection.dialect !== 'sqlite') {
+      return
+    }
+
     try {
-      this.db.exec('PRAGMA incremental_vacuum')
+      await this.db.exec('PRAGMA incremental_vacuum')
     }
     catch {
       // Not available on this database; the ceiling still bounds what is
@@ -727,16 +789,16 @@ export class MonitorStore {
   }
 
   /** Drops events past the retention window and issues left with none. */
-  purge(now = Date.now()): { events: number, issues: number } {
+  async purge(now = Date.now()): Promise<{ events: number, issues: number }> {
     const cutoff = now - this.options.retentionDays * 24 * 60 * 60 * 1_000
 
-    const events = this.db.prepare('DELETE FROM events WHERE ts < ?').run(cutoff)
+    const events = await this.db.prepare('DELETE FROM events WHERE ts < ?').run(cutoff)
 
     // Counters are cheap and the chart is more useful with history, so they
     // are kept for longer than the events themselves.
-    this.db.prepare('DELETE FROM request_stats WHERE bucket < ?')
+    await this.db.prepare('DELETE FROM request_stats WHERE bucket < ?')
       .run(now - this.options.retentionDays * 3 * 24 * 60 * 60 * 1_000)
-    const issues = this.db.prepare(`
+    const issues = await this.db.prepare(`
       DELETE FROM issues
       WHERE fingerprint NOT IN (SELECT DISTINCT fingerprint FROM events)
     `).run()
@@ -744,11 +806,14 @@ export class MonitorStore {
     // Last, and after the count ceiling: both free rows, so measuring bytes
     // before they have run would evict data the cheaper bounds were about to
     // remove anyway.
-    const evictedIssues = Number(issues.changes) + this.enforceIssueCeiling()
-    const evictedEvents = Number(events.changes) + this.enforceByteCeiling()
+    const changesOf = (result: unknown): number =>
+      Number((result as { changes?: number }).changes ?? 0)
+
+    const evictedIssues = changesOf(issues) + await this.enforceIssueCeiling()
+    const evictedEvents = changesOf(events) + await this.enforceByteCeiling()
 
     // Retention frees pages too, and without this they stay in the file.
-    this.reclaim()
+    await this.reclaim()
 
     return {
       events: evictedEvents,
@@ -767,66 +832,66 @@ export class MonitorStore {
    * then call `getIssue`, which flushed again, and a single dashboard request
    * triggered five.
    */
-  listIssues(filter: Parameters<typeof queries.listIssues>[1] = {}): { issues: MonitorIssue[], total: number } {
-    this.flush()
+  async listIssues(filter: Parameters<typeof queries.listIssues>[1] = {}): Promise<{ issues: MonitorIssue[], total: number }> {
+    await this.flush()
     return queries.listIssues(this.db, filter)
   }
 
-  getIssue(fp: string): MonitorIssue | undefined {
-    this.flush()
+  async getIssue(fp: string): Promise<MonitorIssue | undefined> {
+    await this.flush()
     return queries.getIssue(this.db, fp)
   }
 
-  getEvents(fp: string, limit = 20, filter?: MonitorFacetFilter): MonitorEvent[] {
-    this.flush()
+  async getEvents(fp: string, limit = 20, filter?: MonitorFacetFilter): Promise<MonitorEvent[]> {
+    await this.flush()
     return queries.getEvents(this.db, fp, limit, filter)
   }
 
-  facetCounts(scope: Parameters<typeof queries.facetCounts>[1] = {}): MonitorFacetCounts {
-    this.flush()
+  async facetCounts(scope: Parameters<typeof queries.facetCounts>[1] = {}): Promise<MonitorFacetCounts> {
+    await this.flush()
     return queries.facetCounts(this.db, scope)
   }
 
-  sessionCount(fp: string, filter?: MonitorFacetFilter): number {
-    this.flush()
+  async sessionCount(fp: string, filter?: MonitorFacetFilter): Promise<number> {
+    await this.flush()
     return queries.sessionCount(this.db, fp, filter)
   }
 
-  eventCount(fp: string, filter?: MonitorFacetFilter): number {
-    this.flush()
+  async eventCount(fp: string, filter?: MonitorFacetFilter): Promise<number> {
+    await this.flush()
     return queries.eventCount(this.db, fp, filter)
   }
 
-  overview(windowMs = 24 * 60 * 60 * 1_000, now = Date.now()): MonitorOverview {
-    this.flush()
+  async overview(windowMs = 24 * 60 * 60 * 1_000, now = Date.now()): Promise<MonitorOverview> {
+    await this.flush()
     return queries.overview(this.db, windowMs, now)
   }
 
-  releases(limit = 50): MonitorRelease[] {
-    this.flush()
+  async releases(limit = 50): Promise<MonitorRelease[]> {
+    await this.flush()
     return queries.releases(this.db, limit)
   }
 
-  routes(since: number, limit = 100): MonitorRouteStat[] {
-    this.flush()
+  async routes(since: number, limit = 100): Promise<MonitorRouteStat[]> {
+    await this.flush()
     return queries.routes(this.db, since, limit)
   }
 
-  sessions(since: number): MonitorSessionStats {
-    this.flush()
+  async sessions(since: number): Promise<MonitorSessionStats> {
+    await this.flush()
     return queries.sessions(this.db, since)
   }
 
-  setResolved(fp: string, resolved: boolean): boolean {
+  async setResolved(fp: string, resolved: boolean): Promise<boolean> {
     return queries.setResolved(this.db, fp, resolved)
   }
 
-  close(): void {
+  async close(): Promise<void> {
     if (this.closed) {
       return
     }
 
-    this.flush()
+    await this.flush()
     this.closed = true
 
     if (this.timer) {
@@ -842,6 +907,6 @@ export class MonitorStore {
     // Statements hold the connection open; dropping them before closing keeps
     // a closed store from retaining the database it can no longer use.
     this.statements.clear()
-    this.db.close()
+    await this.connection.close()
   }
 }
