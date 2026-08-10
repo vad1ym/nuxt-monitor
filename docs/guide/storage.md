@@ -1,22 +1,67 @@
 # Storage
 
-One SQLite file at `.monitor/monitor.db`, opened once per process. Nothing else: no
-external database, no message queue, no agent.
+One SQLite file at `.monitor/monitor.db`, opened once per process. Nothing to
+run, no message queue, no agent. Point
+[`databaseUrl`](../config/#databaseurl) at PostgreSQL or MySQL when one file
+per process is not what you want — see [Using an external
+database](#using-an-external-database).
 
 ## It stays off the request path
 
-`node:sqlite` is synchronous, so inserting when the error happens would put an
-fsync between the failure and the response — an error storm would then slow
-down the very application it is reporting on.
+Writing when the error happens would put the database between the failure and
+the response — an error storm would then slow down the very application it is
+reporting on.
 
 Instead, events land in memory and are flushed together inside one
 transaction, every second or every hundred events. Request counters are
 aggregated the same way, because incrementing per request would put a write on
 the hot path of *every* request rather than just the failing ones.
 
-The database runs in WAL mode with `synchronous = NORMAL`, so the dashboard can
-read while collection keeps writing, and a durability window on power loss is
-traded for far fewer fsyncs — the right side of that trade for error telemetry.
+`capture` itself is synchronous and returns before anything is written, so
+neither the error hook nor the ingest handler ever waits on the database.
+
+On SQLite the database runs in WAL mode with `synchronous = NORMAL`, so the
+dashboard can read while collection keeps writing, and a durability window on
+power loss is traded for far fewer fsyncs — the right side of that trade for
+error telemetry.
+
+## Using an external database
+
+```bash
+NUXT_MONITOR_DATABASE_URL=postgresql://user:pass@host/monitor
+```
+
+Install the matching driver — `pg` or `mysql2` — and the schema is created on
+first use. The tables, the upserts and the identifier quoting differ per
+engine; that is handled for you, and each difference was found by running the
+store against a live server rather than read out of a manual.
+
+Two things change when you do this:
+
+- **`maxDatabaseMb` stops applying.** It counts pages through a SQLite PRAGMA.
+  `retentionDays` and `maxIssues` still bound growth.
+- **The one-instance limit lifts.** Replicas can share one database, and the
+  dashboard then shows all of them instead of whichever you happened to reach.
+
+Everything else — grouping, facets, retention, the per-issue event cap — works
+the same.
+
+### Running the tests against real servers
+
+The engine-specific tests are skipped unless a url is given, so an ordinary
+`pnpm test` needs no databases:
+
+```bash
+docker run -d -p 55432:5432 -e POSTGRES_PASSWORD=monitor \
+  -e POSTGRES_USER=monitor -e POSTGRES_DB=monitor postgres:17-alpine
+docker run -d -p 53306:3306 -e MYSQL_ROOT_PASSWORD=monitor \
+  -e MYSQL_DATABASE=monitor -e MYSQL_USER=monitor \
+  -e MYSQL_PASSWORD=monitor mysql:9.2
+
+MONITOR_TEST_POSTGRES_URL=postgresql://monitor:monitor@localhost:55432/monitor \
+MONITOR_TEST_MYSQL_URL=mysql://monitor:monitor@localhost:53306/monitor \
+  pnpm test
+```
 
 ## Four bounds, because one is not enough
 

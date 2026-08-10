@@ -15,7 +15,7 @@ const COLUMNS = {
   os: 'os',
   osVersion: 'os_version',
   deviceType: 'device_type',
-  release: 'release',
+  release: '`release`',
   route: 'route',
 } as const satisfies Record<MonitorFacetName, string>
 

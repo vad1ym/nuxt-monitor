@@ -14,6 +14,7 @@ import { FACET_NAMES, facetClause, facetColumn } from './facets'
 import { escapeLike, parseJson, toFacets, toIssue } from './rows'
 import { bucketOf } from '../shared/route'
 import { BUCKET_MS } from './schema'
+import { changesOf } from './db'
 
 /**
  * Reads.
@@ -451,7 +452,10 @@ export async function overview(db: Database, windowMs = 24 * 60 * 60 * 1_000, no
     FROM request_stats
     WHERE bucket >= ?
     GROUP BY route
-    HAVING failed > 0
+    -- Repeated rather than referring to the alias: Postgres resolves HAVING
+    -- before the select list, so an alias there is an unknown column. ORDER BY
+    -- does see aliases, in every engine, so that one stays short.
+    HAVING COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0) > 0
     ORDER BY failed DESC
     LIMIT 5
   `).all(sinceBucket) as Record<string, number | string>[]
@@ -501,5 +505,5 @@ export async function setResolved(db: Database, fp: string, resolved: boolean): 
   const result = await db.prepare('UPDATE issues SET resolved = ? WHERE fingerprint = ?')
     .run(resolved ? 1 : 0, fp)
 
-  return Number((result as { changes?: number }).changes ?? 0) > 0
+  return changesOf(result) > 0
 }

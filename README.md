@@ -59,6 +59,8 @@ Requires Node 22.13+ (`node:sqlite`) and Nuxt 4.
   tokens never reach the database.
 - **Bounded storage.** One SQLite file, capped by age, count and bytes. If it
   cannot be opened, collection turns itself off and the app keeps serving.
+- **Or an external database.** Point `databaseUrl` at PostgreSQL or MySQL when
+  one file per process is not what you want.
 
 ## Documentation
 
@@ -73,10 +75,11 @@ locally.
 
 ## Limitations
 
-- **One instance.** The database is per-process, so each replica has its own.
-  Behind a load balancer you get a partial view.
-- **Not for serverless.** SQLite on an ephemeral filesystem loses everything
-  when the instance goes away.
+- **One instance on SQLite.** The file is per-process, so each replica has its
+  own and you get a partial view behind a load balancer. An external database
+  lifts this.
+- **Not for serverless on SQLite.** An ephemeral filesystem loses everything
+  when the instance goes away; an external database does not.
 - **No alerting**, multi-year retention, or one view across many apps.
 
 It is for the case those tools handle badly: one app, one server, errors you

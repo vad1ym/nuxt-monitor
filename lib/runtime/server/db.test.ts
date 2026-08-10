@@ -89,8 +89,16 @@ describe('openDatabase', () => {
    * would start, the dashboard would work, and the errors would be going
    * somewhere other than where they were configured to go.
    */
-  it('refuses an external url rather than quietly using SQLite', () => {
-    expect(() => openDatabase({ dir: tmpdir(), url: 'postgresql://localhost/x' }))
-      .toThrow(/not supported yet/)
+  it('refuses an unknown url scheme rather than quietly using SQLite', () => {
+    expect(() => openDatabase({ dir: tmpdir(), url: 'mongodb://localhost/x' }))
+      .toThrow(/unsupported database url scheme/)
+  })
+
+  it('selects a dialect from the url scheme', () => {
+    // Connecting is lazy, so this asserts the routing without a live server.
+    expect(openDatabase({ dir: tmpdir(), url: 'postgresql://u@h/db' }).dialect).toBe('postgresql')
+    expect(openDatabase({ dir: tmpdir(), url: 'postgres://u@h/db' }).dialect).toBe('postgresql')
+    expect(openDatabase({ dir: tmpdir(), url: 'mysql://u@h/db' }).dialect).toBe('mysql')
+    expect(openDatabase({ dir: tmpdir(), url: 'mariadb://u@h/db' }).dialect).toBe('mysql')
   })
 })

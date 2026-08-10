@@ -18,7 +18,7 @@ import { bucketOf, normalizeRoute, statusClass } from '../shared/route'
 import { culpritOf } from './rows'
 import * as queries from './queries'
 import { BUCKET_MS, migrate } from './schema'
-import { openDatabase } from './db'
+import { changesOf, openDatabase, upsertClause } from './db'
 import type { MonitorDatabase } from './db'
 
 export interface StoreOptions {
@@ -173,7 +173,7 @@ export class MonitorStore {
       await this.db.exec('PRAGMA synchronous = NORMAL')
     }
 
-    await migrate(this.db)
+    await migrate(this.db, this.connection.dialect)
 
     const interval = this.options.flushInterval ?? 1_000
     this.timer = setInterval(() => void this.flush(), interval)
@@ -224,6 +224,18 @@ export class MonitorStore {
    * reusable; the cache is keyed by role rather than by SQL text so a typo
    * cannot silently create a second entry.
    */
+  /**
+   * Wraps a `LIMIT`ed subquery so MySQL will accept it.
+   *
+   * MySQL refuses `IN (SELECT ... LIMIT ...)` outright — "this version does
+   * not yet support LIMIT & IN/ALL/ANY/SOME subquery" — but allows the same
+   * query one level down, as a derived table. The others take it either way,
+   * so the wrapper is applied only where it is needed.
+   */
+  private derived(sql: string): string {
+    return this.connection.dialect === 'mysql' ? `SELECT * FROM (${sql}) AS _limited` : sql
+  }
+
   private statement(key: string, sql: string): Statement {
     let prepared = this.statements.get(key)
 
@@ -313,7 +325,7 @@ export class MonitorStore {
     const upsert = this.statement('counters', `
       INSERT INTO request_stats (bucket, route, method, class, count)
       VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(bucket, route, method, class) DO UPDATE SET count = count + excluded.count
+      ${upsertClause(this.connection.dialect, 'request_stats', ['bucket', 'route', 'method', 'class'], ['count = count + excluded.count'])}
     `)
 
     await this.db.exec('BEGIN')
@@ -408,29 +420,30 @@ export class MonitorStore {
     const batch = this.buffer
     this.buffer = []
 
+    // `culprit`/`route`/`method`/`status` keep the freshest location: a moved
+    // line is more useful than the one recorded when the issue first appeared.
+    // `resolved = 0` reopens an issue that happens again.
     const upsertIssue = this.statement('issue', `
       INSERT INTO issues (
         fingerprint, type, message, side, count, first_seen, last_seen,
         culprit, route, method, status
       )
       VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(fingerprint) DO UPDATE SET
-        count     = count + 1,
-        last_seen = excluded.last_seen,
-        -- Keep the freshest location: a moved line is more useful than the
-        -- one recorded when the issue first appeared.
-        culprit   = COALESCE(excluded.culprit, culprit),
-        route     = COALESCE(excluded.route, route),
-        method    = COALESCE(excluded.method, method),
-        status    = COALESCE(excluded.status, status),
-        -- A previously resolved issue that happens again is open again.
-        resolved  = 0
+      ${upsertClause(this.connection.dialect, 'issues', ['fingerprint'], [
+        'count = count + 1',
+        'last_seen = excluded.last_seen',
+        'culprit = COALESCE(excluded.culprit, culprit)',
+        'route = COALESCE(excluded.route, route)',
+        'method = COALESCE(excluded.method, method)',
+        'status = COALESCE(excluded.status, status)',
+        'resolved = 0',
+      ])}
     `)
 
     const insertEvent = this.statement('event', `
       INSERT INTO events (
         fingerprint, ts, stack, context, breadcrumbs, tags, message,
-        session, browser, browser_version, os, os_version, device_type, release, route
+        session, browser, browser_version, os, os_version, device_type, \`release\`, route
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
@@ -572,7 +585,7 @@ export class MonitorStore {
       DELETE FROM events
       WHERE fingerprint = ?
         AND id NOT IN (
-          SELECT id FROM events WHERE fingerprint = ? ORDER BY ts DESC LIMIT ?
+          ${this.derived('SELECT id FROM events WHERE fingerprint = ? ORDER BY ts DESC LIMIT ?')}
         )
     `)
 
@@ -606,10 +619,9 @@ export class MonitorStore {
 
     const evicted = await this.db.prepare(`
       DELETE FROM issues WHERE fingerprint IN (
-        SELECT fingerprint FROM issues
-        -- Resolved first: somebody has already dealt with those.
-        ORDER BY resolved DESC, last_seen ASC, count ASC
-        LIMIT ?
+        ${this.derived(`SELECT fingerprint FROM issues
+          ORDER BY resolved DESC, last_seen ASC, count ASC
+          LIMIT ?`)}
       )
     `).run(excess)
 
@@ -617,7 +629,7 @@ export class MonitorStore {
       DELETE FROM events WHERE fingerprint NOT IN (SELECT fingerprint FROM issues)
     `).run()
 
-    return Number((evicted as { changes?: number }).changes ?? 0)
+    return changesOf(evicted)
   }
 
   /**
@@ -721,7 +733,7 @@ export class MonitorStore {
 
     const drop = this.statement('evictOldest', `
       DELETE FROM events WHERE id IN (
-        SELECT id FROM events ORDER BY ts ASC LIMIT ?
+        ${this.derived('SELECT id FROM events ORDER BY ts ASC LIMIT ?')}
       )
     `)
 
@@ -744,7 +756,7 @@ export class MonitorStore {
         break
       }
 
-      const changes = Number((await drop.run(allowed) as { changes?: number }).changes ?? 0)
+      const changes = changesOf(await drop.run(allowed))
 
       if (changes === 0) {
         break
@@ -788,6 +800,22 @@ export class MonitorStore {
     }
   }
 
+  /**
+   * Empties every table, keeping the schema.
+   *
+   * For tests that share one external server: a leftover row from the previous
+   * one makes a count assertion pass or fail for reasons that have nothing to
+   * do with what is being tested.
+   */
+  async reset(): Promise<void> {
+    this.buffer = []
+    this.counters.clear()
+
+    for (const table of ['events', 'issues', 'request_stats']) {
+      await this.db.exec(`DELETE FROM ${table}`)
+    }
+  }
+
   /** Drops events past the retention window and issues left with none. */
   async purge(now = Date.now()): Promise<{ events: number, issues: number }> {
     const cutoff = now - this.options.retentionDays * 24 * 60 * 60 * 1_000
@@ -806,9 +834,6 @@ export class MonitorStore {
     // Last, and after the count ceiling: both free rows, so measuring bytes
     // before they have run would evict data the cheaper bounds were about to
     // remove anyway.
-    const changesOf = (result: unknown): number =>
-      Number((result as { changes?: number }).changes ?? 0)
-
     const evictedIssues = changesOf(issues) + await this.enforceIssueCeiling()
     const evictedEvents = changesOf(events) + await this.enforceByteCeiling()
 

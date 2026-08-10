@@ -53,23 +53,40 @@ Add it to `.gitignore`.
 Connection string for an external database. Unset — the default — keeps
 everything in a SQLite file, which needs no service to run.
 
-::: warning Not implemented yet
-Only SQLite is supported today. Setting this throws on start-up rather than
-silently falling back: an application that starts, serves a working dashboard,
-and writes its errors somewhere other than where you configured them is the
-worst of the available failures, and you would find out during an incident.
+```ts
+monitor: {
+  databaseUrl: process.env.NUXT_MONITOR_DATABASE_URL,
+}
+```
 
-MySQL and Postgres connectors are the next step; the storage layer behind this
-option is already engine-agnostic.
-:::
+Recognised schemes:
+
+| Scheme | Engine | Driver to install |
+| --- | --- | --- |
+| `postgresql://`, `postgres://` | PostgreSQL | `pg` |
+| `mysql://`, `mariadb://` | MySQL, MariaDB | `mysql2` |
+
+The driver is loaded only when a url asks for it, so a default install needs
+neither. Anything else throws at start-up rather than falling back to SQLite:
+an application that starts, serves a working dashboard, and writes its errors
+somewhere other than where you configured them is the worst of the available
+failures, and you would find out during an incident.
 
 Read at **runtime**, so `NUXT_MONITOR_DATABASE_URL` can point one build at a
 different database per environment — a credential does not belong in a build
 artefact.
 
-Note that [`maxDatabaseMb`](#maxdatabasemb) is SQLite-only: it measures pages
-in use through a PRAGMA. On an external database it does not apply, and
-`retentionDays` and `maxIssues` are what bound growth.
+::: warning maxDatabaseMb does not apply
+[`maxDatabaseMb`](#maxdatabasemb) measures pages in use through a SQLite
+PRAGMA, which has no counterpart the module can rely on elsewhere — the
+equivalent query is frequently unreadable on managed hosting. On an external
+database `health.bytes` reports `0` and the ceiling is not enforced;
+`retentionDays` and `maxIssues` are what bound growth there.
+:::
+
+An external database also lifts the one-instance limit: several replicas can
+share one, and the dashboard then shows all of them rather than whichever you
+happened to reach.
 
 ## auth
 
