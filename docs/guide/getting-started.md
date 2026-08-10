@@ -9,9 +9,21 @@
 
 ## Install
 
-```bash
+::: code-group
+
+```bash [npm]
+npm install nuxt-monitor
+```
+
+```bash [yarn]
+yarn add nuxt-monitor
+```
+
+```bash [pnpm]
 pnpm add nuxt-monitor
 ```
+
+:::
 
 ```ts
 // nuxt.config.ts
@@ -46,6 +58,11 @@ export default defineEventHandler(() => {
 
 Request it once, then open the dashboard. You should see one issue, with the
 stack resolved to `server/api/boom.ts` and the failing line shown in context.
+
+![The issue list showing server and client issues together, each with its type, resolved file, route and HTTP status](/media/issues.png)
+
+Server and client errors land in one list, filterable by side, browser, OS and
+device.
 
 If the issue appears but the frame is not resolved, that is a sourcemap
 problem rather than a collection problem — see [Sourcemaps](./sourcemaps).

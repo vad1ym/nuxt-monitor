@@ -58,6 +58,16 @@ database actually grows: every occurrence gets its own fingerprint, so 20,000
 such errors become 20,000 issues. `maxIssues` and `maxDatabaseMb` bound it —
 see [Storage](./storage).
 
+## What a grouped issue tells you
+
+Once occurrences are one issue, they can be counted against what they share —
+browser, browser version, OS, OS version, device, release, route and session.
+
+![The same issue broken down by browser, browser version, OS and OS version, each as a ranked bar with percentages](/media/breakdown.png)
+
+"250 errors" is a number; "250 errors, all Safari 16" is a diagnosis. Clicking
+a slice filters the occurrences below it.
+
 ## Resolving
 
 Marking an issue resolved hides it from the default view. If it happens again,

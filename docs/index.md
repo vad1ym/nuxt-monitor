@@ -27,3 +27,9 @@ features:
   - title: Never the reason you are down
     details: Writes are buffered and batched, so an error storm puts no I/O on a request path. If the database cannot be opened at all, collection turns itself off and the app keeps serving.
 ---
+
+![The overview: error rate, errors over time, the biggest contributor, and routes ranked by failure rate](/media/overview.png)
+
+The screenshots throughout these docs come from the example app in the
+repository. `pnpm demo` builds it, starts it, and fills it with real errors from
+code that actually threw.

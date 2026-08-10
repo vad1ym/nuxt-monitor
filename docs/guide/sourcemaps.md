@@ -5,6 +5,11 @@ this module is that the frame instead reads `server/api/orders.ts:42` with the
 failing line shown around it — and it manages that without an upload step,
 because it runs on the machine that holds the maps.
 
+![A client TypeError resolved to client-error.vue line 33, showing the failing line in context with six Vue frames collapsed](/media/issue.png)
+
+Framework frames are folded away, because they are never what you are looking
+for.
+
 ## How it works
 
 Maps are read from disk at the moment you open an issue, not at capture time.
