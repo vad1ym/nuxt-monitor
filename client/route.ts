@@ -35,6 +35,8 @@ export interface RouteState {
   search: string
   filter: MonitorFacetFilter
   hours: number
+  /** `last-seen` | `count` | `first-seen` — see `SORTS` in `App.vue`. */
+  sort: string
 }
 
 const DEFAULTS: RouteState = {
@@ -44,6 +46,7 @@ const DEFAULTS: RouteState = {
   search: '',
   filter: {},
   hours: 24,
+  sort: 'last-seen',
 }
 
 /**
@@ -80,6 +83,7 @@ export function readRoute(hash = window.location.hash): RouteState {
     search: params.get('q') ?? DEFAULTS.search,
     filter,
     hours: Number.isFinite(hours) && hours > 0 ? hours : DEFAULTS.hours,
+    sort: params.get('sort') ?? DEFAULTS.sort,
   }
 }
 
@@ -113,6 +117,10 @@ export function writeRoute(state: RouteState): string {
 
   if (state.hours !== DEFAULTS.hours) {
     params.set('window', String(state.hours))
+  }
+
+  if (state.sort !== DEFAULTS.sort) {
+    params.set('sort', state.sort)
   }
 
   const query = params.toString()

@@ -25,7 +25,7 @@ import RoutesView from './components/RoutesView.vue'
  * with a denominator of its own — keeps a screen under Traffic.
  */
 
-interface Scope { side?: string, resolved?: boolean }
+interface Scope { side?: string, resolved?: boolean, ignored?: boolean }
 
 const SCOPES: Record<string, { label: string, icon: string, value: Scope }> = {
   'open': { label: 'Open', icon: 'i-lucide-inbox', value: { resolved: false } },
@@ -33,6 +33,22 @@ const SCOPES: Record<string, { label: string, icon: string, value: Scope }> = {
   'client': { label: 'Client', icon: 'i-lucide-monitor', value: { side: 'client' } },
   'resolved': { label: 'Resolved', icon: 'i-lucide-check', value: { resolved: true } },
   'all': { label: 'All', icon: 'i-lucide-list', value: {} },
+  // Ignored issues are excluded from every other scope, so the only way back
+  // to one is a scope of its own.
+  'ignored': { label: 'Ignored', icon: 'i-lucide-bell-off', value: { ignored: true } },
+}
+
+/**
+ * What "worst" means, named on screen.
+ *
+ * The order was fixed and unlabelled, so the list could not say whether it was
+ * showing the newest or the most frequent — and those are different questions
+ * asked on different days.
+ */
+const SORTS: Record<string, string> = {
+  'last-seen': 'Recent',
+  'count': 'Frequent',
+  'first-seen': 'New',
 }
 
 const NAV: { view: View, label: string, icon: string }[] = [
@@ -77,11 +93,55 @@ const scope = ref(route.scope)
 const search = ref(route.search)
 const filter = ref<MonitorFacetFilter>(route.filter)
 const hours = ref(route.hours)
+const sort = ref(route.sort)
+
+/** How many rows are on screen. Grows by a page; never shrinks silently. */
+const PAGE = 50
+const shown = ref(PAGE)
 
 const query = computed(() => ({
   ...(SCOPES[scope.value]?.value ?? {}),
+  sort: sort.value,
   search: search.value.trim() || undefined,
+  limit: shown.value,
 }))
+
+/**
+ * When this dashboard was last looked at.
+ *
+ * An issue first seen since then is marked new, which is the difference
+ * between a list that looks identical every morning and one that says three
+ * things appeared overnight. Stored per browser: it describes this reader's
+ * attention, not a fact about the application, so it has no business in the
+ * database — and a second person's visit must not clear the first's marks.
+ */
+const SEEN_KEY = 'nuxt-monitor:last-seen'
+
+const lastSeen = ref(Number(localStorage.getItem(SEEN_KEY)) || 0)
+
+/** Not written until the reader leaves, or every issue would clear on sight. */
+function rememberVisit(): void {
+  localStorage.setItem(SEEN_KEY, String(Date.now()))
+}
+
+const hasMore = computed(() => issues.value.length < total.value)
+
+/** Whether anything narrows the list — decides which empty screen to show. */
+const narrowed = computed(() =>
+  Boolean(search.value.trim())
+  || Object.keys(filter.value).length > 0
+  || scope.value !== 'open',
+)
+
+/**
+ * Whether the module has ever recorded anything.
+ *
+ * An empty list means something different on a fresh install than on an
+ * application whose issues have all been dealt with, and neither should read
+ * like a failure. Taken from the health endpoint's all-time count, which is
+ * not subject to the window or the filters.
+ */
+const everCollected = ref(false)
 
 /** The issues screen owns the search field and the filter bar. */
 const onIssues = computed(() => view.value === 'issues')
@@ -100,6 +160,12 @@ async function refresh(): Promise<void> {
     issues.value = result.issues
     total.value = result.total
     facets.value = counts.facets
+
+    // Only worth asking while the list is empty: that is the one moment the
+    // answer changes what is on screen.
+    if (!result.total && !everCollected.value) {
+      everCollected.value = Boolean((await api.health().catch(() => null))?.issues)
+    }
   }
   catch (caught) {
     // An expired session should return to the login screen rather than
@@ -142,12 +208,25 @@ function show(next: View): void {
   selected.value = null
 }
 
+/** Everything that could be hiding the rows, undone at once. */
+function clearNarrowing(): void {
+  search.value = ''
+  filter.value = {}
+  scope.value = 'open'
+}
+
 /** Typing should not fire a request per keystroke. */
 let debounce: ReturnType<typeof setTimeout> | undefined
 
 watch([query, filter], () => {
   clearTimeout(debounce)
   debounce = setTimeout(refresh, 200)
+}, { deep: true })
+
+// A narrower list starts from the top: keeping page four of the previous
+// question would show an empty screen that looks like "no results".
+watch([scope, search, filter, sort], () => {
+  shown.value = PAGE
 }, { deep: true })
 
 /**
@@ -159,7 +238,7 @@ watch([query, filter], () => {
  */
 let applyingRoute = false
 
-watch([view, selected, scope, search, filter, hours], ([, , , next], [, , , previous]) => {
+watch([view, selected, scope, search, filter, hours, sort], ([, , , next], [, , , previous]) => {
   if (applyingRoute) {
     return
   }
@@ -171,6 +250,7 @@ watch([view, selected, scope, search, filter, hours], ([, , , next], [, , , prev
     search: search.value,
     filter: filter.value,
     hours: hours.value,
+    sort: sort.value,
   })
 
   if (hash === window.location.hash) {
@@ -194,6 +274,7 @@ function applyRoute(): void {
   search.value = next.search
   filter.value = next.filter
   hours.value = next.hours
+  sort.value = next.sort
 
   // Released after the watchers above have seen the assignments, so restoring
   // a state does not immediately write it back as a new history entry.
@@ -204,6 +285,14 @@ function applyRoute(): void {
 
 onMounted(() => window.addEventListener('hashchange', applyRoute))
 onUnmounted(() => window.removeEventListener('hashchange', applyRoute))
+
+// On the way out, not on arrival: stamping the visit at mount would clear the
+// marks in the same frame that drew them.
+onMounted(() => window.addEventListener('pagehide', rememberVisit))
+onUnmounted(() => {
+  window.removeEventListener('pagehide', rememberVisit)
+  rememberVisit()
+})
 
 onMounted(async () => {
   try {
@@ -228,7 +317,7 @@ onMounted(async () => {
     <div v-else-if="authenticated" class="min-h-screen flex">
       <aside class="w-52 shrink-0 border-e border-default flex flex-col">
         <div class="flex items-center gap-2 px-4 h-14 border-b border-default">
-          <MonitorLogo class="h-5 w-auto text-primary" />
+          <MonitorLogo class="h-6 w-auto" />
           <span class="font-semibold">monitor</span>
         </div>
 
@@ -345,16 +434,39 @@ onMounted(async () => {
               <IssueFilters
                 v-model="filter"
                 v-model:scope="scope"
+                v-model:sort="sort"
                 :facets="facets"
                 :scopes="SCOPES"
+                :sorts="SORTS"
                 class="mb-4"
               />
 
               <IssueList
                 :issues="issues"
                 :loading="loading"
+                :new-since="lastSeen"
+                :narrowed="narrowed"
+                :collected="everCollected"
                 @select="selected = $event"
+                @clear="clearNarrowing"
               />
+
+              <!-- Paged rather than capped: the list stopped at fifty with
+                   nothing on screen saying so, which reads as "that is all of
+                   them" when it is not. -->
+              <div v-if="hasMore" class="mt-4 flex items-center justify-center gap-3">
+                <UButton
+                  size="sm"
+                  color="neutral"
+                  variant="outline"
+                  :loading="loading"
+                  :label="`Show ${Math.min(PAGE, total - issues.length)} more`"
+                  @click="shown += PAGE"
+                />
+                <span class="text-xs text-dimmed tabular-nums">
+                  {{ issues.length }} of {{ total }}
+                </span>
+              </div>
             </template>
           </div>
         </main>

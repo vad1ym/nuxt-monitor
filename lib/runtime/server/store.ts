@@ -10,6 +10,7 @@ import type {
   MonitorRelease,
   MonitorRouteStat,
   MonitorSessionStats,
+  MonitorTrafficStats,
 } from '../../types'
 import type { CompiledIgnore } from '../shared/ignore'
 import { compileIgnore, shouldIgnore } from '../shared/ignore'
@@ -902,6 +903,11 @@ export class MonitorStore {
     return queries.routes(this.db, since, limit)
   }
 
+  async traffic(windowMs: number): Promise<MonitorTrafficStats> {
+    await this.flush()
+    return queries.traffic(this.db, windowMs)
+  }
+
   async sessions(since: number): Promise<MonitorSessionStats> {
     await this.flush()
     return queries.sessions(this.db, since)
@@ -909,6 +915,10 @@ export class MonitorStore {
 
   async setResolved(fp: string, resolved: boolean): Promise<boolean> {
     return queries.setResolved(this.db, fp, resolved)
+  }
+
+  async setIgnored(fp: string, ignored: boolean): Promise<boolean> {
+    return queries.setIgnored(this.db, fp, ignored)
   }
 
   async close(): Promise<void> {

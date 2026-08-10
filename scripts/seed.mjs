@@ -195,6 +195,9 @@ async function spread(dbPath) {
   const now = Date.now()
   const WINDOW = 20 * 60 * 60 * 1_000
 
+  /** The window the dashboard opens on, whose grid the chart columns follow. */
+  const CHART_WINDOW = 24 * 60 * 60 * 1_000
+
   try {
     const events = db.prepare('SELECT id, ts FROM events ORDER BY id').all()
 
@@ -203,17 +206,21 @@ async function spread(dbPath) {
     }
 
     /**
-     * Oldest event first, newest last, with the recent hours busiest.
+     * Oldest event first, newest last, spread across the whole window.
      *
-     * Squaring the position pushes the mass towards `now`: a flat spread reads
-     * as synthetic, and the interesting shape on an error chart is a rise.
+     * Squaring the position was the first attempt and it looked wrong on the
+     * chart: it pushes so much mass towards `now` that the recent columns
+     * merge into one spike while the earlier two-thirds of the window sit
+     * empty. The rise now comes from a mild exponent instead, which leaves
+     * every column occupied and still builds towards the present.
+     *
      * `id` order is insertion order, which is collection order, so this keeps
      * events in the sequence they actually happened.
      */
     const offsetAt = (index) => {
       const position = index / Math.max(1, events.length - 1)
 
-      return Math.round(WINDOW * (1 - position) ** 2)
+      return Math.round(WINDOW * (1 - position) ** 1.35)
     }
 
     const update = db.prepare('UPDATE events SET ts = ? WHERE id = ?')
@@ -235,17 +242,41 @@ async function spread(dbPath) {
     `)
 
     /**
-     * Counters are keyed by bucket, so they cannot be updated in place: two
-     * source buckets can land on one target and collide with the primary key.
-     * Read, shift, delete, re-insert with an upsert that merges collisions.
+     * Counters are split across the window rather than shifted onto it.
+     *
+     * Shifting by source position was the obvious move and it does not work:
+     * the whole run takes about a minute, so every counter lands in one of
+     * three or four minute-buckets, and moving four points around a day still
+     * leaves four points. A traffic chart drawn from that is four bars.
+     *
+     * So each counter row is divided into slices spread over the window, on
+     * the same curve the events follow — requests and the failures among them
+     * stay in step, and the error rate per hour keeps meaning something.
+     *
+     * Keyed by bucket, so they cannot be updated in place: two slices can land
+     * on one bucket and collide with the primary key. Delete and re-insert
+     * through an upsert that merges collisions.
      */
-    const buckets = db.prepare('SELECT bucket, route, method, class, count FROM request_stats').all()
+    // Summed across the source buckets first: the same route/method/class can
+    // appear in several minutes, and each must be spread once, not once per
+    // minute it happened to land in.
+    const counters = db.prepare(`
+      SELECT route, method, class, SUM(count) AS count
+      FROM request_stats
+      GROUP BY route, method, class
+    `).all()
 
-    if (buckets.length) {
-      const oldest = Math.min(...buckets.map(row => row.bucket))
-      const newest = Math.max(...buckets.map(row => row.bucket))
-      const span = Math.max(1, newest - oldest)
+    if (counters.length) {
       const BUCKET_MS = 60_000
+      /**
+       * One slice per column the traffic chart draws.
+       *
+       * The chart regroups minute-counters into 48 columns across the window,
+       * so writing more slices than that just merges several into one column
+       * and leaves the rest empty. Matching the grid puts a bar in every
+       * column instead.
+       */
+      const SLICES = 48
 
       db.exec('DELETE FROM request_stats')
 
@@ -254,19 +285,59 @@ async function spread(dbPath) {
         ON CONFLICT(bucket, route, method, class) DO UPDATE SET count = count + excluded.count
       `)
 
-      for (const row of buckets) {
-        // The same curve the events follow, so requests and the failures among
-        // them stay in step and the error rate per hour still means something.
-        const position = (row.bucket - oldest) / span
-        const shifted = now - Math.round(WINDOW * (1 - position) ** 2)
+      for (const row of counters) {
+        // Weights follow the same squared curve as the events, so both build
+        // towards the present instead of sitting flat.
+        const weights = Array.from({ length: SLICES }, (_, i) => ((i + 1) / SLICES) ** 1.35)
+        const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
 
-        insert.run(
-          Math.floor(shifted / BUCKET_MS) * BUCKET_MS,
-          row.route,
-          row.method,
-          row.class,
-          row.count,
-        )
+        let placed = 0
+
+        for (let i = 0; i < SLICES; i++) {
+          const remaining = row.count - placed
+
+          /**
+           * Distributed by running total rather than rounded per slice.
+           *
+           * Rounding each slice independently sends every share below half a
+           * request to zero, so a route with twelve requests lands in three
+           * buckets and the chart is mostly gaps. Comparing cumulative targets
+           * spends the whole count across the window: small counters simply
+           * skip slices instead of collapsing into the last one.
+           */
+          const target = Math.round(
+            (row.count * weights.slice(0, i + 1).reduce((sum, w) => sum + w, 0)) / totalWeight,
+          )
+
+          const share = i === SLICES - 1 ? remaining : Math.max(0, target - placed)
+
+          if (share <= 0) {
+            continue
+          }
+
+          placed += share
+
+          /**
+           * Snapped to the grid the chart groups by, not to an even division
+           * of the seeded window.
+           *
+           * The chart splits the *dashboard's* window into 48 columns; the
+           * seed fills a shorter one. Dividing each independently makes the
+           * two grids drift past one another, so slices pile into some
+           * columns and miss others — visible as a chart full of gaps.
+           */
+          const step = Math.max(BUCKET_MS, Math.floor(CHART_WINDOW / 48 / BUCKET_MS) * BUCKET_MS)
+          const offset = Math.round((WINDOW * (SLICES - 1 - i)) / SLICES)
+          const at = now - Math.round(offset / step) * step
+
+          insert.run(
+            Math.floor(at / BUCKET_MS) * BUCKET_MS,
+            row.route,
+            row.method,
+            row.class,
+            share,
+          )
+        }
       }
     }
 

@@ -48,10 +48,14 @@ export default defineEventHandler(async (event) => {
       throw createError({ statusCode: 403, statusMessage: 'Bad origin' })
     }
 
-    const body = await readBody<{ resolved?: boolean }>(event).catch(() => ({}))
+    const body = await readBody<{ resolved?: boolean, ignored?: boolean }>(event).catch(() => ({}))
 
     if (typeof body?.resolved === 'boolean') {
       await store.setResolved(fingerprint, body.resolved)
+    }
+
+    if (typeof body?.ignored === 'boolean') {
+      await store.setIgnored(fingerprint, body.ignored)
     }
 
     return await store.getIssue(fingerprint)

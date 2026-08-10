@@ -29,7 +29,7 @@ export class DisabledStore implements Pick<
   MonitorStore,
   'capture' | 'countRequest' | 'flush' | 'close' | 'listIssues' | 'getIssue'
   | 'getEvents' | 'facetCounts' | 'sessionCount' | 'eventCount' | 'overview'
-  | 'setResolved' | 'purge' | 'releases' | 'routes' | 'sessions' | 'health'
+  | 'setResolved' | 'setIgnored' | 'purge' | 'releases' | 'routes' | 'sessions' | 'health'
 > {
   /** Why collection is off, for the health endpoint and the dashboard. */
   constructor(readonly reason: string) {}
@@ -113,6 +113,10 @@ export class DisabledStore implements Pick<
   }
 
   async setResolved(): Promise<boolean> {
+    return false
+  }
+
+  async setIgnored(): Promise<boolean> {
     return false
   }
 

@@ -137,6 +137,15 @@ async function toggleResolved(): Promise<void> {
   emit('changed')
 }
 
+async function toggleIgnored(): Promise<void> {
+  if (!detail.value) {
+    return
+  }
+
+  detail.value.issue = await api.setIgnored(props.fingerprint, !detail.value.issue.ignored)
+  emit('changed')
+}
+
 watch(() => props.fingerprint, () => {
   // A filter from the previous issue rarely applies to the next one, and
   // landing on an empty issue looks like a missing issue. Assigning a fresh
@@ -199,6 +208,13 @@ onMounted(loadBaseline)
                 size="sm"
                 label="resolved"
               />
+              <UBadge
+                v-if="detail.issue.ignored"
+                color="neutral"
+                variant="subtle"
+                size="sm"
+                label="ignored"
+              />
             </div>
 
             <h1 class="mt-1.5 font-mono text-lg leading-snug text-highlighted break-words">
@@ -206,15 +222,30 @@ onMounted(loadBaseline)
             </h1>
           </div>
 
-          <UButton
-            size="sm"
-            :color="detail.issue.resolved ? 'neutral' : 'primary'"
-            variant="subtle"
-            :icon="detail.issue.resolved ? 'i-lucide-rotate-ccw' : 'i-lucide-check'"
-            :label="detail.issue.resolved ? 'Reopen' : 'Resolve'"
-            class="shrink-0"
-            @click="toggleResolved"
-          />
+          <div class="flex shrink-0 items-center gap-2">
+            <!-- Two different claims, so two buttons. "Resolve" says it was
+                 fixed; "Ignore" says it is not ours to fix — an extension, a
+                 bot, someone else's script. With only the first, the way to
+                 quiet noise was to call it fixed, which makes the resolved
+                 list a record of work that never happened. -->
+            <UButton
+              size="sm"
+              color="neutral"
+              variant="ghost"
+              :icon="detail.issue.ignored ? 'i-lucide-bell' : 'i-lucide-bell-off'"
+              :label="detail.issue.ignored ? 'Unignore' : 'Ignore'"
+              @click="toggleIgnored"
+            />
+
+            <UButton
+              size="sm"
+              :color="detail.issue.resolved ? 'neutral' : 'primary'"
+              variant="subtle"
+              :icon="detail.issue.resolved ? 'i-lucide-rotate-ccw' : 'i-lucide-check'"
+              :label="detail.issue.resolved ? 'Reopen' : 'Resolve'"
+              @click="toggleResolved"
+            />
+          </div>
         </div>
 
         <!-- The facts you want before reading any code. -->

@@ -1253,3 +1253,121 @@ describe('counter bucket alignment', () => {
     expect((await store.overview(60_000, now)).requestCount).toBe(0)
   })
 })
+
+describe('ignoring an issue', () => {
+  /**
+   * Distinct from resolving. Without this the only way to quiet a browser
+   * extension's noise was to mark it fixed, which turns the resolved list into
+   * a record of work that never happened.
+   */
+  async function capture(): Promise<string> {
+    store.capture(makeEvent())
+    await store.flush()
+
+    return (await store.listIssues()).issues[0]!.fingerprint
+  }
+
+  it('hides an ignored issue from every other scope', async () => {
+    const fp = await capture()
+
+    expect(await store.setIgnored(fp, true)).toBe(true)
+
+    // Not in the default list, nor in the unfiltered one.
+    expect((await store.listIssues()).total).toBe(0)
+    expect((await store.listIssues({ resolved: false })).total).toBe(0)
+  })
+
+  it('lists it again when asked for, and lets it come back', async () => {
+    const fp = await capture()
+    await store.setIgnored(fp, true)
+
+    const ignored = await store.listIssues({ ignored: true })
+
+    expect(ignored.total).toBe(1)
+    expect(ignored.issues[0]!.ignored).toBe(true)
+
+    await store.setIgnored(fp, false)
+
+    expect((await store.listIssues()).total).toBe(1)
+  })
+
+  /** Ignoring is not resolving; neither should imply the other. */
+  it('leaves the resolved flag alone', async () => {
+    const fp = await capture()
+    await store.setIgnored(fp, true)
+
+    expect((await store.listIssues({ ignored: true })).issues[0]!.resolved).toBe(false)
+  })
+})
+
+describe('sorting the issue list', () => {
+  beforeEach(async () => {
+    // Old but frequent.
+    for (let i = 0; i < 5; i++) {
+      store.capture(makeEvent({ message: 'frequent', timestamp: 1_000 + i }))
+    }
+
+    // New but rare — first *and* last seen after the other's last.
+    store.capture(makeEvent({ message: 'recent', timestamp: 9_000 }))
+
+    await store.flush()
+  })
+
+  it('orders by last seen by default', async () => {
+    const { issues } = await store.listIssues()
+
+    expect(issues[0]!.message).toBe('recent')
+  })
+
+  it('orders by occurrence count when asked', async () => {
+    const { issues } = await store.listIssues({ sort: 'count' })
+
+    expect(issues[0]!.message).toBe('frequent')
+    expect(issues[0]!.count).toBe(5)
+  })
+
+  it('orders by first appearance, which is what "new" means', async () => {
+    const { issues } = await store.listIssues({ sort: 'first-seen' })
+
+    expect(issues[0]!.message).toBe('recent')
+  })
+
+  /** The clause reaches SQL, so an unknown name must fall back, not travel. */
+  it('falls back to the default for an unknown sort', async () => {
+    const { issues } = await store.listIssues({ sort: 'drop table' as never })
+
+    expect(issues[0]!.message).toBe('recent')
+  })
+})
+
+describe('traffic', () => {
+  it('separates the caller\'s mistakes from the application\'s faults', async () => {
+    store.countRequest('/api/x', 'GET', 200)
+    store.countRequest('/api/x', 'GET', 500)
+    store.countRequest('/api/y', 'POST', 404)
+    await store.flush()
+
+    const traffic = await store.traffic(60 * 60 * 1_000)
+
+    expect(traffic.total).toBe(3)
+    // 4xx is somebody else's problem and must not count as a failure.
+    expect(traffic.failed).toBe(1)
+    expect(traffic.classes).toMatchObject({ '2xx': 1, '4xx': 1, '5xx': 1 })
+  })
+
+  it('reports the methods a route was called with', async () => {
+    store.countRequest('/api/x', 'GET', 200)
+    store.countRequest('/api/x', 'POST', 200)
+    await store.flush()
+
+    const route = (await store.traffic(60 * 60 * 1_000)).routes
+      .find(item => item.route === '/api/x')
+
+    expect(route?.methods).toEqual(expect.arrayContaining(['GET', 'POST']))
+    expect(route?.classes).toMatchObject({ '2xx': 2 })
+  })
+
+  it('leaves the rate undefined when nothing was counted', async () => {
+    expect((await store.traffic(60 * 60 * 1_000)).rate).toBeUndefined()
+  })
+})

@@ -9,6 +9,7 @@ import type {
   MonitorRelease,
   MonitorRouteStat,
   MonitorSessionStats,
+  MonitorTrafficStats,
 } from '../lib/types'
 
 /**
@@ -113,6 +114,8 @@ export const api = {
   issues: (params: {
     side?: string
     resolved?: boolean
+    ignored?: boolean
+    sort?: string
     search?: string
     type?: string
     limit?: number
@@ -157,7 +160,7 @@ export const api = {
    * `section` fetches just one; the sections are separate screens but share an
    * endpoint so their numbers always describe the same window.
    */
-  stats: (section?: 'releases' | 'routes' | 'sessions' | 'environments', hours = 24) => {
+  stats: (section?: 'releases' | 'routes' | 'sessions' | 'environments' | 'traffic', hours = 24) => {
     const query = new URLSearchParams({ window: String(hours * 60 * 60 * 1_000) })
 
     if (section) {
@@ -170,6 +173,7 @@ export const api = {
       routes?: MonitorRouteStat[]
       sessions?: MonitorSessionStats
       environments?: MonitorFacetCounts
+      traffic?: MonitorTrafficStats
     }>(`/stats?${query}`)
   },
 
@@ -180,5 +184,12 @@ export const api = {
     request<MonitorIssue>(`/issues/${encodeURIComponent(fingerprint)}`, {
       method: 'PATCH',
       body: JSON.stringify({ resolved }),
+    }),
+
+  /** Puts an issue aside as not the application's problem — see `setResolved`. */
+  setIgnored: (fingerprint: string, ignored: boolean) =>
+    request<MonitorIssue>(`/issues/${encodeURIComponent(fingerprint)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ignored }),
     }),
 }

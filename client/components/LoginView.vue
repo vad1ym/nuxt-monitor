@@ -38,7 +38,7 @@ async function submit(): Promise<void> {
     <UCard class="w-full max-w-sm">
       <template #header>
         <div class="flex items-center gap-2">
-          <MonitorLogo class="h-6 w-auto text-primary" />
+          <MonitorLogo class="h-8 w-auto" />
           <h1 class="text-lg font-semibold">
             monitor
           </h1>

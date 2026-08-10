@@ -16,8 +16,10 @@ import { formatShare } from '../chart'
  */
 const props = defineProps<{
   facets: MonitorFacetCounts | null
-  /** Open / Server / Client / Resolved / All, keyed by id. */
+  /** Open / Server / Client / Resolved / All / Ignored, keyed by id. */
   scopes: Record<string, { label: string, icon: string }>
+  /** Order names, keyed by the value the API takes. */
+  sorts: Record<string, string>
 }>()
 
 const model = defineModel<MonitorFacetFilter>({ required: true })
@@ -30,6 +32,15 @@ const model = defineModel<MonitorFacetFilter>({ required: true })
  * a dropdown made the sidebar look like five screens that are really one.
  */
 const scope = defineModel<string>('scope', { required: true })
+
+/**
+ * Which end of the list is the top.
+ *
+ * Sits with the filters rather than over the list itself: "the frequent ones,
+ * on iOS" is a single question, and splitting its halves across two places
+ * would make the second one look like it belongs to something else.
+ */
+const sort = defineModel<string>('sort', { required: true })
 
 /**
  * Kept to one line's worth.
@@ -189,5 +200,39 @@ function summary(name: MonitorFacetName, label: string): string {
       :label="`Clear ${activeCount}`"
       @click="model = {}"
     />
+
+    <!-- Pushed to the far end: it orders the list rather than narrowing it,
+         and sitting among the filters made it read as another one. -->
+    <UPopover class="ms-auto">
+      <UButton
+        size="xs"
+        color="neutral"
+        variant="ghost"
+        icon="i-lucide-arrow-down-wide-narrow"
+        :label="sorts[sort]"
+        trailing-icon="i-lucide-chevron-down"
+      />
+
+      <template #content>
+        <ul class="w-40 p-1">
+          <li v-for="(label, key) in sorts" :key="key">
+            <button
+              type="button"
+              class="w-full flex items-center gap-2 rounded px-2 py-1 text-left text-xs transition-colors cursor-pointer"
+              :class="sort === key ? 'text-highlighted bg-elevated/60' : 'text-toned hover:bg-elevated/40'"
+              :aria-pressed="sort === key"
+              @click="sort = key"
+            >
+              <UIcon
+                name="i-lucide-check"
+                class="size-3 shrink-0"
+                :class="sort === key ? 'text-primary' : 'opacity-0'"
+              />
+              {{ label }}
+            </button>
+          </li>
+        </ul>
+      </template>
+    </UPopover>
   </div>
 </template>

@@ -337,6 +337,32 @@ export interface MonitorRouteStat {
   failed: number
   /** Failed over total, 0–1. */
   rate: number
+  /** Methods seen on this route, busiest first — `GET`, `POST`, … */
+  methods?: string[]
+  /** Requests per status class, keyed `2xx` / `3xx` / `4xx` / `5xx`. */
+  classes?: Record<string, number>
+}
+
+/**
+ * Traffic as a whole, not route by route.
+ *
+ * The routes table answers "which endpoint", which is only half of what a
+ * traffic screen is for: whether the application is busy, whether failures are
+ * server faults or bad requests, and when they happened are questions about
+ * the total, and no row in a per-route list carries them.
+ */
+export interface MonitorTrafficStats {
+  total: number
+  failed: number
+  /** Failed over total, 0–1. Undefined when nothing was counted. */
+  rate?: number
+  /** Requests per status class across every route. */
+  classes: Record<string, number>
+  /** Requests per method, busiest first. */
+  methods: { method: string, count: number }[]
+  /** Requests over time, in the same buckets the error chart uses. */
+  trend: { bucket: number, total: number, failed: number }[]
+  routes: MonitorRouteStat[]
 }
 
 /** How many people saw an error, and who saw the most. */
@@ -363,6 +389,11 @@ export interface MonitorIssue {
   firstSeen: number
   lastSeen: number
   resolved: boolean
+  /**
+   * Put aside as not worth acting on — an extension, a bot, someone else's
+   * problem. Separate from `resolved`, which claims a fix that was made.
+   */
+  ignored: boolean
   /** `file.ts:12` — where it broke, taken from the most recent occurrence. */
   culprit?: string
   /** Request path, for server errors and client page context. */

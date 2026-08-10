@@ -155,6 +155,11 @@ export async function migrate(db: Database, dialect: MonitorDialect = 'sqlite'):
     ['route', TYPES[dialect].text],
     ['method', TYPES[dialect].key(16)],
     ['status', TYPES[dialect].int],
+    // Distinct from `resolved`, which claims a fix. This one says "not mine" —
+    // a browser extension, a bot, a page a crawler asks for. Without it the
+    // only way to quiet noise is to mark it fixed, which makes the resolved
+    // list a lie and eventually makes the open list unreadable.
+    ['ignored', TYPES[dialect].int],
   ])
 
   // Facets, added after the first release. Existing rows keep NULL and show

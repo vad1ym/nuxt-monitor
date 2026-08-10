@@ -31,6 +31,9 @@ export default defineEventHandler(async (event) => {
     windowMs,
     releases: wants('releases') ? await store.releases() : undefined,
     routes: wants('routes') ? await store.routes(since) : undefined,
+    // The traffic screen: the routes table plus the totals no per-route row
+    // can carry — how busy, which status classes, which methods, and when.
+    traffic: wants('traffic') ? await store.traffic(windowMs) : undefined,
     sessions: wants('sessions') ? await store.sessions(since) : undefined,
     // Environments are the facet counts over the window — the same data the
     // filter panel uses, read as a screen rather than as a control.

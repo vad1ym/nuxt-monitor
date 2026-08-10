@@ -8,6 +8,7 @@ import type {
   MonitorRelease,
   MonitorRouteStat,
   MonitorSessionStats,
+  MonitorTrafficStats,
   MonitorSide,
 } from '../../types'
 import { FACET_NAMES, facetClause, facetColumn } from './facets'
@@ -29,6 +30,22 @@ import { changesOf } from './db'
  * these doing it again on every internal call.
  */
 
+/**
+ * How the list is ordered.
+ *
+ * The order used to be fixed and unnamed, which left the screen unable to say
+ * whether it was showing the newest or the worst — two different questions,
+ * both asked daily. `first-seen` is the third: it is what "what appeared
+ * today" means.
+ */
+export type MonitorIssueSort = 'last-seen' | 'count' | 'first-seen'
+
+const ORDER: Record<MonitorIssueSort, string> = {
+  'last-seen': 'last_seen DESC',
+  'count': 'count DESC, last_seen DESC',
+  'first-seen': 'first_seen DESC',
+}
+
 export async function listIssues(db: Database, filter: {
   side?: MonitorSide
   resolved?: boolean
@@ -38,6 +55,9 @@ export async function listIssues(db: Database, filter: {
   type?: string
   /** Keeps only issues with at least one occurrence matching every facet. */
   facets?: MonitorFacetFilter
+  /** Ignored issues are hidden unless this asks for them. */
+  ignored?: boolean
+  sort?: MonitorIssueSort
   limit?: number
   offset?: number
 } = {}): Promise<{ issues: MonitorIssue[], total: number }> {
@@ -60,6 +80,12 @@ export async function listIssues(db: Database, filter: {
     where.push('type = ?')
     params.push(filter.type)
   }
+
+  // Absent means "not ignored" rather than "either": noise that has been put
+  // aside should stay aside without every caller remembering to say so.
+  // `IS NULL` is carried because rows written before the column existed have
+  // no value, and they are not ignored.
+  where.push(filter.ignored ? 'ignored = 1' : '(ignored IS NULL OR ignored = 0)')
 
   if (filter.search) {
     // Searching the fields a person would recall: what it said, what kind of
@@ -92,8 +118,12 @@ export async function listIssues(db: Database, filter: {
   const limit = Math.min(filter.limit ?? 50, 200)
   const offset = filter.offset ?? 0
 
+  // Looked up from a fixed table, never interpolated from the request: this
+  // string lands in SQL, and a caller-supplied one would be an injection.
+  const order = ORDER[filter.sort ?? 'last-seen'] ?? ORDER['last-seen']
+
   const rows = await db.prepare(`
-    SELECT * FROM issues ${clause} ORDER BY last_seen DESC LIMIT ? OFFSET ?
+    SELECT * FROM issues ${clause} ORDER BY ${order} LIMIT ? OFFSET ?
   `).all(...params, limit, offset) as Record<string, unknown>[]
 
   const total = await db.prepare(`
@@ -321,6 +351,8 @@ export async function releases(db: Database, limit = 50): Promise<MonitorRelease
  * a healthy high-traffic route is context for the ones that are not.
  */
 export async function routes(db: Database, since: number, limit = 100): Promise<MonitorRouteStat[]> {
+  const sinceBucket = bucketOf(since, BUCKET_MS)
+
   const rows = await db.prepare(`
     SELECT
       route,
@@ -331,19 +363,131 @@ export async function routes(db: Database, since: number, limit = 100): Promise<
     GROUP BY route
     ORDER BY failed DESC, total DESC
     LIMIT ?
-  `).all(bucketOf(since, BUCKET_MS), limit) as Record<string, number | string>[]
+  `).all(sinceBucket, limit) as Record<string, number | string>[]
+
+  /**
+   * Method and status class per route, in one pass rather than per row.
+   *
+   * Both are already stored and neither was ever shown, which left the table
+   * unable to say whether a route's failures were 5xx or 4xx — the difference
+   * between a fault and a caller sending nonsense.
+   */
+  const detail = await db.prepare(`
+    SELECT route, method, class, SUM(count) AS count
+    FROM request_stats
+    WHERE bucket >= ?
+    GROUP BY route, method, class
+  `).all(sinceBucket) as Record<string, number | string>[]
+
+  const methods = new Map<string, Map<string, number>>()
+  const classes = new Map<string, Record<string, number>>()
+
+  for (const row of detail) {
+    const route = String(row.route)
+    const count = Number(row.count)
+
+    const perMethod = methods.get(route) ?? new Map<string, number>()
+    perMethod.set(String(row.method), (perMethod.get(String(row.method)) ?? 0) + count)
+    methods.set(route, perMethod)
+
+    const perClass = classes.get(route) ?? {}
+    perClass[String(row.class)] = (perClass[String(row.class)] ?? 0) + count
+    classes.set(route, perClass)
+  }
 
   return rows.map((row) => {
+    const route = String(row.route)
     const total = Number(row.total)
     const failed = Number(row.failed)
 
     return {
-      route: String(row.route),
+      route,
       total,
       failed,
       rate: total ? failed / total : 0,
+      methods: [...(methods.get(route) ?? new Map())]
+        .sort((a, b) => b[1] - a[1])
+        .map(([method]) => method),
+      classes: classes.get(route) ?? {},
     }
   })
+}
+
+/**
+ * The traffic screen, in one call.
+ *
+ * Assembled server-side for the same reason the overview is: totals and a
+ * chart fetched separately can disagree, and on a monitoring screen a
+ * disagreement costs more trust than the round trip saves.
+ */
+export async function traffic(db: Database, windowMs: number, now = Date.now()): Promise<MonitorTrafficStats> {
+  const since = now - windowMs
+  const sinceBucket = bucketOf(since, BUCKET_MS)
+
+  const byClass = await db.prepare(`
+    SELECT class, SUM(count) AS count
+    FROM request_stats
+    WHERE bucket >= ?
+    GROUP BY class
+  `).all(sinceBucket) as Record<string, number | string>[]
+
+  const byMethod = await db.prepare(`
+    SELECT method, SUM(count) AS count
+    FROM request_stats
+    WHERE bucket >= ?
+    GROUP BY method
+    ORDER BY count DESC
+  `).all(sinceBucket) as Record<string, number | string>[]
+
+  /**
+   * Regrouped into chart-sized buckets rather than the minute they are stored
+   * in.
+   *
+   * Counters are kept per minute, which over a day is 1440 columns — far more
+   * than a chart can draw, and drawn raw it collapses into a few wide bars
+   * wherever traffic was sparse. Bucketing to the same 48 columns the error
+   * chart uses makes the two comparable, which is the point of showing them on
+   * one screen.
+   */
+  const step = Math.max(BUCKET_MS, Math.floor(windowMs / 48 / BUCKET_MS) * BUCKET_MS)
+
+  const trend = await db.prepare(`
+    SELECT
+      (bucket / ?) * ?                                        AS slot,
+      SUM(count)                                              AS total,
+      COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0) AS failed
+    FROM request_stats
+    WHERE bucket >= ?
+    -- Repeated rather than aliased: Postgres resolves GROUP BY before the
+    -- select list, so an alias there is an unknown column.
+    GROUP BY (bucket / ?) * ?
+    ORDER BY slot
+  `).all(step, step, sinceBucket, step, step) as Record<string, number>[]
+
+  const classes: Record<string, number> = {}
+
+  for (const row of byClass) {
+    classes[String(row.class)] = Number(row.count)
+  }
+
+  const total = Object.values(classes).reduce((sum, count) => sum + count, 0)
+  const failed = classes['5xx'] ?? 0
+
+  return {
+    total,
+    failed,
+    // Undefined rather than zero when nothing was counted: "no traffic" and
+    // "no failures" are different answers.
+    rate: total ? failed / total : undefined,
+    classes,
+    methods: byMethod.map(row => ({ method: String(row.method), count: Number(row.count) })),
+    trend: trend.map(row => ({
+      bucket: Number(row.slot),
+      total: Number(row.total),
+      failed: Number(row.failed),
+    })),
+    routes: await routes(db, since),
+  }
 }
 
 /**
@@ -535,6 +679,23 @@ export async function overview(db: Database, windowMs = 24 * 60 * 60 * 1_000, no
 export async function setResolved(db: Database, fp: string, resolved: boolean): Promise<boolean> {
   const result = await db.prepare('UPDATE issues SET resolved = ? WHERE fingerprint = ?')
     .run(resolved ? 1 : 0, fp)
+
+  return changesOf(result) > 0
+}
+
+/**
+ * Puts an issue aside, or brings it back.
+ *
+ * Kept apart from `setResolved` because the two say different things and both
+ * are worth being able to say. "Resolved" claims a fix; "ignored" claims the
+ * error is not the application's problem — an extension injecting into the
+ * page, a crawler asking for a path that never existed. Folding them together
+ * would mean marking noise as fixed, which quietly turns the resolved list
+ * into a list of things that were never done.
+ */
+export async function setIgnored(db: Database, fp: string, ignored: boolean): Promise<boolean> {
+  const result = await db.prepare('UPDATE issues SET ignored = ? WHERE fingerprint = ?')
+    .run(ignored ? 1 : 0, fp)
 
   return changesOf(result) > 0
 }

@@ -1,6 +1,7 @@
 import { defineEventHandler, getQuery } from '#imports'
 import { parseSide, requireDashboardAccess, useMonitorStore } from '../context'
 import { parseFacetFilter } from '../facets'
+import type { MonitorIssueSort } from '../queries'
 
 export default defineEventHandler(async (event) => {
   requireDashboardAccess(event)
@@ -15,6 +16,8 @@ export default defineEventHandler(async (event) => {
   return store.listIssues({
     side: parseSide(query.side),
     resolved,
+    ignored: query.ignored === 'true' || query.ignored === '1',
+    sort: parseSort(query.sort),
     search: toText(query.search),
     type: toText(query.type),
     facets: parseFacetFilter(query),
@@ -22,6 +25,19 @@ export default defineEventHandler(async (event) => {
     offset: toInt(query.offset, 0),
   })
 })
+
+/**
+ * Only a name from the fixed set reaches the query.
+ *
+ * The sort becomes an `ORDER BY` clause, so an unrecognised value must fall
+ * back rather than travel — the query looks it up in a table for the same
+ * reason.
+ */
+function parseSort(value: unknown): MonitorIssueSort | undefined {
+  const sorts: MonitorIssueSort[] = ['last-seen', 'count', 'first-seen']
+
+  return sorts.find(sort => sort === value)
+}
 
 function toText(value: unknown): string | undefined {
   const text = typeof value === 'string' ? value.trim() : ''
