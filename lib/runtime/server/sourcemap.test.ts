@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { SourcemapResolver, isSafeRelease, parseStack } from './sourcemap'
+import { SourcemapResolver, parseStack } from './sourcemap'
 
 describe('parseStack', () => {
   it('parses V8 frames with and without a function name', () => {
@@ -481,6 +481,91 @@ describe('SourcemapResolver and untrusted stacks', () => {
       .toContain('/app/.output/server/chunks/nitro.mjs.map')
   })
 
+  /**
+   * The map is only half the boundary.
+   *
+   * `candidatePaths` decides which map an untrusted frame may open, but a map
+   * is a file full of paths: following its `sources` unchecked handed the
+   * choice of the next file back to whoever posted the stack, and the lines
+   * came back as the excerpt. These cover the second read.
+   */
+  describe('reading the original source', () => {
+    let root: string
+
+    /**
+     * A legitimately-placed map for a published asset whose `sources` points
+     * wherever the test asks. No `sourcesContent`, so disk is consulted.
+     */
+    function setup(source: string): SourcemapResolver {
+      root = mkdtempSync(join(tmpdir(), 'monitor-source-'))
+
+      const maps = join(root, 'maps')
+
+      mkdirSync(maps, { recursive: true })
+      mkdirSync(join(root, 'secrets'), { recursive: true })
+      writeFileSync(join(root, 'secrets', 'creds.env'), 'before\nDB_PASSWORD=hunter2\nafter\n')
+      writeFileSync(join(maps, 'app.js'), 'const a = 1\nconst b = 2\n')
+
+      writeFileSync(join(maps, 'app.js.map'), JSON.stringify({
+        version: 3,
+        file: 'app.js',
+        sources: [source],
+        names: [],
+        mappings: 'AAAA',
+      }))
+
+      return new SourcemapResolver({
+        mapsDir: maps,
+        serverDir: join(root, 'server'),
+        baseURL: '/',
+        cdnURL: '',
+      })
+    }
+
+    function excerpt(resolver: SourcemapResolver, trusted: boolean): string {
+      const [frame] = resolver.resolveStack(
+        'Error: x\n    at f (https://app.example.com/app.js:1:1)',
+        { trusted },
+      )
+
+      return frame?.original?.context?.map(line => line.text).join('\n') ?? ''
+    }
+
+    afterEach(() => {
+      rmSync(root, { recursive: true, force: true })
+    })
+
+    it('refuses a `sources` entry that climbs out of the map directory', () => {
+      expect(excerpt(setup('../secrets/creds.env'), false)).not.toContain('hunter2')
+    })
+
+    it('refuses an absolute `sources` entry', () => {
+      // Placed by `setup` itself, since the path is only known once the
+      // temporary directory exists.
+      const resolver = setup('/placeholder')
+      const secret = join(root, 'secrets', 'creds.env')
+
+      writeFileSync(join(root, 'maps', 'app.js.map'), JSON.stringify({
+        version: 3,
+        file: 'app.js',
+        sources: [secret],
+        names: [],
+        mappings: 'AAAA',
+      }))
+
+      expect(excerpt(resolver, false)).not.toContain('hunter2')
+    })
+
+    it('still reads a source beside the map', () => {
+      expect(excerpt(setup('./app.js'), false)).toContain('const a = 1')
+    })
+
+    /** Server stacks come from this process, so they may name their own files. */
+    it('lets a trusted frame read outside the map directory', () => {
+      expect(excerpt(setup('../secrets/creds.env'), true)).toContain('hunter2')
+    })
+  })
+
   it('does not hand an untrusted lookup a trusted result from cache', () => {
     const shared = resolver()
     const load = (shared as unknown as {
@@ -616,10 +701,6 @@ describe('SourcemapResolver across builds', () => {
     for (const release of ['../../etc', '..', '1.0.0', 'x y', undefined]) {
       expect(resolver.resolveFrame(at('older'), { release }).original?.line).toBe(6)
     }
-
-    // The guard itself still holds, for anything else that builds a path.
-    expect(isSafeRelease('../../etc')).toBe(false)
-    expect(isSafeRelease('1.4.0')).toBe(true)
   })
 
   /**

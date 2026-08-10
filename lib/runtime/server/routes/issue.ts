@@ -15,7 +15,6 @@ function useResolver(): SourcemapResolver {
       mapsDir: config.mapsDir,
       serverDir: config.serverDir,
       archiveDir: config.archiveDir,
-      release: config.release,
       baseURL: config.baseURL,
       cdnURL: config.cdnURL,
       // In dev there are no maps on disk; they come back from Vite.

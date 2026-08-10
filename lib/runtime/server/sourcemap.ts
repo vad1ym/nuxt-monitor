@@ -15,17 +15,15 @@ export interface ResolverOptions {
   /** Where this build's client maps were moved after the build. */
   mapsDir: string
   /**
-   * Root holding one directory of maps per release, including this one.
+   * Root holding one directory of maps per build, including this one.
    *
    * A deploy replaces `mapsDir` wholesale, so without an archive every trace
    * from the previous version stops resolving — and those are exactly the
-   * traces worth reading in the minutes after a release. Maps are kept here
-   * under the release that produced them, and an event resolves against the
-   * release it was stamped with rather than against whatever is deployed now.
+   * traces worth reading in the minutes after a release. Every archived build
+   * is searched by asset name rather than selected by release; see
+   * `searchDirs` for why that is both sound and necessary.
    */
   archiveDir?: string
-  /** The release this build was stamped with, if any. */
-  release?: string
   /** Nitro's server output, where server maps sit beside their code. */
   serverDir: string
   /** Usually `/_nuxt/`. */
@@ -62,11 +60,14 @@ export interface ResolveOptions {
    */
   trusted?: boolean
   /**
-   * The release the event was stamped with, used to pick the matching maps.
+   * The release the event was stamped with.
    *
-   * Absent, or naming a release with no archived maps, falls back to the
-   * running build's — which is right for the common case where the event came
-   * from the version currently deployed.
+   * Accepted but not used to choose a map: a release name does not identify a
+   * build (`dev` is reused, a tag gets rebuilt), so lookups go by asset name
+   * across every archived build instead — see `searchDirs`. Kept on the type
+   * because callers have it and a future change may want it; it must never
+   * become part of a path again, since it arrives through unauthenticated
+   * ingest.
    */
   release?: string
 }
@@ -76,28 +77,11 @@ export interface ResolveOptions {
  *
  * Trust is part of it: without that, a client-reported frame could be handed a
  * map only a trusted lookup was permitted to read — exactly what the
- * restriction exists to prevent. So is the release: the same asset name means
- * a different file in each build, and a shared key would answer a 1.3.0 frame
- * with 1.4.0's map — resolving to a real-looking but wrong source line, which
- * is worse than not resolving at all. Built in one place because the writer
- * and the reader silently disagreed the first time it was spelled out twice.
+ * restriction exists to prevent. The release is deliberately *not* part of it;
+ * see `searchDirs` for why the asset name alone identifies a build.
  */
-function cacheKey(file: string, trusted: boolean, release: string): string {
-  return `${trusted ? 't' : 'u'}:${release}:${file}`
-}
-
-/**
- * Whether a release name may be used as a directory name.
- *
- * The release reaching `resolveStack` comes off an event, and client events
- * arrive through unauthenticated ingest — so it is an attacker's string, used
- * to build a path. Restricted to what a version or a commit SHA actually looks
- * like; anything else falls back to the current build's maps.
- */
-const SAFE_RELEASE = /^[\w.@-]{1,64}$/
-
-export function isSafeRelease(release: string | undefined): release is string {
-  return Boolean(release) && SAFE_RELEASE.test(release!) && release !== '.' && release !== '..'
+function cacheKey(file: string, trusted: boolean): string {
+  return `${trusted ? 't' : 'u'}:${file}`
 }
 
 /** Whether a resolved path stays within a directory. */
@@ -282,9 +266,7 @@ export class SourcemapResolver {
   }
 
   private keyFor(file: string, options: ResolveOptions): string {
-    // The release no longer selects a directory, so it no longer belongs in
-    // the key: the same asset name resolves the same way whoever asks.
-    return cacheKey(file, options.trusted !== false, '')
+    return cacheKey(file, options.trusted !== false)
   }
 
   resolveFrame(frame: MonitorFrame, options: ResolveOptions = {}): MonitorFrame {
@@ -321,7 +303,13 @@ export class SourcemapResolver {
         line: position.line ?? 0,
         column: (position.column ?? 0) + 1,
         function: position.name ?? undefined,
-        context: this.sourceContext(map, dir, position.source, position.line ?? 0),
+        context: this.sourceContext(
+          map,
+          dir,
+          position.source,
+          position.line ?? 0,
+          options.trusted !== false,
+        ),
       },
     }
   }
@@ -338,12 +326,16 @@ export class SourcemapResolver {
     mapDir: string | undefined,
     source: string,
     line: number,
+    trusted: boolean,
   ): { line: number, text: string }[] | undefined {
     if (line <= 0) {
       return undefined
     }
 
-    const content = sourceContentFor(map, source) ?? this.readSource(source, mapDir)
+    // `sourcesContent` is part of the map that was already cleared for this
+    // lookup, so it stays available either way; only the read from disk below
+    // is restricted.
+    const content = sourceContentFor(map, source) ?? this.readSource(source, mapDir, trusted)
 
     if (!content) {
       return undefined
@@ -372,10 +364,30 @@ export class SourcemapResolver {
    * a report that shows the failing line and one that just names it. Reading
    * the file at all is only reasonable because this runs on the machine that
    * built the code.
+   *
+   * For an untrusted frame that reasoning stops at the map. `candidatePaths`
+   * decides which *map* a client-reported frame may open, but a map is a file
+   * of paths, and following its `sources` unchecked handed the choice of the
+   * next file straight back to whoever posted the stack — `../../../etc/passwd`
+   * as a `sources` entry read exactly that, and the lines came back to the
+   * dashboard as the excerpt. So the same containment `candidatePaths` applies
+   * to the map applies here to the source: inside the map's own directory, and
+   * never an absolute path.
    */
-  private readSource(source: string, mapDir: string | undefined): string | undefined {
+  private readSource(source: string, mapDir: string | undefined, trusted: boolean): string | undefined {
     // Strip webpack-style protocol prefixes (`webpack://`, `file://`).
     const cleaned = source.replace(/^[\w-]+:\/\/[^/]*/, '')
+
+    if (!trusted) {
+      if (!mapDir || isAbsolute(cleaned)) {
+        return undefined
+      }
+
+      const inside = resolve(mapDir, cleaned)
+
+      return isInside(mapDir, inside) ? this.readFile(inside) : undefined
+    }
+
     const candidate = isAbsolute(cleaned)
       ? cleaned
       : mapDir
@@ -386,8 +398,13 @@ export class SourcemapResolver {
       return undefined
     }
 
+    return this.readFile(candidate)
+  }
+
+  /** Reads a file, treating anything unreadable as simply absent. */
+  private readFile(path: string): string | undefined {
     try {
-      return existsSync(candidate) ? readFileSync(candidate, 'utf8') : undefined
+      return existsSync(path) ? readFileSync(path, 'utf8') : undefined
     }
     catch {
       return undefined
