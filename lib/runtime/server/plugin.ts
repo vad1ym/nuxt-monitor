@@ -1,0 +1,277 @@
+import type { H3Event } from 'h3'
+import { defineNitroPlugin, getRequestHeader, getRequestHeaders, getResponseStatus } from '#imports'
+import type { MonitorEvent, MonitorFacets } from '../../types'
+import { scrub, scrubUrl } from '../shared/scrub'
+import { parseUserAgent } from '../shared/user-agent'
+import type { MonitorRuntimeConfig } from './context'
+import { closeMonitorStore, monitorConfig, useMonitorStore } from './context'
+import type { MonitorStore } from './store'
+
+/**
+ * Server-side collection.
+ *
+ * Every server error path in Nitro funnels through `captureError`, which
+ * dispatches this one hook — request and response handlers, plugins, cached
+ * function failures, and the process-level `unhandledRejection` /
+ * `uncaughtException` traps. One subscription covers all of them.
+ */
+export default defineNitroPlugin((nitroApp) => {
+  const config = monitorConfig()
+  const store = useMonitorStore()
+
+  nitroApp.hooks.hook('error', (error: Error, context: { event?: H3Event, tags?: string[] }) => {
+    try {
+      // The dashboard's own failures must not be reported into the dashboard:
+      // a broken store would otherwise feed itself.
+      if (context.event && isMonitorRoute(context.event, config.route)) {
+        return
+      }
+
+      // Counted here as well as in `afterResponse`, because a thrown request
+      // never reaches that hook: h3 runs `onError` and returns, so the
+      // failures — the only ones the rate is about — would all be missing
+      // from the denominator.
+      if (context.event) {
+        countOnce(context.event, store, statusOf(error, context.event))
+      }
+
+      if (isDuplicate(error, context.event)) {
+        return
+      }
+
+      store.capture(toEvent(error, context, config))
+    }
+    catch {
+      // Capture must never add a second failure to the one being reported.
+    }
+  })
+
+  /**
+   * Counts every finished request.
+   *
+   * An error count on its own says nothing about severity: ten failures out of
+   * ten requests and ten out of a million are different situations. Successes
+   * are recorded as counters only — a route shape, a method and a status
+   * class — never bodies, headers or addresses.
+   */
+  nitroApp.hooks.hook('afterResponse', (event: H3Event) => {
+    try {
+      if (isMonitorRoute(event, config.route)) {
+        return
+      }
+
+      countOnce(event, store, getResponseStatus(event) || 200)
+    }
+    catch {
+      // Counting must never interfere with serving.
+    }
+  })
+
+  /**
+   * Shutdown.
+   *
+   * Flushing alone leaves the SQLite handle open and both timers scheduled,
+   * which a long-running process never notices but a dev server reloading on
+   * every edit certainly does — one leaked connection and one leaked interval
+   * per reload. `closeMonitorStore` flushes first, so nothing buffered is lost.
+   */
+  nitroApp.hooks.hook('close', () => {
+    try {
+      closeMonitorStore()
+    }
+    catch {
+      // Shutdown is not a place to throw.
+    }
+  })
+})
+
+/**
+ * Whether a request belongs to the dashboard, which is excluded from
+ * collection so a broken store cannot feed itself.
+ *
+ * The boundary has to be a path segment. A plain prefix match also swallowed
+ * `/_monitoring` and `/_monitor-marketing`, quietly dropping every error from a
+ * route that only happened to start with the same letters.
+ */
+function isMonitorRoute(event: H3Event, route: string): boolean {
+  const path = event.path ?? ''
+
+  if (!path.startsWith(route)) {
+    return false
+  }
+
+  const next = path[route.length]
+
+  return next === undefined || next === '/' || next === '?'
+}
+
+/**
+ * Counts a request exactly once.
+ *
+ * Both hooks can fire for one request — an error inside `beforeResponse`, for
+ * instance — and counting twice would quietly inflate the denominator that
+ * every rate on the overview is divided by.
+ */
+function countOnce(event: H3Event, store: MonitorStore, status: number): void {
+  const state = event.context as { _monitorCounted?: boolean }
+
+  if (state._monitorCounted) {
+    return
+  }
+
+  state._monitorCounted = true
+
+  store.countRequest(event.path ?? '/', event.method ?? 'GET', status)
+}
+
+/**
+ * The status a failed request ended with.
+ *
+ * `createError({ statusCode })` carries its own; anything else that escaped a
+ * handler became a 500 by the time the client saw it.
+ */
+function statusOf(error: Error, event: H3Event): number {
+  const declared = (error as { statusCode?: number }).statusCode
+
+  if (typeof declared === 'number' && declared >= 100 && declared <= 599) {
+    return declared
+  }
+
+  // The response may not be written yet, in which case h3 reports 200.
+  const written = getResponseStatus(event)
+
+  return written && written >= 400 ? written : 500
+}
+
+/**
+ * The error's constructor name, recovered from the stack when necessary.
+ *
+ * h3 rewraps a thrown error in an `H3Error` before it reaches this hook, so
+ * `error.name` reads `Error` even when a `TypeError` was thrown. The first
+ * stack line still begins with the original name, and keeping it matters:
+ * `TypeError` versus `Error` is a real distinction when reading a report, and
+ * it feeds into how issues are grouped.
+ */
+function errorType(error: Error): string {
+  const name = error?.name
+
+  if (name && name !== 'Error' && name !== 'H3Error') {
+    return name
+  }
+
+  // "TypeError: Cannot read properties of null" → "TypeError"
+  const header = error?.stack?.split('\n')[0] ?? ''
+  const match = /^([A-Za-z_$][\w$]*(?:Error|Exception))\s*:/.exec(header.trim())
+
+  return match?.[1] ?? name ?? 'Error'
+}
+
+/**
+ * Recognises a fault already reported earlier in the same request.
+ *
+ * A render failure reaches this hook twice: once from Nuxt's `vue:error`
+ * bridge and again when the error propagates out of the handler. The two are
+ * not the same object — Nuxt wraps the original in an `H3Error`, which also
+ * loses the constructor name — so identity and the fingerprint both miss it.
+ * The stack survives the wrapping unchanged, and within one request it
+ * identifies the fault precisely.
+ */
+function isDuplicate(error: Error, event: H3Event | undefined): boolean {
+  const stack = error?.stack
+
+  // Without a stack there is nothing dependable to compare.
+  if (!event || !stack) {
+    return false
+  }
+
+  const store = (event.context as { _monitorSeen?: Set<string> })._monitorSeen ??= new Set()
+
+  // The head carries the message and the throw site, which is what differs
+  // between genuinely distinct faults.
+  const key = stack.split('\n').slice(0, 3).join('\n')
+
+  if (store.has(key)) {
+    return true
+  }
+
+  store.add(key)
+
+  return false
+}
+
+function toEvent(
+  error: Error,
+  context: { event?: H3Event, tags?: string[] },
+  config: MonitorRuntimeConfig,
+): MonitorEvent {
+  const event = context.event
+
+  return {
+    side: 'server',
+    type: errorType(error),
+    message: error?.message || String(error),
+    stack: error?.stack,
+    timestamp: Date.now(),
+    tags: context.tags,
+    context: event ? requestContext(event, error, config.scrubKeys) : undefined,
+    facets: serverFacets(event, config.release),
+  }
+}
+
+/**
+ * Facets for a server error.
+ *
+ * The browser fields describe whoever made the request — a server error on a
+ * page render still happened *to* somebody, and knowing it only breaks on one
+ * browser is as useful here as it is on the client. There is no session id:
+ * `sessionStorage` is a browser thing, and inventing a server-side equivalent
+ * would mean issuing an identifier, which is exactly what this design avoids.
+ */
+function serverFacets(event: H3Event | undefined, release: string): MonitorFacets | undefined {
+  if (!event) {
+    return release ? { release } : undefined
+  }
+
+  const parsed = parseUserAgent(getRequestHeader(event, 'user-agent'))
+
+  return {
+    browser: parsed.browser,
+    browserVersion: parsed.browserVersion,
+    os: parsed.os,
+    osVersion: parsed.osVersion,
+    deviceType: parsed.deviceType,
+    release: release || undefined,
+  }
+}
+
+/**
+ * Request details worth having when reading the error later.
+ *
+ * The H3Event rides along in the error context, so this needs no separate
+ * request hook and no per-request bookkeeping.
+ */
+function requestContext(event: H3Event, error: Error, scrubKeys: string[]): Record<string, unknown> {
+  const options = { extraKeys: scrubKeys }
+
+  const context: Record<string, unknown> = {
+    url: scrubUrl(event.path ?? '', options),
+    method: event.method,
+    headers: scrub(getRequestHeaders(event), options),
+  }
+
+  // `createError({ statusCode })` is the normal way to signal an HTTP failure,
+  // and the code is the first thing you want to see.
+  const statusCode = (error as { statusCode?: number }).statusCode
+
+  if (typeof statusCode === 'number') {
+    context.statusCode = statusCode
+  }
+
+  const data = (error as { data?: unknown }).data
+
+  if (data !== undefined) {
+    context.data = scrub(data, options)
+  }
+
+  return context
+}

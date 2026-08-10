@@ -1,0 +1,10 @@
+# Not a workspace — the module is the root package and `example/` installs it
+# through `file:..`. This file exists because pnpm 11 reads these settings here
+# and no longer from the `pnpm` key in package.json.
+allowBuilds:
+  esbuild: true
+  vue-demi: true
+
+onlyBuiltDependencies:
+  - esbuild
+  - vue-demi

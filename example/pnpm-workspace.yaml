@@ -1,0 +1,8 @@
+# Not a workspace. The example installs with `--ignore-workspace`, so it needs
+# its own build approvals rather than inheriting the root's — without this,
+# pnpm stops to ask about esbuild and exits non-zero on CI.
+allowBuilds:
+  esbuild: set this to true or false
+
+onlyBuiltDependencies:
+  - esbuild

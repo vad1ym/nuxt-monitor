@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A second push to the same branch makes the first run irrelevant.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+
+    strategy:
+      # One version failing should not hide the result of the others.
+      fail-fast: false
+      matrix:
+        # The floor the module declares, and current.
+        #
+        # 22.13 is measured, not assumed: `node:sqlite` landed in 22.5 behind
+        # `--experimental-sqlite`, and `require('node:sqlite')` throws "No such
+        # built-in module" on 22.5 through 22.12. It became available without a
+        # flag in 22.13. The matrix is what keeps `engines` honest.
+        node: ['22.13', '22', '24']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # Build first: the e2e suite runs the example against the built module,
+      # so a stale `dist` would test the previous commit and pass.
+      - run: pnpm build
+
+      # The example installs the module from the root through `file:..`, which
+      # means it must be built by now, and that it is its own install rather
+      # than a workspace member.
+      - run: pnpm example:install
+
+      - run: pnpm lint
+
+      - run: pnpm typecheck
+
+      - run: pnpm test
+
+  # Separate from `verify`: the docs are prose and their build says nothing
+  # about the module, so failing them on three Node versions is noise.
+  docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm docs:build

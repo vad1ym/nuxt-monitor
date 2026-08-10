@@ -1,0 +1,24 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "./lib",
+    "outDir": "./dist",
+    "composite": true,
+    // nitropack contributes the `nitro` key and the Nitro hooks to Nuxt's
+    // types by declaration merging; without it here they are invisible.
+    "types": ["node", "nitropack"]
+  },
+  "include": ["lib/**/*.ts"],
+  // Runtime files resolve `#imports` and Nuxt's auto-imports, which exist only
+  // inside a Nuxt build. They ship as source and are compiled by the consuming
+  // app; building them here would only produce errors for imports that are
+  // fine at their destination.
+  "exclude": [
+    "lib/**/*.test.ts",
+    "client/**/*",
+    "lib/runtime/server/plugin.ts",
+    "lib/runtime/server/context.ts",
+    "lib/runtime/server/routes/**",
+    "lib/runtime/app/**"
+  ]
+}

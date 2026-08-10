@@ -1,0 +1,102 @@
+{
+  "name": "nuxt-monitor",
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Local-first error monitoring for Nuxt. No DSN, no account, no sourcemap upload.",
+  "license": "MIT",
+  "author": "Vadym Bulakh <bulakhvad@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vad1ym/nuxt-monitor.git"
+  },
+  "homepage": "https://github.com/vad1ym/nuxt-monitor#readme",
+  "bugs": "https://github.com/vad1ym/nuxt-monitor/issues",
+  "keywords": [
+    "nuxt",
+    "nuxt-module",
+    "error-tracking",
+    "monitoring",
+    "sourcemap",
+    "self-hosted"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/module.d.ts",
+      "import": "./dist/module.js"
+    }
+  },
+  "main": "./dist/module.js",
+  "types": "./dist/module.d.ts",
+  "files": [
+    "LICENSE",
+    "README.md",
+    "bin",
+    "dist"
+  ],
+  "bin": {
+    "monitor": "./bin/monitor.mjs"
+  },
+  "packageManager": "pnpm@11.1.3",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "scripts": {
+    "build": "pnpm build:client && pnpm build:module",
+    "build:module": "tsc --build --force && node scripts/copy-runtime.mjs",
+    "build:client": "vite build --config client/vite.config.ts",
+    "build:clean": "rm -rf dist tsconfig.tsbuildinfo && pnpm build",
+    "dev": "pnpm build && pnpm example:dev",
+    "dev:client": "vite --config client/vite.config.ts",
+    "example:install": "cd example && (pnpm install --ignore-workspace || true) && pnpm approve-builds --all && pnpm install --ignore-workspace --config.strictDepBuilds=false",
+    "example:dev": "pnpm --dir example dev",
+    "example:build": "pnpm build && pnpm --dir example build",
+    "example:preview": "pnpm --dir example preview",
+    "demo": "node scripts/demo.mjs",
+    "demo:dev": "node scripts/demo.mjs --dev",
+    "seed": "node scripts/seed.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "vitest run --project e2e",
+    "docs:dev": "vitepress dev docs",
+    "docs:build": "vitepress build docs",
+    "docs:preview": "vitepress preview docs",
+    "typecheck": "tsc --noEmit",
+    "changelog": "changelogen",
+    "changelog:dry": "changelogen --no-output",
+    "release": "changelogen --release",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "verify": "pnpm build && pnpm lint && pnpm typecheck && pnpm test"
+  },
+  "dependencies": {
+    "@jridgewell/trace-mapping": "^0.3.31",
+    "@nuxt/kit": "^4.5.1",
+    "defu": "^6.1.7",
+    "sirv": "^3.0.2",
+    "ua-parser-js": "^1.0.41"
+  },
+  "peerDependencies": {
+    "nuxt": "^4.0.0"
+  },
+  "devDependencies": {
+    "@antfu/eslint-config": "^9.2.0",
+    "@nuxt/schema": "^4.5.1",
+    "@nuxt/test-utils": "^3.19.2",
+    "@nuxt/ui": "^4.1.0",
+    "@types/node": "^26.1.2",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "changelogen": "^0.6.2",
+    "eslint": "^10.8.0",
+    "h3": "^1.15.11",
+    "nitropack": "^2.13.4",
+    "nuxt": "^4.5.1",
+    "playwright-core": "^1.56.0",
+    "tailwindcss": "^4.1.0",
+    "typescript": "5.9.3",
+    "vite": "^7.1.5",
+    "vitepress": "^1.6.4",
+    "vitest": "^4.1.10",
+    "vue": "^3.5.22",
+    "vue-router": "^4.5.0"
+  }
+}

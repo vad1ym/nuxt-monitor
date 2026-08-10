@@ -1,0 +1,88 @@
+/**
+ * Collapses request paths into route shapes.
+ *
+ * Counters are kept per route, so the raw path cannot be the key: `/users/1`,
+ * `/users/2` and a million more would each become a row, and the table would
+ * grow with traffic rather than with the size of the application. Replacing
+ * the variable segments gives one row per endpoint, which is what a rate is
+ * meaningful over.
+ */
+
+const MAX_SEGMENTS = 12
+const MAX_LENGTH = 200
+
+/** Segments that are values rather than route structure. */
+const PATTERNS: [RegExp, string][] = [
+  [/^\d+$/, ':id'],
+  [/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, ':uuid'],
+  // Mongo-style ids and other long hex runs.
+  [/^[0-9a-f]{16,}$/i, ':hash'],
+  // Slugs ending in an id: `my-post-1234`.
+  [/^[\w-]*-\d{2,}$/, ':slug'],
+]
+
+export function normalizeRoute(path: string | undefined): string {
+  if (!path) {
+    return '/'
+  }
+
+  // The query string is per-request detail, not part of the route.
+  const [withoutQuery] = path.split('?')
+  const trimmed = (withoutQuery ?? '').slice(0, MAX_LENGTH)
+
+  if (!trimmed || trimmed === '/') {
+    return '/'
+  }
+
+  const segments = trimmed.split('/').filter(Boolean)
+
+  if (segments.length > MAX_SEGMENTS) {
+    // Deeper than any real route; collapse the tail rather than keeping an
+    // unbounded key.
+    return `/${segments.slice(0, MAX_SEGMENTS).map(normalizeSegment).join('/')}/*`
+  }
+
+  return `/${segments.map(normalizeSegment).join('/')}`
+}
+
+function normalizeSegment(segment: string): string {
+  // A file extension marks an asset path, which is structure worth keeping.
+  if (/\.[a-z0-9]{1,8}$/i.test(segment)) {
+    return normalizeAsset(segment)
+  }
+
+  for (const [pattern, replacement] of PATTERNS) {
+    if (pattern.test(segment)) {
+      return replacement
+    }
+  }
+
+  // Anything else long and opaque is almost certainly a token or an id.
+  return segment.length > 40 ? ':value' : segment
+}
+
+/** Keeps the extension, hides the build hash. */
+function normalizeAsset(segment: string): string {
+  const dot = segment.lastIndexOf('.')
+  const name = segment.slice(0, dot)
+  const extension = segment.slice(dot)
+
+  // `entry.C2V2OSOE.js` and `entry.6A6825Cy.js` are the same asset.
+  const withoutHash = name.replace(/[.-][\w-]{8,}$/, '')
+
+  return `${withoutHash === name ? name : `${withoutHash}.*`}${extension}`
+}
+
+/** `500` → `5xx`, so counters stay small and read as classes. */
+export function statusClass(status: number): string {
+  if (!Number.isFinite(status) || status < 100 || status > 599) {
+    return 'unknown'
+  }
+
+  return `${Math.floor(status / 100)}xx`
+}
+
+/** Start of the bucket a timestamp belongs to. */
+export function bucketOf(timestamp: number, bucketMs: number): number {
+  return Math.floor(timestamp / bucketMs) * bucketMs
+}

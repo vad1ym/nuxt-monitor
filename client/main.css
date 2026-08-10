@@ -1,0 +1,34 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/* Tailwind v4 resolves `dark:` from `prefers-color-scheme` unless told
+   otherwise. The dashboard picks its own theme, so bind the variant to the
+   class on <html> instead. */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/**
+ * Deliberately almost empty.
+ *
+ * The palette lives in the Vite plugin config (green primary, zinc neutral —
+ * Nuxt UI's own defaults), and component styling belongs to `:ui` props. Only
+ * rules that `:ui` cannot express go here.
+ */
+
+/* The dashboard is dark, always: it is a tool, not a page, and the user's
+   system preference should not change how a stack trace reads.
+   The tokens come from `.dark` on <html>; painting the page with them is
+   still ours to do, since nothing else sets a background on `body`. */
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--ui-bg);
+  color: var(--ui-text);
+}
+
+/* Source excerpts and stack frames are the substance of this UI, so give them
+   a real monospace stack rather than the browser default. */
+@theme static {
+  --font-mono: ui-monospace, "SF Mono", "Menlo", "Consolas", monospace;
+}

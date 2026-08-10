@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Dark, unconditionally: this is a debugging tool, and the reading of a
+     stack trace should not depend on a system preference. -->
+<html lang="en" class="dark">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- The dashboard shows stack traces and request data; keep it out of
+         referrers and out of search results. -->
+    <meta name="referrer" content="no-referrer">
+    <meta name="robots" content="noindex, nofollow">
+    <title>monitor</title>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/main.ts"></script>
+  </body>
+</html>
