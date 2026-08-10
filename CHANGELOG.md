@@ -1,6 +1,34 @@
 # Changelog
 
 
+## v0.1.2
+
+[compare changes](https://github.com/vad1ym/nuxt-monitor/compare/v0.1.1...v0.1.2)
+
+### 🚀 Enhancements
+
+- **dashboard:** Ignore, sort, paging, new badge, and a real traffic screen ([49a24ec](https://github.com/vad1ym/nuxt-monitor/commit/49a24ec))
+
+### 🩹 Fixes
+
+- Stop counting assets, spread the seed over time, name versions ([de160ba](https://github.com/vad1ym/nuxt-monitor/commit/de160ba))
+
+### 💅 Refactors
+
+- **dashboard:** Three screens, one window, state in the URL ([0d93887](https://github.com/vad1ym/nuxt-monitor/commit/0d93887))
+
+### ✅ Tests
+
+- Fill the buffer in two flushes instead of 1200 ([7a66709](https://github.com/vad1ym/nuxt-monitor/commit/7a66709))
+
+### 🎨 Styles
+
+- **dashboard:** Name the package in full in the wordmark ([7fa1ed3](https://github.com/vad1ym/nuxt-monitor/commit/7fa1ed3))
+
+### ❤️ Contributors
+
+- Vadym Bulakh ([@vad1ym](https://github.com/vad1ym))
+
 ## v0.1.1
 
 [compare changes](https://github.com/vad1ym/nuxt-monitor/compare/v0.1.0...v0.1.1)
