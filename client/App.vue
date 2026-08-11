@@ -384,16 +384,20 @@ onMounted(async () => {
 
             <!-- One window for the whole dashboard, so two screens can never
                  quietly describe two different spans of time. -->
-            <UButtonGroup size="xs" class="ms-auto">
+            <!-- Spaced rather than a UButtonGroup: the group exists to weld
+                 buttons into one control, and the seam made the selected one
+                 read as part of its neighbour instead of standing apart. -->
+            <div class="ms-auto flex items-center gap-1.5">
               <UButton
                 v-for="option in WINDOWS"
                 :key="option.hours"
+                size="xs"
                 :color="hours === option.hours ? 'primary' : 'neutral'"
                 :variant="hours === option.hours ? 'subtle' : 'outline'"
                 :label="option.label"
                 @click="hours = option.hours"
               />
-            </UButtonGroup>
+            </div>
 
             <span v-if="onIssues" class="text-xs text-dimmed whitespace-nowrap">
               {{ total }} {{ total === 1 ? 'issue' : 'issues' }}

@@ -193,10 +193,17 @@ async function spread(dbPath) {
   }
 
   const now = Date.now()
-  const WINDOW = 20 * 60 * 60 * 1_000
 
-  /** The window the dashboard opens on, whose grid the chart columns follow. */
-  const CHART_WINDOW = 24 * 60 * 60 * 1_000
+  /**
+   * Six days, not twenty hours.
+   *
+   * The seed used to fill just under the window the dashboard opens on, which
+   * made every other window useless: `7d` showed the same crowd of points
+   * bunched against its right edge, and `1h` was empty as often as not. Six
+   * days fills `7d` with something shaped, and the curve below still leaves
+   * plenty inside the last day and the last hour.
+   */
+  const WINDOW = 6 * 24 * 60 * 60 * 1_000
 
   try {
     const events = db.prepare('SELECT id, ts FROM events ORDER BY id').all()
@@ -208,19 +215,28 @@ async function spread(dbPath) {
     /**
      * Oldest event first, newest last, spread across the whole window.
      *
-     * Squaring the position was the first attempt and it looked wrong on the
-     * chart: it pushes so much mass towards `now` that the recent columns
-     * merge into one spike while the earlier two-thirds of the window sit
-     * empty. The rise now comes from a mild exponent instead, which leaves
-     * every column occupied and still builds towards the present.
+     * The offset falls geometrically rather than by a power of the position,
+     * and the reason is that the dashboard has four windows, not one. A power
+     * curve is tuned to whichever span it was drawn against: `(1 - p) ** 1.35`
+     * across six days leaves the last hour empty, and the exponent that fills
+     * the last hour piles everything there and empties the week.
+     *
+     * Halving the offset repeatedly is the same shape at every zoom level —
+     * each window shows roughly a fixed share of the events, so `7d`, `24h`
+     * and `1h` are all populated by one pass. `DECADES` sets how many halvings
+     * fit in the window. At 8, roughly a tenth of the events land in the last
+     * hour, two thirds within the last day, and the remaining third spreads
+     * back across the week — every window has something in it.
      *
      * `id` order is insertion order, which is collection order, so this keeps
      * events in the sequence they actually happened.
      */
+    const DECADES = 8
+
     const offsetAt = (index) => {
       const position = index / Math.max(1, events.length - 1)
 
-      return Math.round(WINDOW * (1 - position) ** 1.35)
+      return Math.round(WINDOW * 2 ** (-DECADES * position))
     }
 
     const update = db.prepare('UPDATE events SET ts = ? WHERE id = ?')
@@ -269,14 +285,15 @@ async function spread(dbPath) {
     if (counters.length) {
       const BUCKET_MS = 60_000
       /**
-       * One slice per column the traffic chart draws.
+       * Two slices per column the widest chart draws.
        *
-       * The chart regroups minute-counters into 48 columns across the window,
-       * so writing more slices than that just merges several into one column
-       * and leaves the rest empty. Matching the grid puts a bar in every
-       * column instead.
+       * The chart always splits its window into 48 columns, whichever window
+       * that is. Slices placed on a geometric curve crowd towards the present,
+       * so one-per-column across a week leaves the older columns bare; twice
+       * that many keeps them filled and merely doubles up on the recent ones,
+       * which the upsert below sums back together.
        */
-      const SLICES = 48
+      const SLICES = 96
 
       db.exec('DELETE FROM request_stats')
 
@@ -285,12 +302,29 @@ async function spread(dbPath) {
         ON CONFLICT(bucket, route, method, class) DO UPDATE SET count = count + excluded.count
       `)
 
-      for (const row of counters) {
-        // Weights follow the same squared curve as the events, so both build
-        // towards the present instead of sitting flat.
-        const weights = Array.from({ length: SLICES }, (_, i) => ((i + 1) / SLICES) ** 1.35)
-        const totalWeight = weights.reduce((sum, weight) => sum + weight, 0)
+      /**
+       * Where slice `i` lands, on the curve the events already follow.
+       *
+       * Requests and the failures among them have to sit on the same curve, or
+       * the error rate per hour stops meaning anything: events bunched near
+       * `now` against requests spread flat reads as a spike that never
+       * happened.
+       */
+      const sliceOffset = i =>
+        Math.round(WINDOW * 2 ** (-DECADES * (i / Math.max(1, SLICES - 1))))
 
+      /**
+       * Every slice carries the same share — the tilt is already in where the
+       * slices sit.
+       *
+       * The events are spread one per position along the same curve, so an
+       * equal share per slice reproduces their distribution exactly: both end
+       * up with about two thirds inside the last day. Adding a second weight
+       * on top of the geometric spacing squares the curve, and the error rate
+       * goes with it — requests piling into the last hours while the errors
+       * sit further back, or the reverse.
+       */
+      for (const row of counters) {
         let placed = 0
 
         for (let i = 0; i < SLICES; i++) {
@@ -305,9 +339,7 @@ async function spread(dbPath) {
            * spends the whole count across the window: small counters simply
            * skip slices instead of collapsing into the last one.
            */
-          const target = Math.round(
-            (row.count * weights.slice(0, i + 1).reduce((sum, w) => sum + w, 0)) / totalWeight,
-          )
+          const target = Math.round((row.count * (i + 1)) / SLICES)
 
           const share = i === SLICES - 1 ? remaining : Math.max(0, target - placed)
 
@@ -318,17 +350,19 @@ async function spread(dbPath) {
           placed += share
 
           /**
-           * Snapped to the grid the chart groups by, not to an even division
-           * of the seeded window.
+           * Placed on the event curve, snapped only to the minute the counters
+           * are keyed by.
            *
-           * The chart splits the *dashboard's* window into 48 columns; the
-           * seed fills a shorter one. Dividing each independently makes the
-           * two grids drift past one another, so slices pile into some
-           * columns and miss others — visible as a chart full of gaps.
+           * Snapping to the chart's own column width is what the earlier
+           * version did, and it cannot work across four windows: the width of
+           * a `7d` column is three and a half hours, which would round every
+           * slice inside the last hour onto the same bucket and leave `1h`
+           * showing one bar. The minute grid is fine for all of them — the
+           * chart regroups buckets into columns itself, and gaps only appear
+           * when slices are *sparser* than the columns, which the count above
+           * prevents.
            */
-          const step = Math.max(BUCKET_MS, Math.floor(CHART_WINDOW / 48 / BUCKET_MS) * BUCKET_MS)
-          const offset = Math.round((WINDOW * (SLICES - 1 - i)) / SLICES)
-          const at = now - Math.round(offset / step) * step
+          const at = now - sliceOffset(i)
 
           insert.run(
             Math.floor(at / BUCKET_MS) * BUCKET_MS,
@@ -343,7 +377,7 @@ async function spread(dbPath) {
 
     db.exec('COMMIT')
 
-    console.log(`· spread ${events.length} events over the last ${WINDOW / 3_600_000}h`)
+    console.log(`· spread ${events.length} events over the last ${WINDOW / 86_400_000}d`)
   }
   catch (caught) {
     db.exec('ROLLBACK')

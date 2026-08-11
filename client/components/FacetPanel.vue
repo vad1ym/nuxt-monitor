@@ -130,9 +130,15 @@ function clear(): void {
               @click="toggle(group.name, row.value)"
             >
               <!-- The bar is the comparison; it sits behind the text so the row
-                   stays one line and reads as a label, not a chart. -->
+                   stays one line and reads as a label, not a chart.
+
+                   Layered by source order inside the row rather than with a
+                   negative z-index: the button paints no stacking context of
+                   its own, so `-z-10` sent the bar behind the popover panel
+                   and it showed only during the open transition, while the
+                   panel still had one. -->
               <span
-                class="absolute inset-y-0 start-0 -z-10 rounded"
+                class="absolute inset-y-0 start-0 rounded"
                 :class="isSelected(group.name, row.value) ? 'bg-primary/25' : 'bg-elevated/60'"
                 :style="{ width: `${Math.max(row.share * 100, 1.5)}%` }"
               />
@@ -140,13 +146,13 @@ function clear(): void {
               <UIcon
                 v-if="isSelected(group.name, row.value)"
                 name="i-lucide-check"
-                class="size-3 shrink-0 text-primary"
+                class="relative size-3 shrink-0 text-primary"
               />
 
-              <span class="min-w-0 flex-1 truncate font-mono">{{ row.value }}</span>
+              <span class="relative min-w-0 flex-1 truncate font-mono">{{ row.value }}</span>
 
-              <span class="shrink-0 tabular-nums text-dimmed">{{ formatShare(row.share) }}</span>
-              <span class="w-8 shrink-0 text-end tabular-nums text-muted">{{ row.count }}</span>
+              <span class="relative shrink-0 tabular-nums text-dimmed">{{ formatShare(row.share) }}</span>
+              <span class="relative w-8 shrink-0 text-end tabular-nums text-muted">{{ row.count }}</span>
             </button>
           </li>
         </ul>

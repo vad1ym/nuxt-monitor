@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import type { MonitorTrafficStats } from '../../lib/types'
 import { api } from '../api'
 import { formatCount, formatRate, formatShare } from '../chart'
+import TimeChart from './TimeChart.vue'
 
 /**
  * What the application is serving, and how much of it fails.
@@ -47,10 +48,33 @@ const classes = computed(() =>
     .filter(item => item.count > 0),
 )
 
-/** Bars in the request chart are relative to the busiest bucket. */
-const busiest = computed(() =>
-  Math.max(1, ...(data.value?.trend ?? []).map(point => point.total)),
-)
+/**
+ * Traffic over time, plotted on the buckets the API already grouped.
+ *
+ * Not re-bucketed on the way in: `stats/traffic` regroups the per-minute
+ * counters into the same 48 slots the chart draws, so running them through a
+ * second grid built from `Date.now()` only misaligns them — the slots fall
+ * between the client's columns and every one of them reads as zero, which is
+ * a chart of a flat line at the bottom of an axis that still says 8.
+ */
+const traffic = computed(() => {
+  const trend = data.value?.trend ?? []
+
+  return {
+    at: trend.map(point => point.bucket),
+    // The API sends `total` with `failed` inside it, so the successful count
+    // is the difference. Both lines then carry their own number, which is
+    // what the tooltip shows and what the reader compares.
+    ok: trend.map(point => Math.max(0, point.total - point.failed)),
+    failed: trend.map(point => point.failed),
+  }
+})
+
+/** Green reads as "these succeeded", which is what the line counts. */
+const trafficSeries = computed(() => [
+  { name: 'ok', values: traffic.value.ok, color: 'var(--ui-success)' },
+  { name: '5xx', values: traffic.value.failed, color: 'var(--ui-error)' },
+])
 
 function tone(rate: number): 'neutral' | 'warning' | 'error' {
   if (rate >= 0.05) {
@@ -227,7 +251,7 @@ onMounted(load)
           </h2>
           <div class="flex items-center gap-3 text-xs text-dimmed">
             <span class="flex items-center gap-1.5">
-              <span class="size-2 rounded-sm bg-elevated" />ok
+              <span class="size-2 rounded-sm bg-success" />ok
             </span>
             <span class="flex items-center gap-1.5">
               <span class="size-2 rounded-sm bg-error" />5xx
@@ -235,27 +259,7 @@ onMounted(load)
           </div>
         </div>
 
-        <div class="flex h-24 items-end gap-px">
-          <div
-            v-for="point in data.trend"
-            :key="point.bucket"
-            class="flex-1 flex flex-col justify-end"
-            :style="{ height: '100%' }"
-            :title="`${new Date(point.bucket).toLocaleString()} — ${point.total} requests, ${point.failed} failed`"
-          >
-            <span
-              v-if="point.failed"
-              class="w-full rounded-t-sm bg-error"
-              :style="{ height: `${Math.max((point.failed / busiest) * 100, 2)}%` }"
-            />
-            <!-- A bucket with traffic never renders as nothing: a one-request
-                 hour rounds to zero pixels and reads as an outage. -->
-            <span
-              class="w-full bg-elevated"
-              :style="{ height: `${Math.max(((point.total - point.failed) / busiest) * 100, point.total > point.failed ? 2 : 0)}%` }"
-            />
-          </div>
-        </div>
+        <TimeChart :at="traffic.at" :series="trafficSeries" />
       </section>
 
       <section class="space-y-1">

@@ -167,9 +167,13 @@ function summary(name: MonitorFacetName, label: string): string {
                 @click="toggle(group.name, row.value)"
               >
                 <!-- The bar is the comparison; it sits behind the text so the
-                     row stays one line and reads as a label, not a chart. -->
+                     row stays one line and reads as a label, not a chart.
+
+                     Layered by source order, not by `-z-10`: inside a popover
+                     that sent the bar behind the panel, leaving it visible
+                     only while the open transition lasted. -->
                 <span
-                  class="absolute inset-y-0 start-0 -z-10 rounded"
+                  class="absolute inset-y-0 start-0 rounded"
                   :class="selected(group.name).includes(row.value) ? 'bg-primary/25' : 'bg-elevated/60'"
                   :style="{ width: `${Math.max(row.share * 100, 1.5)}%` }"
                 />
@@ -177,13 +181,13 @@ function summary(name: MonitorFacetName, label: string): string {
                 <UIcon
                   v-if="selected(group.name).includes(row.value)"
                   name="i-lucide-check"
-                  class="size-3 shrink-0 text-primary"
+                  class="relative size-3 shrink-0 text-primary"
                 />
 
-                <span class="min-w-0 flex-1 truncate font-mono">{{ row.value }}</span>
+                <span class="relative min-w-0 flex-1 truncate font-mono">{{ row.value }}</span>
 
-                <span class="shrink-0 tabular-nums text-dimmed">{{ formatShare(row.share) }}</span>
-                <span class="w-8 shrink-0 text-end tabular-nums text-muted">{{ row.count }}</span>
+                <span class="relative shrink-0 tabular-nums text-dimmed">{{ formatShare(row.share) }}</span>
+                <span class="relative w-8 shrink-0 text-end tabular-nums text-muted">{{ row.count }}</span>
               </button>
             </li>
           </ul>

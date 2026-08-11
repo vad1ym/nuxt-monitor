@@ -88,6 +88,7 @@
     "@types/pg": "^8.21.0",
     "@vitejs/plugin-vue": "^6.0.1",
     "changelogen": "^0.6.2",
+    "echarts": "^6.1.0",
     "eslint": "^10.8.0",
     "h3": "^1.15.11",
     "mysql2": "^3.23.2",
