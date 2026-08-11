@@ -87,7 +87,7 @@ export function dominantSlice(
   const candidates: DominantSlice[] = []
 
   for (const facet of PRIORITY) {
-    const top = facets[facet]?.[0]
+    const top = facets[facet]?.values[0]
 
     // `unknown` means the facet was never recorded — a real answer for old
     // events, but never an insight.
@@ -165,7 +165,7 @@ const QUALIFIES: Partial<Record<MonitorFacetName, MonitorFacetName>> = {
  */
 function labelFor(facet: MonitorFacetName, value: string, facets: MonitorFacetCounts): string {
   const parent = QUALIFIES[facet]
-  const top = parent ? facets[parent]?.[0] : undefined
+  const top = parent ? facets[parent]?.values[0] : undefined
 
   if (!top || top.value === 'unknown' || top.share < 0.9) {
     return value
@@ -181,7 +181,7 @@ function liftOf(
   share: number,
   baseline: MonitorFacetCounts | null | undefined,
 ): number | undefined {
-  const rows = baseline?.[facet]
+  const rows = baseline?.[facet]?.values
 
   if (!rows?.length) {
     return undefined

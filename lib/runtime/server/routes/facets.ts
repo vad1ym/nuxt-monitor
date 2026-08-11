@@ -1,7 +1,7 @@
 import { defineEventHandler, getQuery } from '#imports'
 import { requireDashboardAccess, useMonitorStore } from '../context'
 import { toWindow } from './window'
-import { parseFacetFilter } from '../facets'
+import { facetLimit, parseFacetFilter } from '../facets'
 
 /**
  * Facet counts across the whole window.
@@ -25,6 +25,9 @@ export default defineEventHandler(async (event) => {
     facets: await (await useMonitorStore()).facetCounts({
       since: Date.now() - windowMs,
       filter: parseFacetFilter(query),
+      // The panel raises this to open up a long list. Clamped in the query, so
+      // a hand-written value cannot ask for every distinct route at once.
+      limit: facetLimit(query.limit),
     }),
   }
 })

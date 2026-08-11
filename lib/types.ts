@@ -263,7 +263,19 @@ export interface MonitorFacetValue {
   share: number
 }
 
-export type MonitorFacetCounts = Record<MonitorFacetName, MonitorFacetValue[]>
+/**
+ * One dimension's values, and whether the list was cut.
+ *
+ * `more` rather than a total count of distinct values: the panel only needs to
+ * decide whether to offer "show more", and counting the whole tail costs a
+ * second aggregate over the events table to answer a question nobody asked.
+ */
+export interface MonitorFacetGroup {
+  values: MonitorFacetValue[]
+  more: boolean
+}
+
+export type MonitorFacetCounts = Record<MonitorFacetName, MonitorFacetGroup>
 
 /** A filter over facet values. Multiple values of one facet are OR-ed. */
 export type MonitorFacetFilter = Partial<Record<MonitorFacetName, string[]>>

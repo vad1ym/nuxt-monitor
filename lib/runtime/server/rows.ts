@@ -1,4 +1,4 @@
-import type { MonitorFacets, MonitorIssue, MonitorSide } from '../../types'
+import type { MonitorFacets, MonitorFrame, MonitorIssue, MonitorSide } from '../../types'
 import { isVendorFrame } from '../shared/vendor-frame'
 
 /**
@@ -78,6 +78,58 @@ export function culpritOf(stack: string | undefined): string | undefined {
 
       return `${file}:${match[2]}`
     }
+  }
+
+  return undefined
+}
+
+/**
+ * The same name, taken from frames a sourcemap has already resolved.
+ *
+ * `culpritOf` reads the built file, because at capture time that is all there
+ * is: resolution needs the maps parsed, and doing that on the request path
+ * would turn an error storm into a burst of map parsing. The cost is that the
+ * list names `api/throw.mjs:15` — a file the author never wrote and cannot
+ * open — where the fault is at `server/api/throw.ts:5`.
+ *
+ * So the name is corrected on the one occasion the frames are resolved anyway,
+ * when somebody opens the issue. Nothing extra is parsed.
+ *
+ * Frames are searched in order and the first resolved application frame wins,
+ * which is the same rule `culpritOf` applies: the deepest frame that belongs to
+ * the application rather than to the machinery under it.
+ *
+ * The whole project-relative path is kept, where `culpritOf` keeps the last two
+ * segments. That is not an inconsistency: a built path is absolute and mostly
+ * machine (`/var/www/releases/17/.output/server/chunks/api/throw.mjs`), so two
+ * segments is the part worth reading, while a resolved source is already the
+ * short path the author knows — `server/api/throw.ts`. Cutting that to two
+ * would drop the directory that separates `server/api` from `app/pages`.
+ */
+export function culpritOfFrames(frames: MonitorFrame[]): string | undefined {
+  for (const frame of frames) {
+    // An unresolved frame is skipped rather than used: falling back to its
+    // built path here would overwrite a stored name with the same guess, and
+    // a later frame may still resolve.
+    if (!frame.original) {
+      continue
+    }
+
+    const { file, line } = frame.original
+    const clean = file
+      // `webpack://app/…` and friends: a protocol prefix reads as a directory.
+      .replace(/^[\w-]+:\/\/[^/]*/, '')
+      // Sources sit relative to the map, which lives several directories deep
+      // inside the build output, so they climb back out first. The `../` run
+      // describes where the bundle was written, not where the code lives.
+      .replace(/^(?:\.\.?\/)+/, '')
+      .replace(/^\//, '')
+
+    if (isVendorFrame(clean)) {
+      continue
+    }
+
+    return `${clean}:${line}`
   }
 
   return undefined

@@ -46,6 +46,15 @@ const ORDER: Record<MonitorIssueSort, string> = {
   'first-seen': 'first_seen DESC',
 }
 
+/**
+ * Facet values per page.
+ *
+ * Enough that the common facets — browser, device, release — arrive whole and
+ * the panel never asks twice. Route is the one that routinely runs longer, and
+ * it is also the one where the tail is worth reading.
+ */
+const FACET_PAGE = 20
+
 export async function listIssues(db: Database, filter: {
   side?: MonitorSide
   resolved?: boolean
@@ -192,6 +201,8 @@ export async function facetCounts(db: Database, scope: {
   fingerprint?: string
   since?: number
   filter?: MonitorFacetFilter
+  /** Values per facet. The panel raises it to show the rest of a long list. */
+  limit?: number
 } = {}): Promise<MonitorFacetCounts> {
   const where: string[] = []
   const params: (string | number)[] = []
@@ -217,10 +228,28 @@ export async function facetCounts(db: Database, scope: {
     : ''
 
   const counts = {} as MonitorFacetCounts
+  const limit = Math.min(Math.max(scope.limit ?? FACET_PAGE, 1), 200)
+
+  // Every event in scope carries a value for every facet — `unknown` when the
+  // column is null — so the number of events is the denominator, whichever
+  // facet is being counted. Asked once, outside the loop, for that reason.
+  //
+  // Summing the returned rows instead, as this did, divided by the top 20
+  // alone: with more values than that each share was inflated by whatever the
+  // tail held, and the visible ones added up to 100% while describing a
+  // fraction of the events. The bars were wrong in exactly the case the limit
+  // exists for.
+  const [scoped] = await db.prepare(`
+    SELECT COUNT(*) AS n FROM events ${clause}
+  `).all(...params, ...facets.params) as { n: number }[]
+
+  const total = Number(scoped?.n ?? 0)
 
   for (const name of FACET_NAMES) {
     const column = facetColumn(name)
 
+    // One extra row, discarded before it is returned: it is how the panel
+    // learns there is a next page without paying for a second COUNT query.
     const rows = await db.prepare(`
       SELECT COALESCE(${column}, 'unknown') AS value, COUNT(*) AS n
       FROM events
@@ -229,16 +258,18 @@ export async function facetCounts(db: Database, scope: {
       -- The value breaks ties, so a panel does not reshuffle equal rows
       -- between refreshes.
       ORDER BY n DESC, value ASC
-      LIMIT 20
-    `).all(...params, ...facets.params) as { value: string, n: number }[]
+      LIMIT ?
+    `).all(...params, ...facets.params, limit + 1) as { value: string, n: number }[]
 
-    const total = rows.reduce((sum, row) => sum + Number(row.n), 0)
-
-    counts[name] = rows.map(row => ({
-      value: String(row.value),
-      count: Number(row.n),
-      share: total ? Number(row.n) / total : 0,
-    }))
+    counts[name] = {
+      values: rows.slice(0, limit).map(row => ({
+        value: String(row.value),
+        count: Number(row.n),
+        share: total ? Number(row.n) / total : 0,
+      })),
+      // The extra row never leaves the server; its existence is the answer.
+      more: rows.length > limit,
+    }
   }
 
   return counts
@@ -674,6 +705,24 @@ export async function overview(db: Database, windowMs = 24 * 60 * 60 * 1_000, no
         }
       : undefined,
   }
+}
+
+/**
+ * Records the culprit a sourcemap resolved, replacing the built-file guess.
+ *
+ * Written rather than computed on every read because `culprit` is searchable:
+ * a person who saw `server/api/throw.ts` in the list and types it into the box
+ * must find the issue, and a value that exists only in the response would not
+ * be in the column the `LIKE` runs against.
+ *
+ * Only ever called with a value the resolver produced, so there is no guard
+ * against overwriting a good name with a worse one — the caller decides.
+ */
+export async function setCulprit(db: Database, fp: string, culprit: string): Promise<boolean> {
+  const result = await db.prepare('UPDATE issues SET culprit = ? WHERE fingerprint = ?')
+    .run(culprit, fp)
+
+  return changesOf(result) > 0
 }
 
 export async function setResolved(db: Database, fp: string, resolved: boolean): Promise<boolean> {

@@ -33,6 +33,9 @@ const props = defineProps<{
   panelOnly?: boolean
 }>()
 
+/** Passed through from the panel: only the page that fetches can widen a list. */
+const emit = defineEmits<{ expand: [] }>()
+
 const filter = defineModel<MonitorFacetFilter>('filter', { required: true })
 
 const filtered = computed(() => Object.keys(filter.value).length > 0)
@@ -118,6 +121,12 @@ const finding = computed(() => {
       </p>
     </div>
 
-    <FacetPanel v-if="!findingOnly" v-model="filter" :facets="facets" :loading="loading" />
+    <FacetPanel
+      v-if="!findingOnly"
+      v-model="filter"
+      :facets="facets"
+      :loading="loading"
+      @expand="emit('expand')"
+    />
   </div>
 </template>

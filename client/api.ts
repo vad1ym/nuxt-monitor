@@ -136,9 +136,13 @@ export const api = {
     return request<{ issues: MonitorIssue[], total: number }>(`/issues${suffix ? `?${suffix}` : ''}`)
   },
 
-  issue: (fingerprint: string, filter?: MonitorFacetFilter) => {
+  issue: (fingerprint: string, filter?: MonitorFacetFilter, facetLimit?: number) => {
     const query = new URLSearchParams()
     appendFacets(query, filter)
+
+    if (facetLimit) {
+      query.set('limit', String(facetLimit))
+    }
 
     const suffix = query.toString()
 
@@ -147,9 +151,13 @@ export const api = {
     )
   },
 
-  facets: (filter?: MonitorFacetFilter, hours = 24) => {
+  facets: (filter?: MonitorFacetFilter, hours = 24, facetLimit?: number) => {
     const query = new URLSearchParams({ window: String(hours * 60 * 60 * 1_000) })
     appendFacets(query, filter)
+
+    if (facetLimit) {
+      query.set('limit', String(facetLimit))
+    }
 
     return request<{ windowMs: number, facets: MonitorFacetCounts }>(`/facets?${query}`)
   },

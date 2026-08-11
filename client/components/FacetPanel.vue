@@ -17,6 +17,15 @@ const props = defineProps<{
   loading?: boolean
 }>()
 
+/**
+ * Asks the parent to refetch with room for more values.
+ *
+ * The panel does not fetch its own counts — they arrive with the rest of the
+ * screen and are filtered by the same window — so widening the list is a
+ * request, not something it can do alone.
+ */
+const emit = defineEmits<{ expand: [] }>()
+
 const model = defineModel<MonitorFacetFilter>({ required: true })
 
 const GROUPS: { name: MonitorFacetName, label: string, icon: string }[] = [
@@ -36,7 +45,11 @@ const GROUPS: { name: MonitorFacetName, label: string, icon: string }[] = [
  */
 const groups = computed(() =>
   GROUPS
-    .map(group => ({ ...group, values: props.facets?.[group.name] ?? [] }))
+    .map(group => ({
+      ...group,
+      values: props.facets?.[group.name]?.values ?? [],
+      more: props.facets?.[group.name]?.more ?? false,
+    }))
     .filter(group => group.values.length > 1 || model.value[group.name]?.length),
 )
 
@@ -154,6 +167,21 @@ function clear(): void {
               <span class="relative shrink-0 tabular-nums text-dimmed">{{ formatShare(row.share) }}</span>
               <span class="relative w-8 shrink-0 text-end tabular-nums text-muted">{{ row.count }}</span>
             </button>
+          </li>
+
+          <!-- Said out loud rather than left to a scrollbar that stops: a list
+               silently cut at twenty reads as the whole set, and the values
+               below the cut are the rare ones worth finding. -->
+          <li v-if="group.more" class="border-t border-default mt-1 pt-1">
+            <UButton
+              size="xs"
+              color="neutral"
+              variant="ghost"
+              block
+              :loading="loading"
+              label="Show more"
+              @click="emit('expand')"
+            />
           </li>
         </ul>
       </template>

@@ -20,6 +20,16 @@ const selected = ref(0)
 const filter = ref<MonitorFacetFilter>({})
 
 /**
+ * How many values each dropdown in the breakdown may show.
+ *
+ * Undefined leaves it to the server's default. Not reset when the filter
+ * changes: someone who opened up a long list is still reading it.
+ */
+const facetLimit = ref<number | undefined>()
+
+const FACET_PAGE = 20
+
+/**
  * The same facets across all traffic.
  *
  * Fetched once and kept: without it a breakdown cannot tell a real skew from
@@ -100,15 +110,20 @@ const headers = computed(() => {
   return raw && typeof raw === 'object' ? Object.entries(raw as Record<string, unknown>) : []
 })
 
-async function load(): Promise<void> {
+async function load({ keepSelection = false } = {}): Promise<void> {
   loading.value = true
   error.value = ''
 
   try {
-    detail.value = await api.issue(props.fingerprint, filter.value)
+    detail.value = await api.issue(props.fingerprint, filter.value, facetLimit.value)
+
     // The filter changes which occurrences exist, so an index into the old
-    // list would point at the wrong one — or at nothing.
-    selected.value = 0
+    // list would point at the wrong one — or at nothing. Widening a facet
+    // dropdown does not: the occurrences are the same ones, and resetting
+    // would throw away the trace the reader is looking at.
+    if (!keepSelection) {
+      selected.value = 0
+    }
   }
   catch (caught) {
     error.value = caught instanceof Error ? caught.message : 'Could not load this issue'
@@ -116,6 +131,12 @@ async function load(): Promise<void> {
   finally {
     loading.value = false
   }
+}
+
+/** Another page of values in the breakdown's dropdowns. */
+async function expandFacets(): Promise<void> {
+  facetLimit.value = (facetLimit.value ?? FACET_PAGE) + FACET_PAGE
+  await load({ keepSelection: true })
 }
 
 /** Failure here costs the comparison, not the page. */
@@ -159,7 +180,10 @@ watch(() => props.fingerprint, () => {
   void load()
 }, { immediate: true })
 
-watch(filter, load, { deep: true })
+// Wrapped rather than passed directly: a watcher hands its callback the new
+// value, which would arrive as `load`'s options object and let a facet named
+// `keepSelection` decide whether the selection resets.
+watch(filter, () => void load(), { deep: true })
 
 onMounted(loadBaseline)
 </script>
@@ -333,6 +357,7 @@ onMounted(loadBaseline)
           :session-count="detail.sessionCount"
           :event-count="detail.eventCount"
           :loading="loading"
+          @expand="expandFacets"
         />
       </section>
 

@@ -35,7 +35,7 @@ describe('DisabledStore', () => {
     const facets = await store.facetCounts()
 
     for (const name of FACET_NAMES) {
-      expect(facets[name]).toEqual([])
+      expect(facets[name]).toEqual({ values: [], more: false })
     }
   })
 

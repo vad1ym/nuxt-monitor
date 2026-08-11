@@ -96,3 +96,17 @@ export function parseFacetFilter(query: Record<string, unknown>): MonitorFacetFi
 
   return filter
 }
+
+/**
+ * How many values of each facet to return.
+ *
+ * Undefined leaves the choice to the query, which has a default. Anything else
+ * is a number from a URL, so it is clamped rather than trusted: the value
+ * becomes a `LIMIT`, and an unbounded one is a request for every distinct route
+ * ever recorded.
+ */
+export function facetLimit(value: unknown): number | undefined {
+  const parsed = Number.parseInt(String(value ?? ''), 10)
+
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : undefined
+}

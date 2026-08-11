@@ -913,6 +913,10 @@ export class MonitorStore {
     return queries.sessions(this.db, since)
   }
 
+  async setCulprit(fp: string, culprit: string): Promise<boolean> {
+    return queries.setCulprit(this.db, fp, culprit)
+  }
+
   async setResolved(fp: string, resolved: boolean): Promise<boolean> {
     return queries.setResolved(this.db, fp, resolved)
   }

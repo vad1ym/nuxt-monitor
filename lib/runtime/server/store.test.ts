@@ -785,12 +785,12 @@ describe('facets', () => {
 
     const facets = await store.facetCounts()
 
-    expect(facets.browser).toEqual([
+    expect(facets.browser.values).toEqual([
       { value: 'Chrome', count: 2, share: 2 / 3 },
       { value: 'Safari', count: 1, share: 1 / 3 },
     ])
     // One event each, so their relative order is not defined — only the set is.
-    expect(facets.os.map(row => row.value).sort()).toEqual(['Windows', 'iOS', 'macOS'].sort())
+    expect(facets.os.values.map(row => row.value).sort()).toEqual(['Windows', 'iOS', 'macOS'].sort())
   })
 
   it('reports events without a facet as unknown rather than dropping them', async () => {
@@ -798,7 +798,7 @@ describe('facets', () => {
     store.capture(makeEvent())
     await store.flush()
 
-    expect((await store.facetCounts()).browser).toContainEqual({
+    expect((await store.facetCounts()).browser.values).toContainEqual({
       value: 'unknown',
       count: 1,
       share: 0.5,
@@ -812,7 +812,7 @@ describe('facets', () => {
 
     const facets = await store.facetCounts({ fingerprint: first })
 
-    expect(facets.browser).toEqual([{ value: 'Chrome', count: 1, share: 1 }])
+    expect(facets.browser.values).toEqual([{ value: 'Chrome', count: 1, share: 1 }])
   })
 
   it('applies a filter to the counts of the other dimensions', async () => {
@@ -822,7 +822,7 @@ describe('facets', () => {
 
     const facets = await store.facetCounts({ filter: { browser: ['Safari'] } })
 
-    expect(facets.os).toEqual([{ value: 'iOS', count: 1, share: 1 }])
+    expect(facets.os.values).toEqual([{ value: 'iOS', count: 1, share: 1 }])
   })
 
   it('records the route shape rather than the raw path', async () => {
@@ -831,7 +831,68 @@ describe('facets', () => {
     await store.flush()
 
     // Both are the same endpoint, so a breakdown must show one row.
-    expect((await store.facetCounts()).route).toEqual([{ value: '/users/:id', count: 2, share: 1 }])
+    expect((await store.facetCounts()).route.values).toEqual([{ value: '/users/:id', count: 2, share: 1 }])
+  })
+
+  it('says when a dimension has more values than it returned', async () => {
+    // Separate stacks so each lands in its own issue: this store keeps five
+    // events per issue, and twenty-five under one fingerprint would be pruned
+    // down to five before any of them could be counted.
+    for (let i = 0; i < 25; i++) {
+      store.capture(withFacets({ browser: `Browser ${i}` }, { stack: `E\n    at f (/app/b${i}.ts:1:1)` }))
+    }
+
+    await store.flush()
+
+    const facets = await store.facetCounts({ limit: 20 })
+
+    expect(facets.browser.values).toHaveLength(20)
+    // Without this the panel shows twenty of twenty-five and reads as all.
+    expect(facets.browser.more).toBe(true)
+
+    // A dimension that fits says so, on the same response.
+    expect(facets.deviceType.more).toBe(false)
+  })
+
+  it('shows the rest when asked for more', async () => {
+    // Separate stacks so each lands in its own issue: this store keeps five
+    // events per issue, and twenty-five under one fingerprint would be pruned
+    // down to five before any of them could be counted.
+    for (let i = 0; i < 25; i++) {
+      store.capture(withFacets({ browser: `Browser ${i}` }, { stack: `E\n    at f (/app/b${i}.ts:1:1)` }))
+    }
+
+    await store.flush()
+
+    const facets = await store.facetCounts({ limit: 40 })
+
+    expect(facets.browser.values).toHaveLength(25)
+    expect(facets.browser.more).toBe(false)
+  })
+
+  /**
+   * The bars are a comparison, so the denominator has to be the thing being
+   * compared against — every event in scope, not just the ones that fit.
+   */
+  it('measures share against all events, not only the returned values', async () => {
+    // Ten events, each its own issue: this store keeps five events per issue,
+    // so ten under one fingerprint would be pruned to five before they could
+    // be counted. The stack is what separates them — a distinct message is not
+    // enough, since the fingerprint normalises numbers out of it.
+    store.capture(withFacets({ browser: 'Chrome' }, { stack: 'E\n    at f (/app/chrome.ts:1:1)' }))
+
+    for (let i = 0; i < 9; i++) {
+      store.capture(withFacets({ browser: `Other ${i}` }, { stack: `E\n    at f (/app/o${i}.ts:1:1)` }))
+    }
+
+    await store.flush()
+
+    const facets = await store.facetCounts({ limit: 1 })
+
+    // One row of ten events. Summing the returned rows instead would divide
+    // one by one and report a browser used by a tenth of the traffic as all
+    // of it.
+    expect(facets.browser.values).toEqual([{ value: 'Chrome', count: 1, share: 0.1 }])
   })
 
   it('filters the occurrences of an issue by facet', async () => {
@@ -912,7 +973,7 @@ describe('facets', () => {
     await store.flush()
 
     // The pre-existing row has no browser and is reported as unknown.
-    expect((await store.facetCounts()).browser).toContainEqual({
+    expect((await store.facetCounts()).browser.values).toContainEqual({
       value: 'unknown',
       count: 1,
       share: 0.5,

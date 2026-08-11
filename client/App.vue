@@ -78,6 +78,19 @@ const loading = ref(false)
 const facets = ref<MonitorFacetCounts | null>(null)
 
 /**
+ * How many values each facet dropdown may show.
+ *
+ * Undefined means "whatever the server defaults to". Raised a page at a time
+ * by the filter bar, and deliberately *not* reset when the filter or window
+ * changes: someone who opened up the route list is still reading it, and
+ * snapping it shut under them because a sibling filter moved would undo a
+ * choice they made on purpose.
+ */
+const facetLimit = ref<number | undefined>()
+
+const FACET_PAGE = 20
+
+/**
  * Screen state, read from the address bar.
  *
  * It lived in plain refs, which made the dashboard un-linkable: the fix for an
@@ -154,7 +167,7 @@ async function refresh(): Promise<void> {
     // describe the list beside them.
     const [result, counts] = await Promise.all([
       api.issues(query.value, filter.value),
-      api.facets(filter.value),
+      api.facets(filter.value, undefined, facetLimit.value),
     ])
 
     issues.value = result.issues
@@ -177,6 +190,18 @@ async function refresh(): Promise<void> {
   finally {
     loading.value = false
   }
+}
+
+/**
+ * Shows another page of facet values.
+ *
+ * Grows the limit rather than paging: the dropdown is a ranked list read from
+ * the top, and a second page that replaced the first would hide the values the
+ * reader was comparing against.
+ */
+async function expandFacets(): Promise<void> {
+  facetLimit.value = (facetLimit.value ?? FACET_PAGE) + FACET_PAGE
+  await refresh()
 }
 
 async function onAuthenticated(): Promise<void> {
@@ -445,6 +470,7 @@ onMounted(async () => {
                 :scopes="SCOPES"
                 :sorts="SORTS"
                 class="mb-4"
+                @expand="expandFacets"
               />
 
               <IssueList

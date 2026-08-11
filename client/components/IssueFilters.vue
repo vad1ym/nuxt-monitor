@@ -22,6 +22,9 @@ const props = defineProps<{
   sorts: Record<string, string>
 }>()
 
+/** Widening a cut-off value list is the parent's fetch to make, not this one's. */
+const emit = defineEmits<{ expand: [] }>()
+
 const model = defineModel<MonitorFacetFilter>({ required: true })
 
 /**
@@ -70,7 +73,11 @@ const EXTRA: { name: MonitorFacetName, label: string, icon: string }[] = [
  */
 const groups = computed(() =>
   [...GROUPS, ...EXTRA]
-    .map(group => ({ ...group, values: props.facets?.[group.name] ?? [] }))
+    .map(group => ({
+      ...group,
+      values: props.facets?.[group.name]?.values ?? [],
+      more: props.facets?.[group.name]?.more ?? false,
+    }))
     .filter((group) => {
       // An active value always shows, whichever list it came from.
       if (model.value[group.name]?.length) {
@@ -189,6 +196,19 @@ function summary(name: MonitorFacetName, label: string): string {
                 <span class="relative shrink-0 tabular-nums text-dimmed">{{ formatShare(row.share) }}</span>
                 <span class="relative w-8 shrink-0 text-end tabular-nums text-muted">{{ row.count }}</span>
               </button>
+            </li>
+
+            <!-- Said out loud rather than left to a scrollbar that stops: a
+                 list silently cut reads as the whole set. -->
+            <li v-if="group.more" class="border-t border-default mt-1 pt-1">
+              <UButton
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                block
+                label="Show more"
+                @click="emit('expand')"
+              />
             </li>
           </ul>
         </div>

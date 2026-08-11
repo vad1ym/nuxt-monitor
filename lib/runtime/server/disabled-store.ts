@@ -66,7 +66,7 @@ export class DisabledStore implements Pick<
     const counts = {} as MonitorFacetCounts
 
     for (const name of FACET_NAMES) {
-      counts[name] = []
+      counts[name] = { values: [], more: false }
     }
 
     return counts

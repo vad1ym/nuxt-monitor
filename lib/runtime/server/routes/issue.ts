@@ -1,7 +1,8 @@
 import { createError, defineEventHandler, getQuery, getRouterParam, readBody } from '#imports'
 import { monitorConfig, requireDashboardAccess, useMonitorStore } from '../context'
-import { parseFacetFilter } from '../facets'
+import { facetLimit, parseFacetFilter } from '../facets'
 import { hasTrustedOrigin } from '../origin'
+import { culpritOfFrames } from '../rows'
 import { SourcemapResolver } from '../sourcemap'
 
 /** One resolver per process: it caches parsed maps, which is the costly part. */
@@ -68,23 +69,48 @@ export default defineEventHandler(async (event) => {
 
   // Resolved lazily, here rather than at capture time: an error storm would
   // otherwise turn into a burst of map parsing on the request path.
+  const resolved = await Promise.all(events.map(async item => ({
+    ...item,
+    frames: await useResolver().resolveStackAsync(item.stack, {
+      // Client stacks arrive through unauthenticated ingest, so the file
+      // they name is an attacker's choice: they may only resolve against the
+      // published build assets, never an arbitrary path on disk.
+      trusted: issue.side === 'server',
+      // Each occurrence resolves against the build it came from, so a trace
+      // from a release that has since been replaced still points at source.
+      release: item.facets?.release,
+    }),
+  })))
+
+  // The list showed the built file until now, because that is all capture
+  // could afford. The frames for the newest occurrence have just been
+  // resolved anyway, so the better name is free here — and stored, so the
+  // list and the search box get it too, not only this response.
+  //
+  // Only from an unnarrowed view. Under a facet filter `events` holds the
+  // newest occurrence *matching that filter*, and writing its location would
+  // let clicking "Firefox" in the breakdown rewrite the name the issue carries
+  // for everyone — a stored value quietly deciding itself from a filter the
+  // next reader never applied.
+  if (!Object.keys(filter).length) {
+    const culprit = culpritOfFrames(resolved[0]?.frames ?? [])
+
+    if (culprit && culprit !== issue.culprit) {
+      await store.setCulprit(fingerprint, culprit)
+      issue.culprit = culprit
+    }
+  }
+
   return {
     issue,
-    facets: await store.facetCounts({ fingerprint, filter }),
+    facets: await store.facetCounts({
+      fingerprint,
+      filter,
+      limit: facetLimit(getQuery(event).limit),
+    }),
     sessionCount: await store.sessionCount(fingerprint, filter),
     // What the breakdown is a breakdown of — see `eventCount`.
     eventCount: await store.eventCount(fingerprint, filter),
-    events: await Promise.all(events.map(async item => ({
-      ...item,
-      frames: await useResolver().resolveStackAsync(item.stack, {
-        // Client stacks arrive through unauthenticated ingest, so the file
-        // they name is an attacker's choice: they may only resolve against the
-        // published build assets, never an arbitrary path on disk.
-        trusted: issue.side === 'server',
-        // Each occurrence resolves against the build it came from, so a trace
-        // from a release that has since been replaced still points at source.
-        release: item.facets?.release,
-      }),
-    }))),
+    events: resolved,
   }
 })

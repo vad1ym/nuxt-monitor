@@ -20,11 +20,14 @@ function counts(input: Partial<Record<MonitorFacetName, [string, number][]>>): M
     const rows = input[name] ?? []
     const total = rows.reduce((sum, [, count]) => sum + count, 0)
 
-    result[name] = rows.map(([value, count]) => ({
-      value,
-      count,
-      share: total ? count / total : 0,
-    }))
+    result[name] = {
+      values: rows.map(([value, count]) => ({
+        value,
+        count,
+        share: total ? count / total : 0,
+      })),
+      more: false,
+    }
   }
 
   return result
