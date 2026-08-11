@@ -3,6 +3,7 @@ import type {
   MonitorFacetCounts,
   MonitorHealth,
   MonitorIssue,
+  MonitorIssueTrend,
   MonitorOverview,
   MonitorRelease,
   MonitorRouteStat,
@@ -78,6 +79,10 @@ export class DisabledStore implements Pick<
 
   async eventCount(): Promise<number> {
     return 0
+  }
+
+  async issueTrend(): Promise<MonitorIssueTrend> {
+    return { points: [], stored: 0, step: 0 }
   }
 
   async overview(windowMs = 24 * 60 * 60 * 1_000): Promise<MonitorOverview> {

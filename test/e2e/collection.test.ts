@@ -348,15 +348,15 @@ describe('facets', () => {
     const issue = await waitForIssue(cookie, i => i.message === message)
 
     const detail = await $fetch<{
-      facets: Record<string, { value: string, count: number }[]>
+      facets: Record<string, { values: { value: string, count: number }[] }>
       sessionCount: number
     }>(`/_monitor/api/issues/${issue.fingerprint}`, { headers: { cookie } })
 
-    expect(detail.facets.os).toContainEqual(expect.objectContaining({ value: 'iOS', count: 2 }))
-    expect(detail.facets.browser).toContainEqual(
+    expect(detail.facets.os.values).toContainEqual(expect.objectContaining({ value: 'iOS', count: 2 }))
+    expect(detail.facets.browser.values).toContainEqual(
       expect.objectContaining({ value: 'Chrome', count: 1 }),
     )
-    expect(detail.facets.deviceType).toContainEqual(
+    expect(detail.facets.deviceType.values).toContainEqual(
       expect.objectContaining({ value: 'mobile', count: 2 }),
     )
 
@@ -399,12 +399,12 @@ describe('facets', () => {
   })
 
   it('serves facet counts across the window', async () => {
-    const { facets } = await $fetch<{ facets: Record<string, { value: string }[]> }>(
+    const { facets } = await $fetch<{ facets: Record<string, { values: { value: string }[] }> }>(
       '/_monitor/api/facets',
       { headers: { cookie } },
     )
 
-    expect(facets.browser.map(row => row.value)).toContain('Mobile Safari')
+    expect(facets.browser.values.map(row => row.value)).toContain('Mobile Safari')
     // Facets are a dashboard read, so they must sit behind the session.
     expect((await raw('/_monitor/api/facets')).status).toBe(401)
   })
@@ -464,12 +464,12 @@ describe('stats sections', () => {
   it('reports routes, environments and sessions over the window', async () => {
     const stats = await $fetch<{
       routes: { route: string, total: number }[]
-      environments: Record<string, unknown[]>
+      environments: Record<string, { values: unknown[] }>
       sessions: { affected: number, events: number }
     }>('/_monitor/api/stats', { headers: { cookie } })
 
     expect(stats.routes.length).toBeGreaterThan(0)
-    expect(stats.environments.browser.length).toBeGreaterThan(0)
+    expect(stats.environments.browser.values.length).toBeGreaterThan(0)
     expect(stats.sessions.affected).toBeGreaterThan(0)
   })
 

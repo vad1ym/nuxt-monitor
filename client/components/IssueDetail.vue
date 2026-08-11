@@ -3,10 +3,12 @@ import { computed, onMounted, ref, watch } from 'vue'
 import type { MonitorFacetCounts, MonitorFacetFilter } from '../../lib/types'
 import type { IssueDetail } from '../api'
 import { api } from '../api'
+import { formatCount } from '../chart'
 import { absoluteTime, relativeTime } from '../format'
 import { primaryFrame, shortLocation } from '../frames'
 import IssueBreakdown from './IssueBreakdown.vue'
 import StackTrace from './StackTrace.vue'
+import TimeChart from './TimeChart.vue'
 
 const props = defineProps<{ fingerprint: string }>()
 const emit = defineEmits<{ back: [], changed: [] }>()
@@ -108,6 +110,59 @@ const headers = computed(() => {
   const raw = current.value?.context?.headers
 
   return raw && typeof raw === 'object' ? Object.entries(raw as Record<string, unknown>) : []
+})
+
+const trend = computed(() => detail.value?.trend)
+
+const trendSeries = computed(() => [{
+  name: 'occurrences',
+  values: trend.value?.points.map(point => point.count) ?? [],
+  color: detail.value?.issue.side === 'client' ? 'var(--ui-info)' : 'var(--ui-warning)',
+}])
+
+/**
+ * Whether the chart covers the whole life of the issue.
+ *
+ * Occurrences are trimmed per issue, so a busy one keeps recent history rather
+ * than all of it. Drawing that as though it were everything would put the
+ * issue's beginning at whatever the oldest surviving row happens to be, and a
+ * fault that has run for a week would read as one that started this morning.
+ */
+const trendPartial = computed(() =>
+  Boolean(trend.value && !isFiltered.value && trend.value.stored < (detail.value?.issue.count ?? 0)),
+)
+
+/**
+ * How often it happens, over the span it happened in.
+ *
+ * Measured from first to last occurrence rather than "per hour since it
+ * started": an issue that fired 200 times in a minute and never again is not
+ * happening three times an hour, and averaging it over the silence since would
+ * say exactly that.
+ */
+const rate = computed(() => {
+  const issue = detail.value?.issue
+
+  if (!issue || issue.count < 2) {
+    return undefined
+  }
+
+  const spanMs = issue.lastSeen - issue.firstSeen
+
+  // Everything inside one instant is a burst, not a rate.
+  if (spanMs < 60_000) {
+    return undefined
+  }
+
+  const perHour = issue.count / (spanMs / 3_600_000)
+
+  if (perHour >= 1) {
+    return `${formatCount(Math.round(perHour))}/hour`
+  }
+
+  const perDay = perHour * 24
+
+  return perDay >= 1 ? `${formatCount(Math.round(perDay))}/day` : 'less than once a day'
 })
 
 async function load({ keepSelection = false } = {}): Promise<void> {
@@ -305,6 +360,9 @@ onMounted(loadBaseline)
                  so it becomes "matching of total". -->
             <dd class="text-toned">
               <template v-if="isFiltered">{{ detail.eventCount }} of </template>{{ detail.issue.count }}
+              <!-- The count alone cannot separate "200 times last Tuesday"
+                   from "200 times a day, still going". -->
+              <span v-if="rate" class="text-dimmed"> · {{ rate }}</span>
             </dd>
           </div>
 
@@ -327,6 +385,24 @@ onMounted(loadBaseline)
           </div>
         </dl>
       </header>
+
+      <!-- When it happened, not just how often. A count says an issue is
+           frequent; the shape says whether it is over, steady, or starting. -->
+      <section v-if="trend && trend.points.length > 1" class="rounded-lg border border-default p-3">
+        <div class="mb-3 flex items-baseline justify-between gap-3">
+          <h2 class="text-xs font-medium uppercase tracking-wide text-dimmed">
+            Occurrences over time
+          </h2>
+          <!-- Said rather than left to be inferred: the chart is drawn from the
+               occurrences that survived trimming, and without this the issue
+               looks as though it began when the oldest kept one did. -->
+          <span v-if="trendPartial" class="text-xs text-dimmed">
+            last {{ formatCount(trend.stored) }} of {{ formatCount(detail.issue.count) }}
+          </span>
+        </div>
+
+        <TimeChart :at="trend.points.map(point => point.at)" :series="trendSeries" />
+      </section>
 
       <!-- The conclusion only. One line, and it frames the stack below it —
            the table it used to drag along now sits at the foot of the page. -->

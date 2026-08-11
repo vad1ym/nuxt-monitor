@@ -4,6 +4,7 @@ import type {
   MonitorFacetCounts,
   MonitorFacetFilter,
   MonitorIssue,
+  MonitorIssueTrend,
   MonitorOverview,
   MonitorRelease,
   MonitorRouteStat,
@@ -314,6 +315,64 @@ export async function eventCount(db: Database, fp: string, filter?: MonitorFacet
 }
 
 /**
+ * When one issue's stored occurrences happened, bucketed for a chart.
+ *
+ * Counts rows in `events`, which is *not* the same as the issue's `count`:
+ * `maxEventsPerIssue` trims the table to the newest occurrences per issue, so
+ * a busy issue keeps a window of recent history rather than all of it. The
+ * shape is still the useful one — steady, spiking, or stopped — and the caller
+ * is told how much it is drawn from so it can say when the two disagree.
+ *
+ * Bucketed in SQL rather than by the client, for the same reason the traffic
+ * chart is: the rows are already grouped, and regrouping them against a second
+ * grid built from a different clock puts them between columns.
+ */
+export async function issueTrend(
+  db: Database,
+  fp: string,
+  filter?: MonitorFacetFilter,
+  buckets = 32,
+): Promise<MonitorIssueTrend> {
+  const facets = facetClause(filter)
+
+  const range = await db.prepare(`
+    SELECT MIN(ts) AS first, MAX(ts) AS last, COUNT(*) AS n
+    FROM events WHERE fingerprint = ? ${facets.sql}
+  `).get(fp, ...facets.params) as { first: number | null, last: number | null, n: number }
+
+  const first = Number(range.first ?? 0)
+  const last = Number(range.last ?? 0)
+  const stored = Number(range.n ?? 0)
+
+  if (!stored) {
+    return { points: [], stored: 0, step: 0 }
+  }
+
+  // A span of zero — every occurrence inside one millisecond, or only one of
+  // them — would divide by zero below. One bucket is the honest answer.
+  const step = Math.max(1, Math.ceil((last - first + 1) / buckets))
+
+  // `CAST(… AS INTEGER)` rather than relying on `/` to floor. The driver binds
+  // these parameters as floats, so the division is a float division and every
+  // row keeps its own fractional bucket — the grouping silently stops
+  // happening and the chart draws one column per occurrence. Integer division
+  // in the engine's own types is not something to assume through a parameter.
+  const rows = await db.prepare(`
+    SELECT CAST((ts - ?) / ? AS INTEGER) * ? + ? AS bucket, COUNT(*) AS n
+    FROM events
+    WHERE fingerprint = ? ${facets.sql}
+    GROUP BY bucket
+    ORDER BY bucket
+  `).all(first, step, step, first, fp, ...facets.params) as { bucket: number, n: number }[]
+
+  return {
+    points: rows.map(row => ({ at: Number(row.bucket), count: Number(row.n) })),
+    stored,
+    step,
+  }
+}
+
+/**
  * Releases, newest first, with what happened in each.
  *
  * The counts are the easy half. The column worth the screen is `newIssues`:
@@ -482,16 +541,19 @@ export async function traffic(db: Database, windowMs: number, now = Date.now()):
    */
   const step = Math.max(BUCKET_MS, Math.floor(windowMs / 48 / BUCKET_MS) * BUCKET_MS)
 
+  // `CAST(… AS INTEGER)`: `step` binds as a float, so `/` floored nothing and
+  // the regrouping into 48 slots quietly did not happen — the query returned
+  // one row per stored minute, whatever the window.
   const trend = await db.prepare(`
     SELECT
-      (bucket / ?) * ?                                        AS slot,
+      CAST(bucket / ? AS INTEGER) * ?                          AS slot,
       SUM(count)                                              AS total,
       COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0) AS failed
     FROM request_stats
     WHERE bucket >= ?
     -- Repeated rather than aliased: Postgres resolves GROUP BY before the
     -- select list, so an alias there is an unknown column.
-    GROUP BY (bucket / ?) * ?
+    GROUP BY CAST(bucket / ? AS INTEGER) * ?
     ORDER BY slot
   `).all(step, step, sinceBucket, step, step) as Record<string, number>[]
 
@@ -607,9 +669,14 @@ export async function overview(db: Database, windowMs = 24 * 60 * 60 * 1_000, no
     WHERE bucket >= ?
   `).get(sinceBucket) as Record<string, number>
 
+  // `CAST(… AS INTEGER)`: the driver binds `BUCKET_MS` as a float, so `/` was
+  // a float division that floored nothing — every occurrence kept its own
+  // millisecond and the "per minute" grouping never happened. The client's
+  // `toColumns` re-bucketed the result onto its own grid, which is why the
+  // chart still looked right while the query underneath did not.
   const trend = await db.prepare(`
     SELECT
-      (ts / ?) * ? AS bucket,
+      CAST(ts / ? AS INTEGER) * ? AS bucket,
       SUM(CASE WHEN i.side = 'server' THEN 1 ELSE 0 END) AS server,
       SUM(CASE WHEN i.side = 'client' THEN 1 ELSE 0 END) AS client
     FROM events e

@@ -111,6 +111,7 @@ export default defineEventHandler(async (event) => {
     sessionCount: await store.sessionCount(fingerprint, filter),
     // What the breakdown is a breakdown of — see `eventCount`.
     eventCount: await store.eventCount(fingerprint, filter),
+    trend: await store.issueTrend(fingerprint, filter),
     events: resolved,
   }
 })

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { openDatabase } from './db'
+import { openDatabase, pick, upsertClause } from './db'
 
 /**
  * The connection seam.
@@ -100,5 +100,40 @@ describe('openDatabase', () => {
     expect(openDatabase({ dir: tmpdir(), url: 'postgres://u@h/db' }).dialect).toBe('postgresql')
     expect(openDatabase({ dir: tmpdir(), url: 'mysql://u@h/db' }).dialect).toBe('mysql')
     expect(openDatabase({ dir: tmpdir(), url: 'mariadb://u@h/db' }).dialect).toBe('mysql')
+  })
+})
+
+/**
+ * The SQL each engine actually wants.
+ *
+ * These strings never run in the unit suite — the external tests that would
+ * catch a bad one need a live MySQL and Postgres — so the spelling is asserted
+ * here instead. A `MAX(a, b)` shipped to Postgres is a runtime error, and a
+ * double-qualified `issues.issues.last_seen` is another.
+ */
+describe('dialect spelling', () => {
+  it('uses the scalar two-argument form each engine provides', () => {
+    expect(pick('sqlite', 'max', 'a', 'b')).toBe('MAX(a, b)')
+    expect(pick('mysql', 'min', 'a', 'b')).toBe('MIN(a, b)')
+    // Postgres reserves MAX/MIN for aggregates.
+    expect(pick('postgresql', 'max', 'a', 'b')).toBe('GREATEST(a, b)')
+    expect(pick('postgresql', 'min', 'a', 'b')).toBe('LEAST(a, b)')
+  })
+
+  it('qualifies a column inside a function call exactly once', () => {
+    const clause = upsertClause('postgresql', 'issues', ['fingerprint'], [
+      `last_seen = ${pick('postgresql', 'max', 'last_seen', 'excluded.last_seen')}`,
+    ])
+
+    expect(clause).toContain('GREATEST(issues.last_seen, excluded.last_seen)')
+    expect(clause).not.toContain('issues.issues')
+  })
+
+  it('rewrites the proposed row into the spelling MySQL provides', () => {
+    const assignments = [`last_seen = ${pick('mysql', 'max', 'last_seen', 'excluded.last_seen')}`]
+
+    // MySQL has no `excluded` pseudo-row.
+    expect(upsertClause('mysql', 'issues', ['fingerprint'], assignments))
+      .toContain('MAX(last_seen, VALUES(last_seen))')
   })
 })

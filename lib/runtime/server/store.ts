@@ -6,6 +6,7 @@ import type {
   MonitorHealth,
   MonitorIgnoreOptions,
   MonitorIssue,
+  MonitorIssueTrend,
   MonitorOverview,
   MonitorRelease,
   MonitorRouteStat,
@@ -19,7 +20,7 @@ import { bucketOf, normalizeRoute, statusClass } from '../shared/route'
 import { culpritOf } from './rows'
 import * as queries from './queries'
 import { BUCKET_MS, migrate } from './schema'
-import { changesOf, openDatabase, upsertClause } from './db'
+import { changesOf, openDatabase, pick, upsertClause } from './db'
 import type { MonitorDatabase } from './db'
 
 export interface StoreOptions {
@@ -432,7 +433,17 @@ export class MonitorStore {
       VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
       ${upsertClause(this.connection.dialect, 'issues', ['fingerprint'], [
         'count = count + 1',
-        'last_seen = excluded.last_seen',
+        // Extremes, not "whatever arrived last". Assigning `excluded` directly
+        // makes both columns describe arrival order rather than when the fault
+        // happened, so an event that lands late but happened earlier — a
+        // backfill, a queued client batch, a skewed clock — moves `last_seen`
+        // backwards past `first_seen`. The span between them then reads as
+        // negative, and anything derived from it is nonsense.
+        // Written unqualified, like the other assignments: `upsertClause`
+        // adds the table prefix Postgres needs, and a reference qualified here
+        // would come back as `issues.issues.last_seen`.
+        `last_seen = ${pick(this.connection.dialect, 'max', 'last_seen', 'excluded.last_seen')}`,
+        `first_seen = ${pick(this.connection.dialect, 'min', 'first_seen', 'excluded.first_seen')}`,
         'culprit = COALESCE(excluded.culprit, culprit)',
         'route = COALESCE(excluded.route, route)',
         'method = COALESCE(excluded.method, method)',
@@ -886,6 +897,11 @@ export class MonitorStore {
   async eventCount(fp: string, filter?: MonitorFacetFilter): Promise<number> {
     await this.flush()
     return queries.eventCount(this.db, fp, filter)
+  }
+
+  async issueTrend(fp: string, filter?: MonitorFacetFilter): Promise<MonitorIssueTrend> {
+    await this.flush()
+    return queries.issueTrend(this.db, fp, filter)
   }
 
   async overview(windowMs = 24 * 60 * 60 * 1_000, now = Date.now()): Promise<MonitorOverview> {

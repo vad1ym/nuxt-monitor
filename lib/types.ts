@@ -277,6 +277,21 @@ export interface MonitorFacetGroup {
 
 export type MonitorFacetCounts = Record<MonitorFacetName, MonitorFacetGroup>
 
+/**
+ * When one issue's stored occurrences happened.
+ *
+ * `stored` is how many rows the points were drawn from, which can be fewer
+ * than the issue's `count`: occurrences are trimmed per issue, so a busy issue
+ * keeps recent history rather than all of it. The card compares the two and
+ * says so rather than drawing a partial history as if it were the whole one.
+ */
+export interface MonitorIssueTrend {
+  points: { at: number, count: number }[]
+  stored: number
+  /** Bucket width in milliseconds. Zero when there is nothing to draw. */
+  step: number
+}
+
 /** A filter over facet values. Multiple values of one facet are OR-ed. */
 export type MonitorFacetFilter = Partial<Record<MonitorFacetName, string[]>>
 

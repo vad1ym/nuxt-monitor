@@ -147,6 +147,23 @@ function quoting(db: Database, dialect: MonitorDialect): Database {
 }
 
 /**
+ * The larger, or the smaller, of two values — in each engine's spelling.
+ *
+ * SQLite and MySQL overload `MAX`/`MIN`: with one argument they aggregate,
+ * with two they compare. Postgres does not, and reserves those names for the
+ * aggregates alone, so the scalar form is `GREATEST`/`LEAST` there. Writing
+ * `MAX(a, b)` once and shipping it to Postgres is a runtime error, not a
+ * portability wart that degrades quietly.
+ */
+export function pick(dialect: MonitorDialect, kind: 'max' | 'min', a: string, b: string): string {
+  if (dialect === 'postgresql') {
+    return `${kind === 'max' ? 'GREATEST' : 'LEAST'}(${a}, ${b})`
+  }
+
+  return `${kind === 'max' ? 'MAX' : 'MIN'}(${a}, ${b})`
+}
+
+/**
  * An "insert, or update what is already there" clause.
  *
  * MySQL spells this `ON DUPLICATE KEY UPDATE` and has no `excluded` pseudo-row;

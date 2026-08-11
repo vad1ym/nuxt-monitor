@@ -5,6 +5,7 @@ import type {
   MonitorFrame,
   MonitorHealth,
   MonitorIssue,
+  MonitorIssueTrend,
   MonitorOverview,
   MonitorRelease,
   MonitorRouteStat,
@@ -87,6 +88,8 @@ export interface IssueDetail {
   sessionCount: number
   /** Stored occurrences matching the filter — what the facets add up to. */
   eventCount: number
+  /** When those occurrences happened, bucketed for the chart. */
+  trend: MonitorIssueTrend
 }
 
 /** Turns a facet filter into repeated query parameters. */

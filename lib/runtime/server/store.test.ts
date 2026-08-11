@@ -145,6 +145,27 @@ describe('capture and flush', () => {
     expect(issue.lastSeen).toBe(5_000)
   })
 
+  /**
+   * These columns describe when the fault happened, not when the row arrived.
+   *
+   * Assigning the incoming value directly made them describe arrival order, so
+   * a batch that lands out of sequence — a queued client flush, a backfill, a
+   * skewed clock — pushed `last_seen` behind `first_seen`. Everything measured
+   * from the span between them then reads as negative.
+   */
+  it('keeps the extremes when occurrences arrive out of order', async () => {
+    store.capture(makeEvent({ timestamp: 5_000 }))
+    await store.flush()
+    store.capture(makeEvent({ timestamp: 1_000 }))
+    await store.flush()
+
+    const issue = (await store.listIssues()).issues[0]!
+
+    expect(issue.firstSeen).toBe(1_000)
+    expect(issue.lastSeen).toBe(5_000)
+    expect(issue.lastSeen).toBeGreaterThanOrEqual(issue.firstSeen)
+  })
+
   it('is a no-op when there is nothing buffered', async () => {
     await expect(store.flush()).resolves.toBeUndefined()
   })
@@ -420,6 +441,31 @@ describe('request counters and overview', () => {
 
     expect(trend.length).toBeGreaterThan(0)
     expect(trend.reduce((sum, point) => sum + point.server + point.client, 0)).toBe(2)
+  })
+
+  /**
+   * Bucketing has to actually group.
+   *
+   * The totals above hold whether or not it does, which is how a broken
+   * `(ts / ?) * ?` survived: the driver bound the divisor as a float, so the
+   * division floored nothing, every occurrence kept its own millisecond, and
+   * the query returned one row per event. The chart looked right only because
+   * the client re-bucketed the result onto its own grid.
+   */
+  it('groups occurrences within a bucket into one point', async () => {
+    const now = Date.now()
+
+    // Five occurrences seconds apart — comfortably inside one minute.
+    for (let i = 0; i < 5; i++) {
+      store.capture(makeEvent({ timestamp: now - i * 1_000 }))
+    }
+
+    const { trend } = await store.overview()
+
+    expect(trend).toHaveLength(1)
+    expect(trend[0]!.server).toBe(5)
+    // And the bucket is the start of a minute, not a raw timestamp.
+    expect(trend[0]!.bucket % 60_000).toBe(0)
   })
 
   it('lists the most recent issues', async () => {
@@ -768,6 +814,82 @@ describe('durability', () => {
     expect(() => store.capture(makeEvent())).not.toThrow()
 
     store = await MonitorStore.open({ dir, retentionDays: 14, maxEventsPerIssue: 5, flushInterval: 60_000 })
+  })
+})
+
+/**
+ * The shape of an issue over time.
+ *
+ * Drawn from stored occurrences, which `maxEventsPerIssue` trims — so the
+ * tests below care as much about what the query says it is drawn from as about
+ * the buckets themselves.
+ */
+describe('issue trend', () => {
+  it('buckets occurrences across the span they happened in', async () => {
+    const hour = 60 * 60 * 1_000
+    const base = 1_700_000_000_000
+
+    // Three at the start, one an hour later.
+    for (const at of [base, base + 1_000, base + 2_000, base + hour]) {
+      store.capture(makeEvent({ timestamp: at }))
+    }
+
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const trend = await store.issueTrend(fp)
+
+    expect(trend.stored).toBe(4)
+    expect(trend.points.reduce((sum, point) => sum + point.count, 0)).toBe(4)
+
+    // The cluster and the straggler must not land in the same bucket, or the
+    // chart is one bar and says nothing.
+    expect(trend.points.length).toBeGreaterThan(1)
+    expect(trend.points[0]!.count).toBe(3)
+    expect(trend.points.at(-1)!.count).toBe(1)
+  })
+
+  it('reports how much it was drawn from when occurrences were trimmed', async () => {
+    // This store keeps five per issue; ten arrive.
+    for (let i = 0; i < 10; i++) {
+      store.capture(makeEvent({ timestamp: 1_700_000_000_000 + i * 60_000 }))
+    }
+
+    await store.flush()
+
+    const issue = (await store.listIssues()).issues[0]!
+    const trend = await store.issueTrend(issue.fingerprint)
+
+    // The card compares these two to decide whether to say "last 5 of 10".
+    expect(issue.count).toBe(10)
+    expect(trend.stored).toBe(5)
+  })
+
+  it('survives an issue whose occurrences share one instant', async () => {
+    store.capture(makeEvent({ timestamp: 1_700_000_000_000 }))
+    store.capture(makeEvent({ timestamp: 1_700_000_000_000 }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const trend = await store.issueTrend(fp)
+
+    // A zero-length span would divide by zero when sizing buckets.
+    expect(trend.step).toBeGreaterThan(0)
+    expect(trend.points).toEqual([{ at: 1_700_000_000_000, count: 2 }])
+  })
+
+  it('has nothing to draw for an issue with no stored occurrences', async () => {
+    expect(await store.issueTrend('missing')).toEqual({ points: [], stored: 0, step: 0 })
+  })
+
+  it('narrows to the filtered occurrences', async () => {
+    store.capture(makeEvent({ timestamp: 1_700_000_000_000, facets: { browser: 'Chrome' } }))
+    store.capture(makeEvent({ timestamp: 1_700_000_060_000, facets: { browser: 'Safari' } }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+
+    expect((await store.issueTrend(fp, { browser: ['Safari'] })).stored).toBe(1)
   })
 })
 
