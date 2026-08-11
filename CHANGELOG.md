@@ -1,6 +1,20 @@
 # Changelog
 
 
+## v0.1.3
+
+[compare changes](https://github.com/vad1ym/nuxt-monitor/compare/v0.1.2...v0.1.3)
+
+### 🚀 Enhancements
+
+- **dashboard:** Real charts on echarts, spaced windows, wider seed ([6f11e4d](https://github.com/vad1ym/nuxt-monitor/commit/6f11e4d))
+- **dashboard:** Name the source file, and stop cutting facets silently ([6612e6d](https://github.com/vad1ym/nuxt-monitor/commit/6612e6d))
+- **dashboard:** Occurrences over time, and the rate beside the count ([43969c5](https://github.com/vad1ym/nuxt-monitor/commit/43969c5))
+
+### ❤️ Contributors
+
+- Vadym Bulakh ([@vad1ym](https://github.com/vad1ym))
+
 ## v0.1.2
 
 [compare changes](https://github.com/vad1ym/nuxt-monitor/compare/v0.1.1...v0.1.2)
