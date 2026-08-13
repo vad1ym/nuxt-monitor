@@ -1,6 +1,6 @@
 import type { MonitorFrame } from '../../types'
 import { describe, expect, it } from 'vitest'
-import { culpritOfFrames } from './rows'
+import { culpritOf, culpritOfFrames } from './rows'
 
 /**
  * Naming a fault from frames a sourcemap has already resolved.
@@ -73,5 +73,33 @@ describe('culpritOfFrames', () => {
   it('has nothing to say when no frame resolved', () => {
     expect(culpritOfFrames([frame('/app/.output/server/chunks/nitro.mjs')])).toBeUndefined()
     expect(culpritOfFrames([])).toBeUndefined()
+  })
+})
+
+describe('culpritOf', () => {
+  it('names the file and line from a raw stack', () => {
+    expect(culpritOf('Error: x\n    at handler (/app/server/api/orders.ts:12:5)'))
+      .toBe('api/orders.ts:12')
+  })
+
+  it('says nothing when the frame is the server bundle', () => {
+    // In development every server route compiles into one file, so this frame
+    // reads `dev/index.mjs:8484` — and so does the next issue's, and the
+    // next. A location column where every server row names the same file is
+    // not a weaker answer than the source, it is a confident wrong one: it
+    // looks like somewhere to go and look, and it is the same somewhere for
+    // every fault in the application.
+    expect(culpritOf('Error: x\n    at handler (file:///app/.nuxt/dev/index.mjs:8484:13)'))
+      .toBeUndefined()
+
+    expect(culpritOf('Error: x\n    at handler (/app/.output/server/index.mjs:2201:9)'))
+      .toBeUndefined()
+  })
+
+  it('still names a built chunk, which does identify a route', () => {
+    // Unlike the single dev bundle, a per-route chunk is a real distinction —
+    // and it is what the sourcemap corrects into a source path on open.
+    expect(culpritOf('Error: x\n    at handler (/app/.output/server/chunks/routes/api/orders.mjs:15:3)'))
+      .toBe('api/orders.mjs:15')
   })
 })

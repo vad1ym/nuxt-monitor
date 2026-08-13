@@ -81,13 +81,41 @@ export function culpritOf(stack: string | undefined): string | undefined {
     const match = /[(@\s]([^\s()]+):(\d+):\d+\)?$/.exec(trimmed)
 
     if (match?.[1]) {
-      const file = match[1].replace(/^[\w-]+:\/\/[^/]*/, '').split('/').slice(-2).join('/')
+      const path = match[1].replace(/^[\w-]+:\/\/[^/]*/, '')
+
+      // Nothing at all, rather than a name that identifies nothing. In
+      // development every server route compiles into one bundle, so this frame
+      // reads `dev/index.mjs:8484` — and so does the next issue's, and the
+      // next. A location column where every server row says the same thing is
+      // not a weaker answer than the source file, it is a confident wrong one:
+      // it looks like a place to go and look, and it is the same place for
+      // every fault in the application. The name is filled in properly the
+      // moment somebody opens the issue and the frames are resolved.
+      if (isBundle(path)) {
+        return undefined
+      }
+
+      const file = path.split('/').slice(-2).join('/')
 
       return `${file}:${match[2]}`
     }
   }
 
   return undefined
+}
+
+/**
+ * Whether a path is the one bundle every server route ends up in.
+ *
+ * Deliberately only the entry: `.nuxt/dev/index.mjs` while developing and
+ * `.output/server/index.mjs` once built. A per-route chunk under
+ * `.output/server/chunks/` is *not* this — `chunks/routes/api/orders.mjs`
+ * identifies a route, which is a real answer and the one the sourcemap later
+ * corrects into a source path. Suppressing those too would throw away the
+ * location on every built deployment to fix a problem that only exists in dev.
+ */
+function isBundle(path: string): boolean {
+  return /(?:^|\/)(?:\.nuxt\/)?(?:dev|server)\/index\.mjs$/.test(path)
 }
 
 /**
