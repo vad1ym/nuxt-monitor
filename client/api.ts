@@ -234,6 +234,24 @@ export const api = {
     }>(`/stats?${query}`)
   },
 
+  /**
+   * Everything the traffic dashboard draws, in one call.
+   *
+   * One request rather than one per widget: the numbers on a screen have to
+   * describe one instant.
+   */
+  dashboard: (hours = 24, filter?: MonitorFacetFilter, facets?: string[]) => {
+    const query = new URLSearchParams({ window: String(hours * 60 * 60 * 1_000) })
+
+    appendFacets(query, filter)
+
+    if (facets?.length) {
+      query.set('facets', facets.join(','))
+    }
+
+    return request<MonitorDashboard>(`/dashboard?${query}`)
+  },
+
   /** The uptime bar. Not windowed like the rest — see the route. */
   uptime: (days = 90) => request<MonitorUptimeSummary>(`/uptime?days=${days}`),
 

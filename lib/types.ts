@@ -614,6 +614,10 @@ export type MonitorFacetName =
   | 'deviceType'
   | 'release'
   | 'route'
+  /** `api`, `page` or `asset`. */
+  | 'kind'
+  /** A named group, from `exception()` or from a config rule. */
+  | 'group'
 
 /** One value of a facet, with how many events carry it. */
 export interface MonitorFacetValue {
@@ -778,6 +782,78 @@ export interface MonitorUptimeDay {
    * `unknown` — nothing was recorded, for whatever reason.
    */
   state: 'calm' | 'notable' | 'bad' | 'unknown'
+}
+
+/**
+ * One row of a dashboard breakdown.
+ *
+ * Errors and traffic side by side, because neither means anything alone. 400
+ * errors on Chrome is a number; 400 errors on Chrome against 90% of the page
+ * views is the shape of the audience; 400 against 6% is the answer.
+ */
+export interface MonitorDashboardSlice {
+  value: string
+  errors: number
+  /** Share of the errors in scope, 0–1. */
+  errorShare: number
+  /** Page views counted for this value. Zero when the audience is unknown. */
+  traffic: number
+  /** Share of counted page views, 0–1. Undefined when none were counted. */
+  trafficShare?: number
+  /**
+   * Errors per page view, relative to the application's average.
+   *
+   * The one number worth ranking by: `6.7` means this slice produces errors at
+   * nearly seven times the rate the rest of the traffic does. Undefined when
+   * there is no traffic to compare against.
+   */
+  lift?: number
+}
+
+/** One dimension of the dashboard, with its rows. */
+export interface MonitorDashboardBreakdown {
+  facet: MonitorFacetName
+  slices: MonitorDashboardSlice[]
+  /** Errors not covered by the rows above — the tail, kept honest. */
+  otherErrors: number
+}
+
+/** Everything the dashboard screen draws. */
+export interface MonitorDashboard {
+  windowMs: number
+  /** Traffic, failures and error counts over the window. */
+  totals: {
+    requests: number
+    failed: number
+    /** Failed over requests, 0–1. Undefined when nothing was served. */
+    errorRate?: number
+    events: number
+    issues: number
+    newIssues: number
+    affectedSessions: number
+  }
+  /** Requests and errors on one axis, so a spike in both is not read as one. */
+  trend: { bucket: number, requests: number, failed: number, errors: number }[]
+  breakdowns: MonitorDashboardBreakdown[]
+  /** The worst routes by failure rate, with enough traffic to mean it. */
+  routes: MonitorRouteStat[]
+  /**
+   * The single biggest contributor, and its share of the errors.
+   *
+   * In most incidents one fault accounts for most of the noise, and finding it
+   * by scrolling a list ranked by count is work the screen can do instead.
+   */
+  topIssue?: { issue: MonitorIssue, share: number }
+  /** Newest issues, for the "what just happened" glance. */
+  recent: MonitorIssue[]
+  /**
+   * The most recent release that introduced something.
+   *
+   * "Did the last deploy break anything" is a first-screen question, and the
+   * number that answers it is what *first appeared* in that release rather
+   * than how much happened while it was out.
+   */
+  latestRelease?: { release: string, newIssues: number, events: number, lastSeen: number }
 }
 
 /** One cell of the when-does-it-happen grid. */

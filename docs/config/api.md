@@ -31,11 +31,26 @@ Whether the current cookie is valid.
 { "authenticated": true }
 ```
 
+## GET /api/dashboard
+
+Everything the overview screen draws, in one call: totals, a trend carrying
+requests and errors on the same buckets, the breakdowns with each slice's share
+of traffic beside its errors, the busiest endpoints, the biggest contributor
+and the most recent issues.
+
+| Parameter | Meaning |
+| --- | --- |
+| `window` | Milliseconds |
+| `facets` | Comma-separated dimensions to break down by |
+| Facet names | Repeatable — narrows every figure at once |
+
+One endpoint rather than one per widget: the numbers on a screen have to
+describe one instant, and six requests are six chances to disagree about which.
+
 ## GET /api/overview
 
-The dashboard's front page: error counts by side, issue counts, the request
-count they are divided by, a trend series, the worst routes and the most recent
-issues.
+The older, narrower version of the same thing: error counts by side, issue
+counts, a trend series, the worst routes and the most recent issues.
 
 Query: `hours` (default 24).
 
@@ -151,7 +166,7 @@ it, plus how many of the recorded days were calm.
 Query: `days` (default 90, max 365).
 
 Not bounded by the dashboard's window — see
-[Statistics](../guide/statistics#calm-days).
+[the overview](../guide/overview#days).
 
 ## GET /api/export
 

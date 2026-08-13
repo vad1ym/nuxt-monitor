@@ -11,9 +11,7 @@ import IssueList from './components/IssueList.vue'
 import LoginView from './components/LoginView.vue'
 import MonitorLogo from './components/MonitorLogo.vue'
 import NotificationsView from './components/NotificationsView.vue'
-import OverviewView from './components/OverviewView.vue'
-import RoutesView from './components/RoutesView.vue'
-import StatsView from './components/StatsView.vue'
+import OverviewDashboard from './components/OverviewDashboard.vue'
 
 /**
  * Three screens, not six.
@@ -67,13 +65,13 @@ const SORTS: Record<string, string> = {
 }
 
 const NAV: { view: View, label: string, icon: string }[] = [
+  // Two destinations. Traffic and statistics used to be their own screens,
+  // and every question worth asking crossed the boundaries between them: an
+  // error count means nothing without the traffic that produced it, and "what
+  // is happening" is not a different question from "how much is happening".
+  // So they are the overview, and the list of issues is where you go next.
   { view: 'overview', label: 'Overview', icon: 'i-lucide-layout-dashboard' },
   { view: 'issues', label: 'Issues', icon: 'i-lucide-inbox' },
-  { view: 'traffic', label: 'Traffic', icon: 'i-lucide-route' },
-  // Next to Traffic, which is the other screen about the application as a
-  // whole rather than about any one error. Uptime lives inside it: "were the
-  // last months calm" is a statistic, not a separate destination.
-  { view: 'stats', label: 'Statistics', icon: 'i-lucide-chart-line' },
   // Last, and deliberately not beside the screens that answer "what broke":
   // this one answers "who was told", which is a question asked once at setup
   // and then only when something did not arrive.
@@ -242,13 +240,6 @@ async function logout(): Promise<void> {
 function openIssue(fingerprint: string): void {
   view.value = 'issues'
   selected.value = fingerprint
-}
-
-/** Sidebar entries and the overview's stat tiles both land here. */
-function showIssues(next: string): void {
-  view.value = 'issues'
-  scope.value = next
-  selected.value = null
 }
 
 function show(next: View): void {
@@ -469,18 +460,10 @@ onMounted(async () => {
                  so it cannot be somewhere you have to think to look. -->
             <HealthBanner />
 
-            <OverviewView
+            <OverviewDashboard
               v-if="view === 'overview'"
               :hours="hours"
               @select="openIssue"
-              @browse="showIssues"
-            />
-
-            <RoutesView v-else-if="view === 'traffic'" :hours="hours" />
-
-            <StatsView
-              v-else-if="view === 'stats'"
-              :hours="hours"
               @browse="(facet, value) => { view = 'issues'; filter = { [facet]: [value] } }"
             />
 

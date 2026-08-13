@@ -114,3 +114,27 @@ export function formatCount(value: number): string {
 
   return `${(value / 1_000_000).toFixed(1)}M`
 }
+
+/**
+ * A CSS variable, resolved to a colour.
+ *
+ * ECharts paints on a canvas, where `var(--ui-warning)` is a string it cannot
+ * resolve — it silently draws nothing, which reads as a broken chart rather
+ * than as a styling slip. So the variables are read from the document and
+ * passed as real colours, rather than the theme being duplicated in JavaScript
+ * where it would quietly drift.
+ */
+export function cssColor(variable: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue(variable)
+    .trim()
+
+  return value || fallback
+}
+
+/** `var(--x)` from a caller, resolved; anything else passed through. */
+export function resolveColor(color: string): string {
+  const match = /^var\((--[^),]+)\)$/.exec(color.trim())
+
+  return match ? cssColor(match[1]!, color) : color
+}

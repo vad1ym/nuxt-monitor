@@ -17,6 +17,7 @@ import type {
   MonitorTrafficStats,
   MonitorUptimeSummary,
   MonitorHeatCell,
+  MonitorDashboard,
 } from '../../types'
 import type { IssueState } from './notify/triggers'
 import { evaluate } from './notify/triggers'
@@ -26,6 +27,8 @@ import { Sampler } from './sampling'
 import type { ExportOptions } from './export'
 import { exportRows } from './export'
 import { uptime } from './uptime'
+import type { DashboardOptions } from './dashboard'
+import { dashboard } from './dashboard'
 import type { CompiledIgnore } from '../shared/ignore'
 import { compileIgnore, shouldIgnore } from '../shared/ignore'
 import type { CompiledGroup } from '../shared/groups'
@@ -1347,6 +1350,12 @@ export class MonitorStore {
   async trafficFacets(windowMs: number): Promise<MonitorFacetCounts> {
     await this.flush()
     return queries.trafficFacets(this.db, windowMs)
+  }
+
+  /** Everything the dashboard screen draws, in one round trip. */
+  async dashboard(options: DashboardOptions): Promise<MonitorDashboard> {
+    await this.flush()
+    return dashboard(this.db, options)
   }
 
   /** Errors by hour and weekday, for the heat map. */

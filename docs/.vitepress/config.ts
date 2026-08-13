@@ -51,7 +51,7 @@ export default defineConfig({
           { text: 'Grouping', link: '/guide/grouping' },
           { text: 'Privacy', link: '/guide/privacy' },
           { text: 'Storage', link: '/guide/storage' },
-          { text: 'Statistics', link: '/guide/statistics' },
+          { text: 'The overview', link: '/guide/overview' },
           { text: 'CLI and export', link: '/guide/cli' },
           { text: 'Deployment', link: '/guide/deployment' },
         ],

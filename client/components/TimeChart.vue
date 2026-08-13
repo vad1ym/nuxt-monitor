@@ -5,6 +5,7 @@ import { GridComponent, TooltipComponent } from 'echarts/components'
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { cssColor, resolveColor } from '../chart'
 import { absoluteTime } from '../format'
 
 /**
@@ -52,29 +53,6 @@ const empty = ref(false)
 
 let chart: EChartsType | null = null
 let observer: ResizeObserver | null = null
-
-/**
- * Colours come from the stylesheet, not from a palette hardcoded here.
- *
- * ECharts paints on a canvas, where `var(--ui-warning)` is just a string it
- * cannot resolve — it silently draws nothing. So the variables are read from
- * the document and passed as real colours. The alternative is duplicating the
- * theme in JavaScript, where it quietly drifts from the rest of the dashboard.
- */
-function cssColor(variable: string, fallback: string): string {
-  const value = getComputedStyle(document.documentElement)
-    .getPropertyValue(variable)
-    .trim()
-
-  return value || fallback
-}
-
-/** `var(--x)` from a caller, resolved; anything else passed through. */
-function resolve(color: string): string {
-  const match = /^var\((--[^),]+)\)$/.exec(color.trim())
-
-  return match ? cssColor(match[1]!, color) : color
-}
 
 /**
  * An axis label, cut to what the span it covers actually needs.
@@ -168,7 +146,7 @@ function render(): void {
     },
 
     series: props.series.map((series) => {
-      const color = resolve(series.color)
+      const color = resolveColor(series.color)
 
       return {
         name: series.name,

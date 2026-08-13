@@ -10,6 +10,7 @@ import type {
   MonitorRouteStat,
   MonitorSessionStats,
   MonitorUptimeSummary,
+  MonitorDashboard,
 } from '../../types'
 import type { ExportOptions } from './export'
 import { csvHeader } from './export'
@@ -35,7 +36,7 @@ export class DisabledStore implements Pick<
   'capture' | 'countRequest' | 'countTraffic' | 'flush' | 'close' | 'listIssues' | 'getIssue'
   | 'getEvents' | 'facetCounts' | 'sessionCount' | 'eventCount' | 'overview'
   | 'setResolved' | 'setIgnored' | 'purge' | 'releases' | 'routes' | 'sessions' | 'health'
-  | 'deliveries' | 'alerts' | 'exportRows' | 'uptime'
+  | 'deliveries' | 'alerts' | 'exportRows' | 'uptime' | 'dashboard'
 > {
   /** Why collection is off, for the health endpoint and the dashboard. */
   constructor(readonly reason: string) {}
@@ -140,6 +141,18 @@ export class DisabledStore implements Pick<
    */
   async deliveries(): Promise<MonitorDelivery[]> {
     return []
+  }
+
+  /** An empty screen rather than a failing one. */
+  async dashboard(): Promise<MonitorDashboard> {
+    return {
+      windowMs: 0,
+      totals: { requests: 0, failed: 0, events: 0, issues: 0, newIssues: 0, affectedSessions: 0 },
+      trend: [],
+      breakdowns: [],
+      routes: [],
+      recent: [],
+    }
   }
 
   /** Nothing recorded, so nothing is claimed about any day. */

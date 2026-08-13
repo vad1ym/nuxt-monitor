@@ -17,6 +17,11 @@ const COLUMNS = {
   deviceType: 'device_type',
   release: '`release`',
   route: 'route',
+  // Both are stored on the event like the rest. They are dimensions in exactly
+  // the same sense — "which of these were endpoints" and "which belonged to
+  // payments" are the same shape of question as "which were on Safari".
+  kind: 'kind',
+  group: 'group_name',
 } as const satisfies Record<MonitorFacetName, string>
 
 export const FACET_NAMES = Object.keys(COLUMNS) as MonitorFacetName[]

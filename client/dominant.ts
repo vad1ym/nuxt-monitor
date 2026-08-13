@@ -50,6 +50,12 @@ const MIN_COUNT = 5
 const MIN_LIFT = 1.3
 
 /** Facets ordered by how much a finding in them narrows the search. */
+/**
+ * `kind` and `group` are filterable but absent here on purpose: `kind` has two
+ * useful values, so "100% of these are API errors" restates where the code
+ * lives, and `group` is a name somebody chose for this issue — reporting it
+ * back as a discovery tells them what they already said.
+ */
 const PRIORITY: MonitorFacetName[] = [
   'browserVersion',
   'osVersion',
@@ -68,7 +74,7 @@ const PRIORITY: MonitorFacetName[] = [
  * outranks the browser skew that is the actual answer. An environment facet at
  * 100% is different: every user hitting it is genuinely on one browser.
  */
-const TAUTOLOGICAL_AT_TOTAL: MonitorFacetName[] = ['route', 'release']
+const TAUTOLOGICAL_AT_TOTAL: MonitorFacetName[] = ['route', 'release', 'kind', 'group']
 
 /**
  * The most concentrated slice across all facets, if any qualifies.
@@ -214,6 +220,8 @@ const LABELS: Record<MonitorFacetName, string> = {
   deviceType: 'device',
   release: 'release',
   route: 'route',
+  kind: 'kind',
+  group: 'group',
 }
 
 export function facetLabel(facet: MonitorFacetName): string {
