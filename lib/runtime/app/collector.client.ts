@@ -108,6 +108,26 @@ export default defineNuxtPlugin({
 
     // Otherwise a lone error waits for a batch that may never fill.
     setInterval(() => queue.flush(), 5_000)
+
+    return {
+      provide: {
+        /**
+         * The intake `useMonitor().exception()` reports through.
+         *
+         * Exposed rather than re-created in the composable so a manual report
+         * takes exactly the path a caught error does: the same queue, the same
+         * de-duplication, the same rate limit and the same breadcrumbs. A
+         * second sender would be a second set of those, and the rate limit in
+         * particular exists to survive a loop — a loop calling `exception()`
+         * is no less a loop.
+         */
+        monitorReport: (event: ClientEvent): void => {
+          event.facets = { session: sessionId(), release }
+          event.breadcrumbs ??= breadcrumbs.slice()
+          queue.add(event)
+        },
+      },
+    }
   },
 })
 

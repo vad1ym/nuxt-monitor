@@ -5,8 +5,10 @@ import { existsSync } from 'node:fs'
 import { cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
 import {
+  addImports,
   addPlugin,
   addServerHandler,
+  addServerImports,
   addServerPlugin,
   createResolver,
   defineNuxtModule,
@@ -138,6 +140,19 @@ export default defineNuxtModule<MonitorOptions>({
     addServerPlugin(resolver.resolve('./runtime/server/plugin'))
     addPlugin({ src: resolver.resolve('./runtime/app/collector.client'), mode: 'client' })
     addPlugin({ src: resolver.resolve('./runtime/app/collector'), mode: 'all' })
+
+    // `useMonitor()` in app code, `exception()` in server code. Two entry
+    // points rather than one because most manual reports are made in a server
+    // route, where there is no Nuxt app to reach a composable through.
+    addImports({
+      name: 'useMonitor',
+      from: resolver.resolve('./runtime/app/composables'),
+    })
+
+    addServerImports([{
+      name: 'exception',
+      from: resolver.resolve('./runtime/server/exception'),
+    }])
 
     // Ingest stays outside the auth check — the browser posts to it.
     addServerHandler({

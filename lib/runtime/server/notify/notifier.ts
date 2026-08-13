@@ -7,6 +7,7 @@ import type {
 } from '../../../types'
 import { channelName, send } from './channels'
 import { isQuiet } from './quiet'
+import { alertsFor } from './routing'
 
 /**
  * Raising alerts without becoming the thing people mute.
@@ -216,10 +217,23 @@ export class MonitorNotifier {
     }
 
     const deliveries = await Promise.all(this.channels.map(async (channel) => {
-      try {
-        await send(channel, alerts, context)
+      // Each channel is sent the subset it asked for, so the payments chat
+      // receives the payments alerts and one grouped message does not arrive
+      // in three places carrying three different meanings.
+      const mine = alertsFor(channel, alerts)
 
-        return this.log(alerts, channelName(channel), 'sent')
+      // Not logged. A channel that filtered everything out did exactly what it
+      // was configured to do, and a row per non-event would bury the log in
+      // silence nobody was wondering about — unlike quiet hours, which
+      // withholds something the reader would otherwise have received.
+      if (mine.length === 0) {
+        return undefined
+      }
+
+      try {
+        await send(channel, mine, context)
+
+        return this.log(mine, channelName(channel), 'sent')
       }
       catch (error) {
         const reason = error instanceof Error ? error.message : String(error)
@@ -229,11 +243,11 @@ export class MonitorNotifier {
         // dashboard's log is only read by somebody who already suspects it.
         console.error(`[monitor] could not deliver an alert to ${channelName(channel)}: ${reason}`)
 
-        return this.log(alerts, channelName(channel), 'failed', reason)
+        return this.log(mine, channelName(channel), 'failed', reason)
       }
     }))
 
-    return deliveries
+    return deliveries.filter((delivery): delivery is MonitorDelivery => Boolean(delivery))
   }
 
   /** Writes one log row per channel, for outcomes that never reached a channel. */
@@ -242,9 +256,21 @@ export class MonitorNotifier {
     detail: string,
     status: MonitorDelivery['status'],
   ): Promise<MonitorDelivery[]> {
-    return Promise.all(this.channels.map(
-      channel => this.log(alerts, channelName(channel), status, detail),
-    ))
+    const rows: Promise<MonitorDelivery>[] = []
+
+    for (const channel of this.channels) {
+      // Routed first, so the log does not claim a channel was silenced by
+      // quiet hours when its filters meant it was never going to receive this
+      // in the first place — two different reasons for the same silence, and
+      // only one of them is worth acting on.
+      const mine = alertsFor(channel, alerts)
+
+      if (mine.length > 0) {
+        rows.push(this.log(mine, channelName(channel), status, detail))
+      }
+    }
+
+    return Promise.all(rows)
   }
 
   /**

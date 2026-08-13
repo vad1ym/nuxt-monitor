@@ -1,6 +1,7 @@
 import { defineEventHandler, getQuery } from '#imports'
 import { parseSide, requireDashboardAccess, useMonitorStore } from '../context'
 import { parseFacetFilter } from '../facets'
+import type { MonitorLevel } from '../../../types'
 import type { MonitorIssueSort } from '../queries'
 
 export default defineEventHandler(async (event) => {
@@ -13,9 +14,16 @@ export default defineEventHandler(async (event) => {
     ? undefined
     : query.resolved === 'true' || query.resolved === '1'
 
+  const manual = query.manual === undefined
+    ? undefined
+    : query.manual === 'true' || query.manual === '1'
+
   return store.listIssues({
     side: parseSide(query.side),
     resolved,
+    manual,
+    group: toText(query.group),
+    level: parseLevel(query.level),
     ignored: query.ignored === 'true' || query.ignored === '1',
     sort: parseSort(query.sort),
     search: toText(query.search),
@@ -37,6 +45,13 @@ function parseSort(value: unknown): MonitorIssueSort | undefined {
   const sorts: MonitorIssueSort[] = ['last-seen', 'count', 'first-seen']
 
   return sorts.find(sort => sort === value)
+}
+
+/** One of the four, or nothing. The value reaches a column comparison. */
+function parseLevel(value: unknown): MonitorLevel | undefined {
+  const levels: MonitorLevel[] = ['info', 'warning', 'error', 'critical']
+
+  return levels.find(level => level === value)
 }
 
 function toText(value: unknown): string | undefined {

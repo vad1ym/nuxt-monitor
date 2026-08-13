@@ -26,12 +26,16 @@ import RoutesView from './components/RoutesView.vue'
  * with a denominator of its own — keeps a screen under Traffic.
  */
 
-interface Scope { side?: string, resolved?: boolean, ignored?: boolean }
+interface Scope { side?: string, resolved?: boolean, ignored?: boolean, manual?: boolean }
 
 const SCOPES: Record<string, { label: string, icon: string, value: Scope }> = {
   'open': { label: 'Open', icon: 'i-lucide-inbox', value: { resolved: false } },
   'server': { label: 'Server', icon: 'i-lucide-server', value: { side: 'server' } },
   'client': { label: 'Client', icon: 'i-lucide-monitor', value: { side: 'client' } },
+  // Reports raised by `exception()`. Beside the sides rather than at the end:
+  // "what did we decide to watch" is a question asked as often as "what broke
+  // on the server", and a list that mixes the two hides the smaller set.
+  'manual': { label: 'Reported', icon: 'i-lucide-flag', value: { manual: true } },
   'resolved': { label: 'Resolved', icon: 'i-lucide-check', value: { resolved: true } },
   'all': { label: 'All', icon: 'i-lucide-list', value: {} },
   // Ignored issues are excluded from every other scope, so the only way back

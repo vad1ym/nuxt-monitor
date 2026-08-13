@@ -124,3 +124,26 @@ describe('fingerprint', () => {
       .not.toBe(fingerprint({ ...rest, type: 'RangeError' }))
   })
 })
+
+describe('groups', () => {
+  const base = {
+    side: 'server' as const,
+    type: 'MonitorException',
+    message: 'totals disagree',
+    stack: 'E\n    at check (/app/billing.ts:9:1)',
+  }
+
+  it('separates the same report raised under two groups', () => {
+    expect(fingerprint({ ...base, group: 'payments' }))
+      .not.toBe(fingerprint({ ...base, group: 'data-integrity' }))
+  })
+
+  it('leaves an ungrouped fingerprint exactly as it was', () => {
+    // The value is pinned, not merely compared against itself: adding a part to
+    // the hash for events that carry no group would change every fingerprint
+    // already in the table, and an upgrade would split each open issue into a
+    // new one beside the old — work in progress would look freshly discovered.
+    expect(fingerprint(base)).toBe('15d0869ba78f60a7')
+    expect(fingerprint({ ...base, group: undefined })).toBe(fingerprint(base))
+  })
+})

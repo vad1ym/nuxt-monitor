@@ -186,6 +186,16 @@ export async function migrate(db: Database, dialect: MonitorDialect = 'sqlite'):
     // The highest threshold already announced, so crossing 100 is reported once
     // and not again on every occurrence after it.
     ['alerted_count', TYPES[dialect].int],
+    // Reports raised by `exception()`. Distinct from caught errors throughout:
+    // a list that mixes "what broke" with "what somebody chose to watch" makes
+    // the second unfindable.
+    ['manual', TYPES[dialect].int],
+    ['level', TYPES[dialect].key(16)],
+    // `group_name`, not `group`: unlike `release` — which only MySQL reserves,
+    // and which the quoting layer handles — `GROUP` is reserved in all three
+    // engines, so every query naming it would depend on the quoting being
+    // right. A column name nobody has to quote cannot be got wrong.
+    ['group_name', TYPES[dialect].key(64)],
   ])
 
   // Facets, added after the first release. Existing rows keep NULL and show
@@ -200,6 +210,11 @@ export async function migrate(db: Database, dialect: MonitorDialect = 'sqlite'):
     ['device_type', TYPES[dialect].key(32)],
     ['release', TYPES[dialect].key(64)],
     ['route', TYPES[dialect].text],
+    // On the occurrence as well as the issue: a group is set per call site, and
+    // one issue can be reached from two of them.
+    ['manual', TYPES[dialect].int],
+    ['level', TYPES[dialect].key(16)],
+    ['group_name', TYPES[dialect].key(64)],
   ])
 }
 

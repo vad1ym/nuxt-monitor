@@ -18,6 +18,9 @@
     "client/**/*",
     "lib/runtime/server/plugin.ts",
     "lib/runtime/server/context.ts",
+    // Reaches `#imports` through `context.ts`, so it belongs with the rest of
+    // the files compiled by the consuming app rather than here.
+    "lib/runtime/server/exception.ts",
     "lib/runtime/server/routes/**",
     "lib/runtime/app/**"
   ]

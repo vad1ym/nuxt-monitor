@@ -279,7 +279,22 @@ onMounted(loadBaseline)
                 size="sm"
                 :label="detail.issue.side"
               />
-              <span class="font-medium text-muted">{{ detail.issue.type }}</span>
+              <!-- A manual report's type is always `MonitorException`. What
+                   the caller named — the group and the level — is the part
+                   that carries information, so it takes the slot. -->
+              <UBadge
+                v-if="detail.issue.manual"
+                color="primary"
+                variant="subtle"
+                size="sm"
+                icon="i-lucide-flag"
+                :label="detail.issue.group
+                  ? `${detail.issue.group}${detail.issue.level ? ` · ${detail.issue.level}` : ''}`
+                  : `reported${detail.issue.level ? ` · ${detail.issue.level}` : ''}`"
+                title="Raised by exception(), not caught"
+              />
+
+              <span v-else class="font-medium text-muted">{{ detail.issue.type }}</span>
               <UBadge
                 v-if="detail.issue.resolved"
                 color="success"

@@ -1,4 +1,4 @@
-import type { MonitorFacets, MonitorFrame, MonitorIssue, MonitorSide } from '../../types'
+import type { MonitorFacets, MonitorFrame, MonitorIssue, MonitorLevel, MonitorSide } from '../../types'
 import { isVendorFrame } from '../shared/vendor-frame'
 
 /**
@@ -39,6 +39,12 @@ export function toIssue(row: Record<string, unknown>): MonitorIssue {
     route: (row.route as string | null) ?? undefined,
     method: (row.method as string | null) ?? undefined,
     status: row.status === null || row.status === undefined ? undefined : Number(row.status),
+    // Only ever true, never false: a caught error is not "manual: false", it
+    // simply has no opinion, and an explicit false on every row would put a
+    // field in the API that means nothing.
+    manual: Number(row.manual) === 1 ? true : undefined,
+    level: (row.level as MonitorLevel | null) ?? undefined,
+    group: (row.group_name as string | null) ?? undefined,
   }
 }
 

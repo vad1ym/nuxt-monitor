@@ -216,6 +216,27 @@ interface MonitorChannelBase {
   name?: string
   /** Skip this channel without deleting its configuration. */
   enabled?: boolean
+  /**
+   * Only send alerts about these priority groups, from `exception()`.
+   *
+   * Unset — the default — sends everything to this channel. Named, it becomes
+   * a channel for one concern: the payments group to the payments chat, where
+   * the people who can act on it are, and not to a general channel where it is
+   * one line among fifty.
+   *
+   * Caught errors carry no group, so a channel with `groups` set will not
+   * receive them. That is the point of naming one; a channel that wants both
+   * should be left unfiltered, or a second channel added.
+   */
+  groups?: string[]
+  /**
+   * Lowest level worth sending here, for reports raised by `exception()`.
+   *
+   * `warning` on a chat that people read during the day and `critical` on the
+   * one that wakes somebody is the arrangement this exists for. Caught errors
+   * are treated as `error`, since that is what being thrown amounts to.
+   */
+  minLevel?: MonitorLevel
 }
 
 export interface MonitorTelegramChannel extends MonitorChannelBase {
@@ -402,6 +423,34 @@ export interface MonitorFrame {
 
 export type MonitorSide = 'client' | 'server'
 
+/**
+ * How much attention something deserves.
+ *
+ * Only for reports raised by hand. A caught error has no level — the fact that
+ * it was thrown is the whole of what is known about it — but a deliberate
+ * report is made by someone who knows whether a mismatched payment total is a
+ * curiosity or an emergency, and throwing that knowledge away at the call site
+ * means rediscovering it later from a message.
+ */
+export type MonitorLevel = 'info' | 'warning' | 'error' | 'critical'
+
+/** What `exception()` accepts alongside the message. */
+export interface MonitorExceptionOptions {
+  /** Default: `error`. */
+  level?: MonitorLevel
+  /**
+   * A named area this belongs to — `payments`, `data-integrity`.
+   *
+   * Free-form on purpose: the set of things worth watching is the
+   * application's, not the module's. Groups are what notification routing is
+   * configured against, so the name is the contract between a call site and an
+   * alerting rule.
+   */
+  group?: string
+  /** Extra context, scrubbed and stored with the occurrence like any other. */
+  meta?: Record<string, unknown>
+}
+
 /** What the collectors hand to the store. */
 export interface MonitorEvent {
   side: MonitorSide
@@ -416,6 +465,17 @@ export interface MonitorEvent {
   tags?: string[]
   /** Dimensions the dashboard groups and filters by. Stored as columns. */
   facets?: MonitorFacets
+  /**
+   * Set when the report was made by `exception()` rather than caught.
+   *
+   * Kept distinct from a caught error throughout. The two answer different
+   * questions — "what broke" against "what did somebody decide was worth
+   * watching" — and a list that mixes them silently makes the second
+   * unfindable.
+   */
+  manual?: boolean
+  level?: MonitorLevel
+  group?: string
 }
 
 /**
@@ -622,4 +682,9 @@ export interface MonitorIssue {
   method?: string
   /** HTTP status, when the error carried one. */
   status?: number
+  /** Raised by `exception()` rather than caught. */
+  manual?: boolean
+  /** Only ever set on a manual report. */
+  level?: MonitorLevel
+  group?: string
 }

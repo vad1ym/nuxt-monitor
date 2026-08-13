@@ -34,6 +34,26 @@ function isNew(issue: MonitorIssue): boolean {
   return Boolean(props.newSince) && issue.firstSeen > props.newSince!
 }
 
+/**
+ * The colour a manual report's level earns.
+ *
+ * `critical` and `error` share `error`: the distinction between them matters
+ * for alert routing, where it decides who gets woken, and not in a list where
+ * both mean "look at this". Two shades of red would be a difference the eye
+ * has to decode for no decision it changes here.
+ */
+function levelColor(level: MonitorIssue['level']): 'error' | 'warning' | 'info' | 'neutral' {
+  if (level === 'critical' || level === 'error') {
+    return 'error'
+  }
+
+  if (level === 'warning') {
+    return 'warning'
+  }
+
+  return level === 'info' ? 'info' : 'neutral'
+}
+
 /** Server errors read as 5xx-or-not; 4xx is usually someone else's problem. */
 function statusColor(status: number): 'error' | 'warning' | 'neutral' {
   if (status >= 500) {
@@ -107,8 +127,8 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
           class="mt-1.5 size-2 shrink-0 rounded-full"
           :class="issue.resolved
             ? 'bg-success/60'
-            : issue.side === 'client' ? 'bg-info' : 'bg-warning'"
-          :title="`${issue.side}${issue.resolved ? ', resolved' : ''}`"
+            : issue.manual ? 'bg-primary' : issue.side === 'client' ? 'bg-info' : 'bg-warning'"
+          :title="`${issue.manual ? 'reported' : issue.side}${issue.resolved ? ', resolved' : ''}`"
         />
 
         <div class="min-w-0 flex-1">
@@ -128,7 +148,22 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
           </p>
 
           <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-dimmed">
-            <span class="font-medium text-muted">{{ issue.type }}</span>
+            <!-- Every manual report has the same type, so printing it says
+                 nothing. The group and the level are what the caller chose to
+                 tell us, and the flag marks the row as somebody's decision
+                 rather than something that fell over. -->
+            <template v-if="issue.manual">
+              <UBadge
+                :color="levelColor(issue.level)"
+                variant="subtle"
+                size="sm"
+                icon="i-lucide-flag"
+                :label="issue.group || 'reported'"
+                :title="`Reported by exception()${issue.level ? `, ${issue.level}` : ''}`"
+              />
+            </template>
+
+            <span v-else class="font-medium text-muted">{{ issue.type }}</span>
 
             <template v-if="issue.culprit">
               <span aria-hidden="true">·</span>

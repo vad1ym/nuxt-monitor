@@ -1,6 +1,7 @@
 import type { H3Event } from 'h3'
 import { defineEventHandler, getRequestHeader, readRawBody, setResponseStatus } from '#imports'
 import type { MonitorBreadcrumb, MonitorEvent, MonitorFacets } from '../../../types'
+import { normalizeGroup, normalizeLevel } from '../../shared/exception'
 import { scrub, scrubUrl } from '../../shared/scrub'
 import type { ParsedUserAgent } from '../../shared/user-agent'
 import { parseUserAgent } from '../../shared/user-agent'
@@ -176,6 +177,27 @@ function normalize(raw: unknown, options: { extraKeys: string[] }): MonitorEvent
       ? scrub(sanitizeContext(input.context as Record<string, unknown>, options), options)
       : undefined,
     breadcrumbs: normalizeBreadcrumbs(input.breadcrumbs, options),
+    // Re-derived from the body rather than trusted: this route takes no
+    // credentials, so `manual` is a claim anyone can make. It is accepted
+    // because the worst a forged one can do is put a row in a list the owner
+    // of the app is already looking at — but the level and the group are
+    // normalised through the same functions the composable uses, so a value
+    // that could not have come from `exception()` cannot arrive through here
+    // either, and neither can reach a column unbounded.
+    ...manualFields(input),
+  }
+}
+
+/** The three fields a manual report carries, or nothing at all. */
+function manualFields(input: Record<string, unknown>): Partial<MonitorEvent> {
+  if (input.manual !== true) {
+    return {}
+  }
+
+  return {
+    manual: true,
+    level: normalizeLevel(input.level),
+    group: normalizeGroup(input.group),
   }
 }
 

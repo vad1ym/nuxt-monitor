@@ -191,6 +191,10 @@ delivery log and `enabled: false` to keep it configured but silent. Leave the
 credentials off and supply them through the environment — see
 [Secrets](../guide/notifications#secrets) for why that is not just a preference.
 
+A channel may also narrow what it receives: `groups: ['payments']` restricts it
+to those [priority groups](../guide/reporting#groups) — and therefore to manual
+reports only — and `minLevel: 'critical'` sets a severity floor.
+
 ```ts
 notifications: {
   // Credentials come from the environment at runtime — a token written here is

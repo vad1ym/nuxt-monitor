@@ -6,6 +6,7 @@ import type {
   MonitorFacetFilter,
   MonitorIssue,
   MonitorIssueTrend,
+  MonitorLevel,
   MonitorOverview,
   MonitorRelease,
   MonitorRouteStat,
@@ -68,6 +69,11 @@ export async function listIssues(db: Database, filter: {
   facets?: MonitorFacetFilter
   /** Ignored issues are hidden unless this asks for them. */
   ignored?: boolean
+  /** `true` keeps only `exception()` reports; `false` keeps only caught errors. */
+  manual?: boolean
+  /** A named priority group, from `exception(msg, { group })`. */
+  group?: string
+  level?: MonitorLevel
   sort?: MonitorIssueSort
   limit?: number
   offset?: number
@@ -90,6 +96,23 @@ export async function listIssues(db: Database, filter: {
   if (filter.type) {
     where.push('type = ?')
     params.push(filter.type)
+  }
+
+  // Reports raised by hand, on their own. They answer a different question
+  // from a caught error — "what did somebody decide was worth watching" rather
+  // than "what broke" — and mixing the two makes the smaller set unfindable.
+  if (filter.manual !== undefined) {
+    where.push(filter.manual ? 'manual = 1' : '(manual IS NULL OR manual = 0)')
+  }
+
+  if (filter.group) {
+    where.push('group_name = ?')
+    params.push(filter.group)
+  }
+
+  if (filter.level) {
+    where.push('level = ?')
+    params.push(filter.level)
   }
 
   // Absent means "not ignored" rather than "either": noise that has been put

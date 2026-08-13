@@ -79,8 +79,15 @@ const SERVER_CASES = [
   { path: '/ssr-error', weight: 3 },
 ]
 
-/** Successful traffic, so the error rate has a denominator. */
-const HEALTHY = ['/', '/client-error', '/fetch-error']
+/**
+ * Successful traffic, so the error rate has a denominator.
+ *
+ * `/api/reconcile` is in here rather than among the failures on purpose: it
+ * answers 200 and reports through `exception()`, which is the whole point of
+ * that route. It also gives the dashboard manual reports to filter by, and the
+ * notification routing two named groups to route on.
+ */
+const HEALTHY = ['/', '/client-error', '/fetch-error', '/api/reconcile']
 
 let requests = 0
 

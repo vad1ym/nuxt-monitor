@@ -122,8 +122,29 @@ that routes on the issue does not have to parse it back out of a sentence.
 }
 ```
 
-Every configured channel receives every alert. Routing particular issues to
-particular channels arrives with watcher groups.
+## Sending different things to different places
+
+By default every configured channel receives every alert. A channel can narrow
+that to the priority groups it cares about, and to a severity floor:
+
+```ts
+channels: [
+  { type: 'telegram', name: 'payments', groups: ['payments'], minLevel: 'error' },
+  { type: 'telegram', name: 'engineering' },
+]
+```
+
+Groups come from [`exception()`](./reporting#groups). A channel that names them
+receives only those groups, and therefore no caught errors — those carry no
+group. Leave `groups` unset for a channel that should see everything.
+
+`minLevel` compares against the level a manual report was raised with, treating
+a caught error as `error` so that raising the floor to `warning` does not
+silently drop genuine exceptions.
+
+A channel whose filters exclude everything is not written to the delivery log:
+it did what it was configured to do, unlike quiet hours, which withholds
+something the reader would otherwise have received.
 
 ## The link in the message
 

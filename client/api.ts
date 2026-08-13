@@ -140,6 +140,10 @@ export const api = {
     side?: string
     resolved?: boolean
     ignored?: boolean
+    /** True keeps only `exception()` reports; false only caught errors. */
+    manual?: boolean
+    group?: string
+    level?: string
     sort?: string
     search?: string
     type?: string

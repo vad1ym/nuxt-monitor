@@ -10,13 +10,28 @@ import { isVendorFrame } from './vendor-frame'
  * first: ids, hashes, quoted values and numbers vary per occurrence and would
  * otherwise split one fault across hundreds of issues.
  */
-export function fingerprint(event: Pick<MonitorEvent, 'type' | 'message' | 'stack' | 'side'>): string {
+export function fingerprint(
+  event: Pick<MonitorEvent, 'type' | 'message' | 'stack' | 'side'> & Pick<Partial<MonitorEvent>, 'group'>,
+): string {
   const parts = [
     event.side,
     event.type,
     normalizeMessage(event.message),
     topFrame(event.stack),
   ]
+
+  // Appended only when there is one, so every fingerprint written before groups
+  // existed hashes to exactly what it did before. An extra empty part would
+  // change every hash in the table, and an upgrade would silently split each
+  // open issue into a new one beside the old — the errors people are working on
+  // would appear to be freshly discovered.
+  //
+  // Two `exception()` calls saying the same thing about payments and about data
+  // integrity are two things worth watching apart; that is what naming a group
+  // is for.
+  if (event.group) {
+    parts.push(event.group)
+  }
 
   return createHash('sha256').update(parts.join('\n')).digest('hex').slice(0, 16)
 }

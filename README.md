@@ -58,6 +58,9 @@ Requires Node 22.13+ (`node:sqlite`) and Nuxt 4.
 - **Alerts to Telegram or a webhook** on a new issue, a regression or an issue
   growing — with a per-issue cooldown, grouping and quiet hours, because the
   version without those is the version people mute on the first day.
+- **`exception()` for what does not throw.** A payment that does not reconcile
+  is worth an alert and never reaches an error handler. Reports carry a level
+  and a named group, and a channel can subscribe to just one group.
 - **Redaction on collect.** Authorization headers, cookies, passwords and
   tokens never reach the database.
 - **Bounded storage.** One SQLite file, capped by age, count and bytes. If it
@@ -75,6 +78,7 @@ or `pnpm docs:dev` to read it locally.
 - [Authentication](https://vad1ym.github.io/nuxt-monitor/guide/authentication)
 - [Sourcemaps](https://vad1ym.github.io/nuxt-monitor/guide/sourcemaps)
 - [Notifications](https://vad1ym.github.io/nuxt-monitor/guide/notifications)
+- [Reporting by hand](https://vad1ym.github.io/nuxt-monitor/guide/reporting)
 - [Deployment](https://vad1ym.github.io/nuxt-monitor/guide/deployment)
 
 ## Limitations

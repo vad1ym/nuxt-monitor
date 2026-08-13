@@ -455,9 +455,9 @@ export class MonitorStore {
     const upsertIssue = this.statement('issue', `
       INSERT INTO issues (
         fingerprint, type, message, side, count, first_seen, last_seen,
-        culprit, route, method, status
+        culprit, route, method, status, manual, level, group_name
       )
-      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ${upsertClause(this.connection.dialect, 'issues', ['fingerprint'], [
         'count = count + 1',
         // Extremes, not "whatever arrived last". Assigning `excluded` directly
@@ -475,6 +475,13 @@ export class MonitorStore {
         'route = COALESCE(excluded.route, route)',
         'method = COALESCE(excluded.method, method)',
         'status = COALESCE(excluded.status, status)',
+        // Never unset by a later occurrence, and never re-derived: `manual`,
+        // the group and the level are decided at the call site that raised the
+        // issue, and the group is part of the fingerprint, so every occurrence
+        // of this issue carries the same one by construction.
+        'manual = COALESCE(excluded.manual, manual)',
+        'level = COALESCE(excluded.level, level)',
+        'group_name = COALESCE(excluded.group_name, group_name)',
         'resolved = 0',
       ])}
     `)
@@ -482,9 +489,10 @@ export class MonitorStore {
     const insertEvent = this.statement('event', `
       INSERT INTO events (
         fingerprint, ts, stack, context, breadcrumbs, tags, message,
-        session, browser, browser_version, os, os_version, device_type, \`release\`, route
+        session, browser, browser_version, os, os_version, device_type, \`release\`, route,
+        manual, level, group_name
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     await this.db.exec('BEGIN')
@@ -504,6 +512,9 @@ export class MonitorStore {
           typeof context.url === 'string' ? context.url.slice(0, 300) : null,
           typeof context.method === 'string' ? context.method : null,
           typeof context.statusCode === 'number' ? context.statusCode : null,
+          event.manual ? 1 : null,
+          event.level ?? null,
+          event.group ?? null,
         )
 
         const facets = event.facets ?? {}
@@ -526,6 +537,9 @@ export class MonitorStore {
           // The route shape, not the raw path: a breakdown over `/users/1`,
           // `/users/2`, … would have one row per visitor.
           normalizeRoute(typeof context.url === 'string' ? context.url : undefined),
+          event.manual ? 1 : null,
+          event.level ?? null,
+          event.group ?? null,
         )
       }
 

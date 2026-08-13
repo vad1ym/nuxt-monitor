@@ -1,4 +1,4 @@
-import type { MonitorBreadcrumb, MonitorFacets } from '../../types'
+import type { MonitorBreadcrumb, MonitorFacets, MonitorLevel } from '../../types'
 
 /** What the browser sends to `/_monitor/api/ingest`. */
 export interface ClientEvent {
@@ -11,6 +11,10 @@ export interface ClientEvent {
   /** Only what the browser knows: session and release. The rest is derived
    * server-side from the request headers. */
   facets?: MonitorFacets
+  /** Set by `exception()`. The server re-checks all three — see `normalize`. */
+  manual?: boolean
+  level?: MonitorLevel
+  group?: string
 }
 
 export interface QueueOptions {
@@ -135,5 +139,9 @@ export class EventQueue {
 export function dedupeKey(event: ClientEvent): string {
   const frame = event.stack?.split('\n')[1]?.trim() ?? ''
 
-  return `${event.type}|${event.message}|${frame}`
+  // The group is part of the key because every manual report shares one type,
+  // so without it two `exception()` calls made from the same line under
+  // different groups collapse into one — and the group is precisely what
+  // distinguishes them, both in the issue list and in alert routing.
+  return `${event.type}|${event.message}|${frame}|${event.group ?? ''}`
 }

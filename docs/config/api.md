@@ -49,6 +49,9 @@ The issue list.
 | `resolved` | `true` or `false` |
 | `search` | Message, file or route |
 | `type` | Error type |
+| `manual` | `true` for `exception()` reports only, `false` for caught only |
+| `group` | A priority group, e.g. `payments` |
+| `level` | `info`, `warning`, `error` or `critical` |
 | `limit`, `offset` | Paging |
 | Facet names | Repeatable — `?browser=Safari&browser=Firefox` |
 

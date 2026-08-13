@@ -118,8 +118,15 @@ function describe(alert: MonitorAlert, escape: (value: string) => string, markup
   const { issue } = alert
   const where = issue.culprit || issue.route
 
+  // For a manual report the type is always `MonitorException`, which says
+  // nothing — the group and the level are what the caller chose to tell us, so
+  // they take the slot. `payments/critical` is the first thing worth reading.
+  const label = issue.manual
+    ? [issue.group, issue.level].filter(Boolean).join('/') || 'exception'
+    : issue.type
+
   const parts = [
-    markup.code(escape(issue.type)),
+    markup.code(escape(label)),
     escape(truncate(issue.message, MAX_MESSAGE)),
   ]
 

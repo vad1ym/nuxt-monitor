@@ -47,6 +47,7 @@ export default defineConfig({
           { text: 'Authentication', link: '/guide/authentication' },
           { text: 'Sourcemaps', link: '/guide/sourcemaps' },
           { text: 'Notifications', link: '/guide/notifications' },
+          { text: 'Reporting by hand', link: '/guide/reporting' },
           { text: 'Grouping', link: '/guide/grouping' },
           { text: 'Privacy', link: '/guide/privacy' },
           { text: 'Storage', link: '/guide/storage' },
