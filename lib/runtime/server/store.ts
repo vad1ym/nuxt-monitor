@@ -15,7 +15,8 @@ import type {
   MonitorRouteStat,
   MonitorSessionStats,
   MonitorTrafficStats,
-  MonitorUptime,
+  MonitorUptimeSummary,
+  MonitorHeatCell,
 } from '../../types'
 import type { IssueState } from './notify/triggers'
 import { evaluate } from './notify/triggers'
@@ -159,8 +160,6 @@ export class MonitorStore {
   private sampled = 0
   /** Compiled once at startup, like the ignore rules. */
   private readonly groups: CompiledGroup[]
-  /** The last minute a heartbeat was written for, so it is written once. */
-  private lastBeat = 0
 
   /**
    * Opens a store, ready to use.
@@ -453,7 +452,6 @@ export class MonitorStore {
 
   /** Writes buffered counters. */
   private async flushCounters(): Promise<void> {
-    await this.beat()
     await this.flushTrafficFacets()
 
     if (this.counters.size === 0) {
@@ -493,42 +491,6 @@ export class MonitorStore {
       }
 
       this.dropCountersIfHopeless()
-    }
-  }
-
-  /**
-   * Records that the application was alive this minute.
-   *
-   * On the flush rather than a timer of its own: the flush already runs every
-   * second while the process is up, and a second schedule would be a second
-   * thing that can stop without anybody noticing — which is precisely the
-   * failure this exists to detect.
-   *
-   * Written at most once per bucket. `INSERT` on a primary key that is already
-   * there is a no-op through the same upsert clause the counters use, so a
-   * thousand flushes in a minute cost one row.
-   */
-  private async beat(now = Date.now()): Promise<void> {
-    const bucket = bucketOf(now, BUCKET_MS)
-
-    if (bucket === this.lastBeat) {
-      return
-    }
-
-    this.lastBeat = bucket
-
-    try {
-      await this.statement('heartbeat', `
-        INSERT INTO heartbeats (bucket) VALUES (?)
-        ${upsertClause(this.connection.dialect, 'heartbeats', ['bucket'], ['bucket = excluded.bucket'])}
-      `).run(bucket)
-    }
-    catch (error) {
-      // A missed beat reads as downtime, which is wrong but not dangerous —
-      // and failing the flush over it would turn a cosmetic gap into lost
-      // errors.
-      this.lastBeat = 0
-      console.error('[monitor] failed to record a heartbeat', error)
     }
   }
 
@@ -1249,9 +1211,7 @@ export class MonitorStore {
 
     this.trafficCounters.clear()
 
-    this.lastBeat = 0
-
-    for (const table of ['events', 'issues', 'request_stats', 'traffic_facets', 'heartbeats', 'notifications']) {
+    for (const table of ['events', 'issues', 'request_stats', 'traffic_facets', 'notifications']) {
       await this.db.exec(`DELETE FROM ${table}`)
     }
   }
@@ -1271,10 +1231,6 @@ export class MonitorStore {
     // that give the error numbers meaning, and a baseline that expired first
     // would silently stop qualifying the breakdowns.
     await this.db.prepare('DELETE FROM traffic_facets WHERE bucket < ?').run(counterCutoff)
-    // Heartbeats are one small row per minute, and the uptime bar reaches back
-    // 90 days — further than anything else here, and still only ~130k rows.
-    await this.db.prepare('DELETE FROM heartbeats WHERE bucket < ?')
-      .run(now - 90 * 24 * 60 * 60 * 1_000)
     const issues = await this.db.prepare(`
       DELETE FROM issues
       WHERE fingerprint NOT IN (SELECT DISTINCT fingerprint FROM events)
@@ -1393,16 +1349,27 @@ export class MonitorStore {
     return queries.trafficFacets(this.db, windowMs)
   }
 
-  /**
-   * Whether the application was up, day by day.
-   *
-   * Flushes first so the current minute's heartbeat is written: without it a
-   * dashboard opened seconds after a restart reports the minute it is looking
-   * at as an outage.
-   */
-  async uptime(days = 90): Promise<MonitorUptime> {
+  /** Errors by hour and weekday, for the heat map. */
+  async heatmap(since: number): Promise<MonitorHeatCell[]> {
     await this.flush()
-    return uptime(this.db, days)
+    return queries.heatmap(this.db, since)
+  }
+
+  /**
+   * How the last months went, a day at a time.
+   *
+   * The watched groups come from the config rather than the caller: which
+   * parts of the application matter is a property of the installation, and a
+   * dashboard that could pass its own list would be able to disagree with the
+   * alerts about what counts as serious.
+   */
+  async uptime(days = 90): Promise<MonitorUptimeSummary> {
+    await this.flush()
+
+    return uptime(this.db, {
+      days,
+      watched: this.groups.filter(group => group.notify).map(group => group.name),
+    })
   }
 
   /** The alert delivery log, newest first. No flush: nothing buffers into it. */

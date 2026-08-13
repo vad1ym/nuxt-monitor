@@ -14,7 +14,8 @@ import type {
   MonitorSessionStats,
   MonitorTrafficStats,
   MonitorTriggerOptions,
-  MonitorUptime,
+  MonitorUptimeSummary,
+  MonitorHeatCell,
 } from '../lib/types'
 
 /**
@@ -213,7 +214,7 @@ export const api = {
    * `section` fetches just one; the sections are separate screens but share an
    * endpoint so their numbers always describe the same window.
    */
-  stats: (section?: 'releases' | 'routes' | 'sessions' | 'environments' | 'traffic', hours = 24) => {
+  stats: (section?: 'releases' | 'routes' | 'sessions' | 'environments' | 'traffic' | 'heatmap', hours = 24) => {
     const query = new URLSearchParams({ window: String(hours * 60 * 60 * 1_000) })
 
     if (section) {
@@ -227,11 +228,14 @@ export const api = {
       sessions?: MonitorSessionStats
       environments?: MonitorFacetCounts
       traffic?: MonitorTrafficStats
+      heatmap?: MonitorHeatCell[]
+      /** The audience, for judging the shares in `environments` against. */
+      traffic_facets?: MonitorFacetCounts
     }>(`/stats?${query}`)
   },
 
   /** The uptime bar. Not windowed like the rest — see the route. */
-  uptime: (days = 90) => request<MonitorUptime>(`/uptime?days=${days}`),
+  uptime: (days = 90) => request<MonitorUptimeSummary>(`/uptime?days=${days}`),
 
   /** The collector's own state — see `HealthBanner`. */
   health: () => request<MonitorHealth & { release?: string, storageDir: string }>('/health'),

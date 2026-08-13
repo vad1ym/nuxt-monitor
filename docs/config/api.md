@@ -89,7 +89,11 @@ Query: `window` (milliseconds), plus any facet filters to count within.
 Releases, routes, sessions and environments — the four section screens.
 
 Query: `window`, and `section` to fetch just one
-(`releases`, `routes`, `sessions`, `environments`).
+(`releases`, `routes`, `sessions`, `environments`, `traffic`, `heatmap`).
+
+`environments` also returns `traffic_facets`: the same dimensions counted over
+page views, so a share can be judged against the audience rather than against
+other errors.
 
 They share one endpoint because they are read together and describe the same
 window; splitting them would mean four round trips and four chances for the
@@ -141,12 +145,13 @@ Answers `{ "sent": false, "reason": … }` when no channel is configured.
 
 ## GET /api/uptime
 
-The uptime bar: one entry per day, plus availability, error rate and the
-incidents behind them.
+The calm-days bar: one entry per day, each with a verdict and the counts behind
+it, plus how many of the recorded days were calm.
 
 Query: `days` (default 90, max 365).
 
-Not bounded by the dashboard's window — see [Uptime](../guide/uptime).
+Not bounded by the dashboard's window — see
+[Statistics](../guide/statistics#calm-days).
 
 ## GET /api/export
 

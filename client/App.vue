@@ -13,7 +13,7 @@ import MonitorLogo from './components/MonitorLogo.vue'
 import NotificationsView from './components/NotificationsView.vue'
 import OverviewView from './components/OverviewView.vue'
 import RoutesView from './components/RoutesView.vue'
-import UptimeView from './components/UptimeView.vue'
+import StatsView from './components/StatsView.vue'
 
 /**
  * Three screens, not six.
@@ -70,9 +70,10 @@ const NAV: { view: View, label: string, icon: string }[] = [
   { view: 'overview', label: 'Overview', icon: 'i-lucide-layout-dashboard' },
   { view: 'issues', label: 'Issues', icon: 'i-lucide-inbox' },
   { view: 'traffic', label: 'Traffic', icon: 'i-lucide-route' },
-  // Next to Traffic, which is the other screen about the application rather
-  // than about its errors.
-  { view: 'uptime', label: 'Uptime', icon: 'i-lucide-activity' },
+  // Next to Traffic, which is the other screen about the application as a
+  // whole rather than about any one error. Uptime lives inside it: "were the
+  // last months calm" is a statistic, not a separate destination.
+  { view: 'stats', label: 'Statistics', icon: 'i-lucide-chart-line' },
   // Last, and deliberately not beside the screens that answer "what broke":
   // this one answers "who was told", which is a question asked once at setup
   // and then only when something did not arrive.
@@ -437,7 +438,7 @@ onMounted(async () => {
             <!-- Hidden on Notifications: nothing there is windowed, and a
                  control that changes nothing is worse than no control — it
                  invites the reader to conclude the log respects it. -->
-            <div v-if="view !== 'notifications' && view !== 'uptime'" class="ms-auto flex items-center gap-1.5">
+            <div v-if="view !== 'notifications'" class="ms-auto flex items-center gap-1.5">
               <UButton
                 v-for="option in WINDOWS"
                 :key="option.hours"
@@ -477,7 +478,11 @@ onMounted(async () => {
 
             <RoutesView v-else-if="view === 'traffic'" :hours="hours" />
 
-            <UptimeView v-else-if="view === 'uptime'" />
+            <StatsView
+              v-else-if="view === 'stats'"
+              :hours="hours"
+              @browse="(facet, value) => { view = 'issues'; filter = { [facet]: [value] } }"
+            />
 
             <NotificationsView v-else-if="view === 'notifications'" />
 

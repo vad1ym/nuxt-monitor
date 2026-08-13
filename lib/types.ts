@@ -753,46 +753,52 @@ export interface MonitorTrafficStats {
 }
 
 /**
- * One day of the uptime bar.
+ * One day of the calm-days bar.
  *
- * `state` is the day's verdict, and it distinguishes the two silences that
- * matter: a day with no traffic and a heartbeat throughout was quiet, and a day
- * with no heartbeat was an outage. Measured on errors alone the two are
- * identical, and the worse one renders green.
+ * The verdict is about the day, not about the process: whether anything
+ * happened that somebody should have known about. A day nothing was recorded
+ * for is `unknown` rather than calm — "no errors" and "no data" look identical
+ * in the database and mean opposite things.
  */
 export interface MonitorUptimeDay {
   /** Start of the day, epoch ms, in the server's zone. */
   day: number
+  /** Issues seen for the first time that day, ignored ones excluded. */
+  newIssues: number
+  /** How many of those were in a group configured with `notify: true`. */
+  watchedIssues: number
   requests: number
   failed: number
   /** Failed over total, 0–1. Undefined when nothing was served. */
   rate?: number
-  /** Minutes the process reported itself alive, out of 1440. */
-  aliveMinutes: number
   /**
-   * `up` — served traffic without crossing the failure threshold.
-   * `degraded` — served traffic, and too much of it failed.
-   * `down` — the process was not running for part of the day.
-   * `quiet` — running, but nothing was asked of it. Not a failure.
-   * `unknown` — before collection started. Not a failure either.
+   * `calm` — nothing serious happened.
+   * `notable` — a watched group failed, or several new issues appeared at once.
+   * `bad` — a great many new issues, or a failure rate that means an outage.
+   * `unknown` — nothing was recorded, for whatever reason.
    */
-  state: 'up' | 'degraded' | 'down' | 'quiet' | 'unknown'
+  state: 'calm' | 'notable' | 'bad' | 'unknown'
 }
 
-/** The uptime screen: a bar to read at a glance, and the numbers under it. */
-export interface MonitorUptime {
+/** One cell of the when-does-it-happen grid. */
+export interface MonitorHeatCell {
+  /** `0` Sunday – `6` Saturday, in the server's zone. */
+  day: number
+  /** `0`–`23`, in the server's zone. */
+  hour: number
+  count: number
+}
+
+/** The bar, and the numbers that explain it. */
+export interface MonitorUptimeSummary {
   days: MonitorUptimeDay[]
-  /**
-   * Share of the *observed* minutes the application was alive, 0–1.
-   *
-   * Against minutes since collection started, not against the whole window: a
-   * module installed on Tuesday must not report Monday as an outage.
-   */
-  availability: number
-  /** Requests that failed over requests served, across the window. */
+  /** New issues across the window, ignored ones excluded. */
+  newIssues: number
+  /** Requests that failed over requests served. */
   errorRate?: number
-  /** Stretches with no heartbeat, newest first. */
-  incidents: { from: number, to: number, minutes: number }[]
+  calmDays: number
+  /** Days with any data at all — the denominator `calmDays` is out of. */
+  measuredDays: number
 }
 
 /** How many people saw an error, and who saw the most. */

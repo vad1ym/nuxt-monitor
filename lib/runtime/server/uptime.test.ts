@@ -9,20 +9,17 @@ import { migrate } from './schema'
 import { uptime } from './uptime'
 
 /**
- * The uptime verdict.
+ * The day verdict.
  *
- * Written against the tables directly rather than through the store, because
- * what is being tested is the reading — a day of heartbeats and a day of
- * counters have to be arranged by hand to ask about last Tuesday at all.
+ * Written against the tables directly rather than through the store: the
+ * question is about last Tuesday, and only fixed rows can ask it.
  */
 
-const MINUTE = 60_000
 const DAY = 24 * 60 * 60 * 1_000
 
 let dir: string
 let db: Database
 
-/** Midnight today, which every day boundary is measured from. */
 function today(): number {
   const date = new Date()
 
@@ -31,10 +28,15 @@ function today(): number {
   return date.getTime()
 }
 
-async function beat(from: number, minutes: number): Promise<void> {
-  for (let index = 0; index < minutes; index++) {
-    await db.prepare('INSERT INTO heartbeats (bucket) VALUES (?)').run(from + index * MINUTE)
-  }
+let seq = 0
+
+async function issue(at: number, extra: { group?: string, ignored?: boolean } = {}): Promise<void> {
+  seq++
+
+  await db.prepare(`
+    INSERT INTO issues (fingerprint, type, message, side, count, first_seen, last_seen, ignored, group_name)
+    VALUES (?, 'TypeError', 'boom', 'server', 1, ?, ?, ?, ?)
+  `).run(`fp${seq}`, at, at, extra.ignored ? 1 : 0, extra.group ?? null)
 }
 
 async function serve(at: number, statusClass: string, count: number): Promise<void> {
@@ -43,157 +45,170 @@ async function serve(at: number, statusClass: string, count: number): Promise<vo
     .run(at, '/', 'GET', statusClass, count)
 }
 
+/** The verdict for a given day, which is what every test here asks about. */
+async function stateOf(day: number, watched: string[] = []): Promise<string | undefined> {
+  const result = await uptime(db, { days: 5, now: today() + 12 * 60 * 60_000, watched })
+
+  return result.days.find(entry => entry.day === day)?.state
+}
+
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), 'monitor-uptime-'))
   db = createDatabase(nodeSqlite({ path: join(dir, 'test.db') }))
   await migrate(db)
+  seq = 0
 })
 
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
-describe('the distinction it exists for', () => {
-  it('calls a quiet day quiet, not an outage', async () => {
-    // Alive all through yesterday and nothing was asked of it. A weekend on an
-    // internal tool is not a failure, and colouring it red teaches people to
-    // ignore the bar.
+describe('a calm day', () => {
+  it('is calm when traffic was served and nothing much appeared', async () => {
     const yesterday = today() - DAY
 
-    await beat(yesterday, 1_440)
+    await serve(yesterday, '2xx', 1_000)
+    await issue(yesterday)
 
-    const result = await uptime(db, 3, today() + 12 * 60 * MINUTE)
-    const day = result.days.find(entry => entry.day === yesterday)
-
-    expect(day?.state).toBe('quiet')
+    expect(await stateOf(yesterday)).toBe('calm')
   })
 
-  it('calls a day with no heartbeat down, however few errors it holds', async () => {
-    // The failure this whole feature is about: a process that is down produces
-    // no errors, so measured on errors alone the worst outage renders green.
-    const yesterday = today() - DAY
-
-    // Alive the day before, then nothing.
-    await beat(yesterday - DAY, 1_440)
-
-    const result = await uptime(db, 3, today() + 12 * 60 * MINUTE)
-
-    expect(result.days.find(entry => entry.day === yesterday)?.state).toBe('down')
+  it('is unknown when nothing was recorded at all', async () => {
+    // "No errors" and "no data" look identical in the database and mean
+    // opposite things. Calling an unobserved day calm is the one lie this bar
+    // must not tell.
+    expect(await stateOf(today() - DAY)).toBe('unknown')
   })
 })
 
-describe('states', () => {
-  it('is up when it served traffic and little of it failed', async () => {
+describe('a notable day', () => {
+  it('turns on a single new issue in a watched group', async () => {
+    // Naming a group and asking to hear about it is exactly the statement that
+    // one issue there is not ordinary.
     const yesterday = today() - DAY
 
-    await beat(yesterday, 1_440)
-    await serve(yesterday + 60 * MINUTE, '2xx', 990)
-    await serve(yesterday + 60 * MINUTE, '5xx', 10)
+    await serve(yesterday, '2xx', 1_000)
+    await issue(yesterday, { group: 'payments' })
 
-    const result = await uptime(db, 3, today() + 12 * 60 * MINUTE)
-    const day = result.days.find(entry => entry.day === yesterday)
-
-    expect(day?.state).toBe('up')
-    expect(day?.rate).toBeCloseTo(0.01)
+    expect(await stateOf(yesterday, ['payments'])).toBe('notable')
   })
 
-  it('is degraded when too much of it failed', async () => {
+  it('leaves an unwatched group alone', async () => {
     const yesterday = today() - DAY
 
-    await beat(yesterday, 1_440)
-    await serve(yesterday + 60 * MINUTE, '2xx', 80)
-    await serve(yesterday + 60 * MINUTE, '5xx', 20)
+    await serve(yesterday, '2xx', 1_000)
+    await issue(yesterday, { group: 'admin' })
 
-    expect((await uptime(db, 3, today() + 12 * 60 * MINUTE))
-      .days.find(entry => entry.day === yesterday)?.state).toBe('degraded')
+    expect(await stateOf(yesterday, ['payments'])).toBe('calm')
+  })
+
+  it('turns on a cluster of new issues, watched or not', async () => {
+    // Usually one bad release.
+    const yesterday = today() - DAY
+
+    await serve(yesterday, '2xx', 1_000)
+
+    for (let index = 0; index < 6; index++) {
+      await issue(yesterday)
+    }
+
+    expect(await stateOf(yesterday)).toBe('notable')
+  })
+})
+
+describe('a bad day', () => {
+  it('turns on a great many new issues', async () => {
+    const yesterday = today() - DAY
+
+    await serve(yesterday, '2xx', 1_000)
+
+    for (let index = 0; index < 30; index++) {
+      await issue(yesterday)
+    }
+
+    expect(await stateOf(yesterday)).toBe('bad')
+  })
+
+  it('turns on a failure rate that means an outage', async () => {
+    // One fingerprint can do this, and no count of new issues would catch it.
+    const yesterday = today() - DAY
+
+    await serve(yesterday, '2xx', 700)
+    await serve(yesterday, '5xx', 300)
+    await issue(yesterday)
+
+    expect(await stateOf(yesterday)).toBe('bad')
   })
 
   it('does not count 4xx against the application', async () => {
-    // A 404 says a client asked for something absent, which is not the
-    // application being down.
+    // A 404 is a client asking for something absent.
     const yesterday = today() - DAY
 
-    await beat(yesterday, 1_440)
-    await serve(yesterday + 60 * MINUTE, '2xx', 50)
-    await serve(yesterday + 60 * MINUTE, '4xx', 50)
+    await serve(yesterday, '2xx', 500)
+    await serve(yesterday, '4xx', 500)
 
-    expect((await uptime(db, 3, today() + 12 * 60 * MINUTE))
-      .days.find(entry => entry.day === yesterday)?.state).toBe('up')
-  })
-
-  it('leaves the days before collection unknown, not down', async () => {
-    // A module installed on Tuesday must not open on a wall of red claiming
-    // Monday was an outage.
-    await beat(today(), 60)
-
-    const result = await uptime(db, 5, today() + 60 * MINUTE)
-
-    expect(result.days[0]?.state).toBe('unknown')
-    expect(result.days.at(-1)?.state).not.toBe('unknown')
-  })
-
-  it('forgives a missed beat', async () => {
-    // A flush can be late and a deploy restarts the process. One missing
-    // minute is noise, and a bar that reddens on noise is a bar nobody trusts.
-    const yesterday = today() - DAY
-
-    await beat(yesterday, 700)
-    await beat(yesterday + 701 * MINUTE, 739)
-
-    expect((await uptime(db, 3, today() + 12 * 60 * MINUTE))
-      .days.find(entry => entry.day === yesterday)?.state).toBe('quiet')
+    expect(await stateOf(yesterday)).toBe('calm')
   })
 })
 
-describe('availability', () => {
-  it('is measured from the first beat, not from the window', async () => {
-    // Otherwise installing the module retroactively invents 89 days of outage.
-    const now = today() + 100 * MINUTE
+describe('ignored issues', () => {
+  it('never count, however many there are', async () => {
+    // Ignoring an issue is the statement that it is not worth acting on. A bar
+    // that reddens over dismissed noise is a bar people stop reading.
+    const yesterday = today() - DAY
 
-    await beat(today(), 100)
+    await serve(yesterday, '2xx', 1_000)
 
-    expect((await uptime(db, 90, now)).availability).toBeCloseTo(1, 1)
+    for (let index = 0; index < 30; index++) {
+      await issue(yesterday, { ignored: true })
+    }
+
+    expect(await stateOf(yesterday)).toBe('calm')
   })
 
-  it('falls when minutes are missing', async () => {
-    const now = today() + 100 * MINUTE
+  it('not even in a watched group', async () => {
+    const yesterday = today() - DAY
 
-    await beat(today(), 50)
+    await serve(yesterday, '2xx', 1_000)
+    await issue(yesterday, { group: 'payments', ignored: true })
 
-    expect((await uptime(db, 90, now)).availability).toBeCloseTo(0.5, 1)
+    expect(await stateOf(yesterday, ['payments'])).toBe('calm')
   })
 })
 
-describe('incidents', () => {
-  it('reports a run of missing minutes with a beginning and an end', async () => {
-    const start = today()
+describe('what counts as new', () => {
+  it('is when an issue first appeared, not when it last happened', async () => {
+    // An issue failing for a month is not news today, however often it fires.
+    const old = today() - 4 * DAY
 
-    await beat(start, 10)
-    // Twenty minutes missing.
-    await beat(start + 30 * MINUTE, 10)
+    await issue(old)
+    await db.prepare('UPDATE issues SET last_seen = ?').run(today())
+    await serve(today(), '2xx', 1_000)
 
-    const [incident] = (await uptime(db, 3, start + 40 * MINUTE)).incidents
+    expect(await stateOf(today())).toBe('calm')
+    expect(await stateOf(old)).toBe('calm')
+  })
+})
 
-    expect(incident?.minutes).toBe(20)
-    expect(incident?.from).toBe(start + 10 * MINUTE)
+describe('the summary', () => {
+  it('counts calm days out of the days there was data for', async () => {
+    const yesterday = today() - DAY
+
+    await serve(yesterday, '2xx', 1_000)
+    await issue(yesterday)
+
+    const result = await uptime(db, { days: 30, now: today() + 12 * 60 * 60_000 })
+
+    // Not out of thirty: twenty-nine of those days have no data, and counting
+    // them either way would make the number meaningless.
+    expect(result.measuredDays).toBe(1)
+    expect(result.calmDays).toBe(1)
   })
 
-  it('reports an outage that is still going', async () => {
-    // The one most worth reporting, and the one with no later beat to close
-    // the gap against.
-    const start = today()
+  it('reports the failure rate across the window', async () => {
+    await serve(today(), '2xx', 900)
+    await serve(today(), '5xx', 100)
 
-    await beat(start, 10)
-
-    const [incident] = (await uptime(db, 3, start + 60 * MINUTE)).incidents
-
-    expect(incident?.minutes).toBeGreaterThan(45)
-  })
-
-  it('says nothing when nothing was ever observed', async () => {
-    const result = await uptime(db, 90)
-
-    expect(result.incidents).toEqual([])
-    expect(result.availability).toBe(0)
+    expect((await uptime(db, { days: 5 })).errorRate).toBeCloseTo(0.1)
   })
 })

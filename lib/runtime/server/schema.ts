@@ -152,20 +152,6 @@ function tables(dialect: MonitorDialect): string[] {
   PRIMARY KEY (bucket, facet, value)${indexesFor('traffic_facets')}
 )`,
 
-    // Proof that the application was running.
-    //
-    // Without it "uptime" is a lie by omission: the measure available from
-    // errors alone is an error rate, and a process that is down produces no
-    // errors at all — so the worst possible outage renders as a clean green
-    // bar. One row per minute the app was alive turns a silence into a fact.
-    //
-    // A row per minute rather than a single moving timestamp, because the
-    // question is "when was it up", not "is it up now", and only the first can
-    // be asked about last Tuesday.
-    `CREATE TABLE IF NOT EXISTS heartbeats (
-  bucket ${t.int} NOT NULL PRIMARY KEY${indexesFor('heartbeats')}
-)`,
-
     // Every attempt to alert somebody, including the ones that were silenced.
     // A log of successes only cannot answer the question people actually ask of
     // an alerting system — "why did nobody tell me?" — and the answers to that

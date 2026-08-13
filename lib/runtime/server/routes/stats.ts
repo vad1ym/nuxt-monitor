@@ -38,5 +38,11 @@ export default defineEventHandler(async (event) => {
     // Environments are the facet counts over the window — the same data the
     // filter panel uses, read as a screen rather than as a control.
     environments: wants('environments') ? await store.facetCounts({ since }) : undefined,
+    // When errors happen, rather than how many. A fault confined to the
+    // nightly batch is a flat line on a chart and an obvious bright cell here.
+    heatmap: wants('heatmap') ? await store.heatmap(since) : undefined,
+    // The traffic baseline, so every share on the screen is measured against
+    // the audience rather than against other errors.
+    traffic_facets: wants('environments') ? await store.trafficFacets(windowMs) : undefined,
   }
 })

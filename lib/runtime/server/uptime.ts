@@ -1,58 +1,75 @@
 import type { Database } from 'db0'
-import type { MonitorUptime, MonitorUptimeDay } from '../../types'
-import { BUCKET_MS } from './schema'
+import type { MonitorUptimeDay, MonitorUptimeSummary } from '../../types'
 
 /**
- * Whether the application was up, and how badly it was failing when it was.
+ * Was the day calm?
  *
- * Two sources, because neither answers the question alone. Request counters say
- * how much failed; heartbeats say whether there was anything running to fail.
- * Errors on their own cannot tell a quiet night from a dead process — the
- * process that is down produces no errors at all, so the worst outage there is
- * renders as a clean green bar. That failure is the reason this file reads two
- * tables instead of one.
+ * Not "was the process alive" — that is a different question, answered by
+ * infrastructure that exists everywhere already, and answering it here would
+ * mean writing a row a minute forever to detect what a restart policy handles.
+ * What this asks is the question somebody actually opens a monitor for: *did
+ * anything happen yesterday that I should have known about?*
+ *
+ * Three colours, because three is what a bar can say at a glance:
+ *
+ * - **calm** — nothing serious. New issues may have appeared; none of them was
+ *   in a watched group and there were not many.
+ * - **notable** — worth a look: a watched group failed, or enough new issues
+ *   appeared at once to suggest a bad release.
+ * - **bad** — either a great many new issues, or a failure rate high enough
+ *   that the application was substantially not working.
+ *
+ * Ignored issues never count. Ignoring one is a statement that it is not worth
+ * acting on, and a bar that turns amber over noise somebody already dismissed
+ * is a bar that teaches people to stop reading it.
  */
 
-const MINUTE = BUCKET_MS
 const DAY_MS = 24 * 60 * 60 * 1_000
 
 /**
- * Failure rate at which a day stops counting as healthy.
+ * New issues in a day before it stops being ordinary.
  *
- * Deliberately not zero. Every application serving real traffic has some
- * failures, and a bar that goes amber on one 500 in a hundred thousand is a
- * bar nobody looks at twice.
+ * A handful of new fingerprints is what a normal week of development looks
+ * like. A dozen at once is usually one release, and that is worth seeing.
  */
-const DEGRADED_RATE = 0.05
+const NOTABLE_NEW_ISSUES = 5
+const BAD_NEW_ISSUES = 25
 
 /**
- * Minutes that may be missing before a day is called down.
+ * Failure rate at which the day is bad whatever the issue counts say.
  *
- * A flush can be late, a deploy restarts the process, and a machine can be
- * busy enough to skip a beat. One missing minute is noise; a run of them is an
- * outage — and `incidents` below reports the run, not the total.
+ * One request in five failing is not a bug to triage, it is an outage — and it
+ * can happen under a single fingerprint, which no count of new issues catches.
  */
-const TOLERATED_GAP = 2
+const BAD_RATE = 0.2
 
-export async function uptime(db: Database, days = 90, now = Date.now()): Promise<MonitorUptime> {
+export interface UptimeOptions {
+  days?: number
+  now?: number
+  /** Groups configured with `notify: true`. A failure in one is never ordinary. */
+  watched?: string[]
+}
+
+interface DayTally {
+  newIssues: number
+  watchedIssues: number
+  requests: number
+  failed: number
+}
+
+export async function uptime(db: Database, options: UptimeOptions = {}): Promise<MonitorUptimeSummary> {
+  const { days = 90, now = Date.now(), watched = [] } = options
   const since = startOfDay(now) - (days - 1) * DAY_MS
 
-  const beats = await db
-    .prepare('SELECT bucket FROM heartbeats WHERE bucket >= ? ORDER BY bucket ASC')
-    .all(since) as { bucket: number | string }[]
-
-  const buckets = beats.map(row => Number(row.bucket))
-  const alive = new Set(buckets)
-
-  // Counted once, by day, rather than by walking 1440 minutes per day for 90
-  // days on every request — the same answer for a fraction of the work.
-  const aliveByDay = new Map<number, number>()
-
-  for (const bucket of buckets) {
-    const day = startOfDay(bucket)
-
-    aliveByDay.set(day, (aliveByDay.get(day) ?? 0) + 1)
-  }
+  // `first_seen` rather than `last_seen`: an issue that has been failing for a
+  // month is not news today, however often it happened. Ignored ones are left
+  // out at the query rather than filtered later, so they cannot be counted by
+  // accident anywhere below.
+  const appeared = await db.prepare(`
+    SELECT first_seen AS at, group_name
+    FROM issues
+    WHERE first_seen >= ? AND (ignored IS NULL OR ignored = 0)
+  `).all(since) as Record<string, unknown>[]
 
   const traffic = await db.prepare(`
     SELECT bucket, class, SUM(count) AS total
@@ -60,158 +77,100 @@ export async function uptime(db: Database, days = 90, now = Date.now()): Promise
     GROUP BY bucket, class
   `).all(since) as Record<string, unknown>[]
 
-  /** Per day: requests served and requests that failed. */
-  const served = new Map<number, { requests: number, failed: number }>()
+  const byDay = new Map<number, DayTally>()
+
+  const tallyFor = (at: number): DayTally => {
+    const day = startOfDay(at)
+    const entry = byDay.get(day) ?? { newIssues: 0, watchedIssues: 0, requests: 0, failed: 0 }
+
+    byDay.set(day, entry)
+
+    return entry
+  }
+
+  for (const row of appeared) {
+    const entry = tallyFor(Number(row.at))
+
+    entry.newIssues++
+
+    if (row.group_name && watched.includes(String(row.group_name))) {
+      entry.watchedIssues++
+    }
+  }
 
   for (const row of traffic) {
-    const day = startOfDay(Number(row.bucket))
-    const entry = served.get(day) ?? { requests: 0, failed: 0 }
+    const entry = tallyFor(Number(row.bucket))
     const count = Number(row.total)
 
     entry.requests += count
 
-    // 5xx only. A 4xx is the caller asking for something that is not there,
-    // which says nothing about whether the application is up.
+    // 5xx only. A 404 is a client asking for something absent, which says
+    // nothing about whether the application was working.
     if (row.class === '5xx') {
       entry.failed += count
     }
-
-    served.set(day, entry)
   }
-
-  // Nothing was observed before the first beat, and a module installed on
-  // Tuesday must not report Monday as an outage.
-  const observedFrom = buckets[0]
 
   const result: MonitorUptimeDay[] = []
 
   for (let index = 0; index < days; index++) {
     const day = since + index * DAY_MS
-    const counts = served.get(day) ?? { requests: 0, failed: 0 }
-    const aliveMinutes = aliveByDay.get(day) ?? 0
-    const rate = counts.requests ? counts.failed / counts.requests : undefined
+    const entry = byDay.get(day) ?? { newIssues: 0, watchedIssues: 0, requests: 0, failed: 0 }
+    const rate = entry.requests ? entry.failed / entry.requests : undefined
 
     result.push({
       day,
-      requests: counts.requests,
-      failed: counts.failed,
+      newIssues: entry.newIssues,
+      watchedIssues: entry.watchedIssues,
+      requests: entry.requests,
+      failed: entry.failed,
       rate,
-      aliveMinutes,
-      state: stateOf({ day, now, observedFrom, aliveMinutes, requests: counts.requests, rate }),
+      state: stateOf(entry, rate),
     })
   }
 
   const totals = result.reduce(
-    (sum, day) => ({ requests: sum.requests + day.requests, failed: sum.failed + day.failed }),
-    { requests: 0, failed: 0 },
+    (sum, day) => ({
+      newIssues: sum.newIssues + day.newIssues,
+      requests: sum.requests + day.requests,
+      failed: sum.failed + day.failed,
+    }),
+    { newIssues: 0, requests: 0, failed: 0 },
   )
+
+  const measured = result.filter(day => day.state !== 'unknown')
 
   return {
     days: result,
-    availability: availabilityOf(alive, observedFrom, now),
+    newIssues: totals.newIssues,
     errorRate: totals.requests ? totals.failed / totals.requests : undefined,
-    incidents: incidentsOf(buckets, observedFrom, now),
+    // "83 of the last 90 days were calm" is the sentence the bar draws, and the
+    // one number worth putting beside it.
+    calmDays: measured.filter(day => day.state === 'calm').length,
+    measuredDays: measured.length,
   }
 }
 
-/**
- * The day's verdict.
- *
- * Order matters: a day the process was missing for is `down` whatever its error
- * rate says, because the errors it did not record are the ones that would have
- * mattered most.
- */
-function stateOf(input: {
-  day: number
-  now: number
-  observedFrom: number | undefined
-  aliveMinutes: number
-  requests: number
-  rate: number | undefined
-}): MonitorUptimeDay['state'] {
-  const { day, now, observedFrom, aliveMinutes, requests, rate } = input
-
-  // Before anything was collected. Distinct from an outage, and drawn
-  // differently: a fresh install should not open on a wall of red.
-  if (observedFrom === undefined || day + DAY_MS <= observedFrom) {
+function stateOf(entry: DayTally, rate: number | undefined): MonitorUptimeDay['state'] {
+  // Nothing recorded at all — before the module was installed, or while it was
+  // not running. Grey rather than green: "no errors" and "no data" look
+  // identical in the table and mean opposite things, and claiming a day was
+  // calm because nobody was watching is the one lie this bar must not tell.
+  if (entry.requests === 0 && entry.newIssues === 0) {
     return 'unknown'
   }
 
-  const expected = expectedMinutes(day, now, observedFrom)
-
-  if (expected - aliveMinutes > TOLERATED_GAP) {
-    return 'down'
+  if (entry.newIssues >= BAD_NEW_ISSUES || (rate !== undefined && rate >= BAD_RATE)) {
+    return 'bad'
   }
 
-  if (rate !== undefined && rate >= DEGRADED_RATE) {
-    return 'degraded'
+  // A watched group is one somebody named and asked to hear about, so a single
+  // new issue in it is never ordinary — that is what naming it meant.
+  if (entry.watchedIssues > 0 || entry.newIssues >= NOTABLE_NEW_ISSUES) {
+    return 'notable'
   }
 
-  // Alive, and nothing was asked of it. A weekend on an internal tool is not a
-  // failure, and colouring it as one teaches people to ignore the bar.
-  return requests === 0 ? 'quiet' : 'up'
-}
-
-/** Minutes of this day that could have been observed at all. */
-function expectedMinutes(day: number, now: number, observedFrom: number): number {
-  const from = Math.max(day, observedFrom)
-  const to = Math.min(day + DAY_MS, now)
-
-  return Math.max(0, Math.floor((to - from) / MINUTE))
-}
-
-/**
- * Share of the observed minutes the process was alive.
- *
- * Measured from the first beat rather than from the start of the window, so
- * installing the module does not retroactively invent an outage.
- */
-function availabilityOf(alive: Set<number>, observedFrom: number | undefined, now: number): number {
-  if (observedFrom === undefined) {
-    return 0
-  }
-
-  const expected = Math.max(1, Math.floor((now - observedFrom) / MINUTE))
-
-  return Math.min(1, alive.size / expected)
-}
-
-/**
- * Runs of missing minutes.
- *
- * A gap rather than a count: twenty scattered missed beats over a month is a
- * busy machine, and twenty consecutive ones is an outage with a beginning and
- * an end somebody can go and look up.
- */
-function incidentsOf(
-  buckets: number[],
-  observedFrom: number | undefined,
-  now: number,
-): MonitorUptime['incidents'] {
-  if (observedFrom === undefined) {
-    return []
-  }
-
-  const incidents: MonitorUptime['incidents'] = []
-
-  // The trailing edge is included: a process that stopped ten minutes ago has
-  // no later beat to close the gap against, and that is the outage most worth
-  // reporting.
-  const marks = [...buckets, Math.floor(now / MINUTE) * MINUTE + MINUTE]
-
-  for (let index = 1; index < marks.length; index++) {
-    const gap = (marks[index]! - marks[index - 1]!) / MINUTE - 1
-
-    if (gap > TOLERATED_GAP) {
-      incidents.push({
-        from: marks[index - 1]! + MINUTE,
-        to: marks[index]!,
-        minutes: gap,
-      })
-    }
-  }
-
-  return incidents.reverse()
+  return 'calm'
 }
 
 function startOfDay(at: number): number {

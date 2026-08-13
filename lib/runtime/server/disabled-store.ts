@@ -9,7 +9,7 @@ import type {
   MonitorRelease,
   MonitorRouteStat,
   MonitorSessionStats,
-  MonitorUptime,
+  MonitorUptimeSummary,
 } from '../../types'
 import type { ExportOptions } from './export'
 import { csvHeader } from './export'
@@ -142,15 +142,9 @@ export class DisabledStore implements Pick<
     return []
   }
 
-  /**
-   * No heartbeats, so nothing is claimed either way.
-   *
-   * Zero availability with no days would read as a total outage; an empty
-   * window reads as "nothing was observed", which is the truth when the
-   * database never opened.
-   */
-  async uptime(): Promise<MonitorUptime> {
-    return { days: [], availability: 0, incidents: [] }
+  /** Nothing recorded, so nothing is claimed about any day. */
+  async uptime(): Promise<MonitorUptimeSummary> {
+    return { days: [], newIssues: 0, calmDays: 0, measuredDays: 0 }
   }
 
   /** Nothing to send through; the dashboard reads this to say alerting is off. */

@@ -5,6 +5,7 @@ import type {
   MonitorFacetCounts,
   MonitorFacetFilter,
   MonitorFacetName,
+  MonitorHeatCell,
   MonitorIssue,
   MonitorIssueTrend,
   MonitorLevel,
@@ -849,6 +850,38 @@ export async function setIgnored(db: Database, fp: string, ignored: boolean): Pr
     .run(ignored ? 1 : 0, fp)
 
   return changesOf(result) > 0
+}
+
+/**
+ * Errors by hour of the day and day of the week.
+ *
+ * The one shape a line chart cannot show: a fault that only happens during the
+ * nightly batch, or only at the Monday morning peak, is a flat unremarkable
+ * line and an obvious bright cell. Reading it needs no explanation, which is
+ * most of why it is worth the query.
+ *
+ * Bucketed in the server's local zone rather than UTC — "3am" means the hour
+ * the people reading this were asleep, not an offset.
+ */
+export async function heatmap(db: Database, since: number): Promise<MonitorHeatCell[]> {
+  const rows = await db
+    .prepare('SELECT ts FROM events WHERE ts >= ?')
+    .all(since) as { ts: number | string }[]
+
+  const cells = new Map<string, number>()
+
+  for (const row of rows) {
+    const at = new Date(Number(row.ts))
+    const key = `${at.getDay()}:${at.getHours()}`
+
+    cells.set(key, (cells.get(key) ?? 0) + 1)
+  }
+
+  return [...cells].map(([key, count]) => {
+    const [day, hour] = key.split(':')
+
+    return { day: Number(day), hour: Number(hour), count }
+  })
 }
 
 /**

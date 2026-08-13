@@ -36,7 +36,9 @@ defineProps<{
       {{ label }}
     </span>
 
-    <span v-if="hint" class="shrink-0 text-xs tabular-nums text-dimmed">{{ hint }}</span>
+    <!-- Spaced from the value: the two are different numbers and ran into
+         each other when the bar behind them ended nearby. -->
+    <span v-if="hint" class="me-1 shrink-0 text-xs tabular-nums text-dimmed">{{ hint }}</span>
     <span class="w-14 shrink-0 text-end tabular-nums text-highlighted">{{ value }}</span>
   </div>
 </template>
