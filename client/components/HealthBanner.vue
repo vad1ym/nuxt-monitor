@@ -62,6 +62,20 @@ const problem = computed(() => {
     }
   }
 
+  // Not a fault, and deliberately last: sampling is something somebody turned
+  // on. It is here because an issue whose count says 40,000 while a dozen
+  // occurrences are stored looks broken otherwise, and the answer — that the
+  // counts are exact and only the bodies were thinned — is not guessable.
+  if (state.sampling && state.sampled > 0) {
+    return {
+      color: 'neutral' as const,
+      icon: 'i-lucide-filter',
+      title: 'Sampling is on: some occurrences are counted but not stored.',
+      detail: `${state.sampled.toLocaleString()} occurrence${state.sampled === 1 ? '' : 's'} `
+        + 'kept no stack or context. Issue counts are still exact.',
+    }
+  }
+
   return null
 })
 

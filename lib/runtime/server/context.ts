@@ -4,6 +4,7 @@ import type {
   MonitorEvent,
   MonitorIgnoreOptions,
   MonitorNotificationOptions,
+  MonitorSamplingOptions,
   MonitorSide,
 } from '../../types'
 import { DisabledStore } from './disabled-store'
@@ -25,6 +26,7 @@ export interface MonitorRuntimeConfig {
   scrubKeys: string[]
   ignore: MonitorIgnoreOptions
   notifications: MonitorNotificationOptions
+  sampling: MonitorSamplingOptions
   baseURL: string
   cdnURL: string
   mapsDir: string
@@ -99,6 +101,7 @@ async function openStore(): Promise<MonitorCollector> {
       maxBytes: Math.max(0, config.maxDatabaseMb) * 1_024 * 1_024,
       ignore: config.ignore,
       notifications: config.notifications,
+      sampling: config.sampling,
     })
   }
   catch (error) {

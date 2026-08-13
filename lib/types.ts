@@ -125,6 +125,35 @@ export interface MonitorOptions {
   ignore?: MonitorIgnoreOptions
   /** Where alerts go, and what is worth one. */
   notifications?: MonitorNotificationOptions
+  /**
+   * What to store when one issue is happening constantly.
+   *
+   * Off by default: on an ordinary application every occurrence fits, and
+   * storing all of them is strictly better. Turn it on when a single failing
+   * route can outproduce everything else — the fiftieth identical stack in a
+   * minute carries nothing the first ten did not, but it costs the same to
+   * write and pushes other events out of the shared buffer.
+   *
+   * **Counts stay exact.** Occurrences that are not stored are still counted,
+   * so an issue never under-reports how often it happened. Only the event
+   * bodies — stack, context, breadcrumbs — are thinned.
+   */
+  sampling?: MonitorSamplingOptions
+}
+
+export interface MonitorSamplingOptions {
+  /**
+   * Occurrences stored per issue per minute before thinning begins.
+   *
+   * Unset or `0` stores everything, which is the default. `20` is a sensible
+   * starting point: enough to see an issue from several angles, few enough
+   * that a loop cannot fill the database with copies.
+   */
+  burst?: number
+  /** Of the occurrences past the burst, keep one in this many. Default: 20. */
+  keepOneIn?: number
+  /** Length of the burst window in ms. Default: 60000. */
+  windowMs?: number
 }
 
 /**
@@ -387,6 +416,16 @@ export interface MonitorHealth {
   events: number
   retentionDays: number
   maxIssues: number
+  /** True when admission control is on, so stored events are a subset. */
+  sampling: boolean
+  /**
+   * Occurrences counted but whose bodies were not stored.
+   *
+   * Not a loss to report as one: the counts are exact either way. It exists so
+   * a database holding fewer events than its issues claim reads as sampling
+   * rather than as something broken.
+   */
+  sampled: number
 }
 
 /** A single parsed stack frame, before or after sourcemap resolution. */

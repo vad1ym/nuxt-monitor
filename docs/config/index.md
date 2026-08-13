@@ -210,6 +210,40 @@ is one message per issue per hour rather than one per occurrence. `dashboardUrl`
 must be absolute — alerts are raised from background flushes, where there is no
 request to derive a host from.
 
+## sampling
+
+What to store when one issue is happening constantly. Off by default — on an
+ordinary application every occurrence fits, and storing all of them is strictly
+better.
+
+| Option | Type | Default |
+| --- | --- | --- |
+| `sampling.burst` | `number` | `0` (off) |
+| `sampling.keepOneIn` | `number` | `20` |
+| `sampling.windowMs` | `number` | `60000` |
+
+```ts
+// Store the first 20 occurrences of an issue each minute, then one in 20.
+sampling: { burst: 20 }
+```
+
+Turn it on when a single failing route can outproduce everything else. The
+fiftieth identical stack in a minute carries nothing the first ten did not, but
+it costs the same to write and pushes other events out of the shared buffer.
+
+**Counts stay exact.** Occurrences that are not stored are still counted, so an
+issue never under-reports how often it happened, alert thresholds fire on the
+true number, and `last seen` keeps moving. Only the bodies — stack, context,
+breadcrumbs — are thinned. The issue card says `last 12 of 40,000` rather than
+pretending the history is complete.
+
+Measured on 10,000 events in one process: 290 ms to write with sampling off
+against 31 ms with `burst: 20`, and the count still totalling exactly 10,000.
+
+This is a different bound from [`maxEventsPerIssue`](#maxeventsperissue), which
+trims *after* the write. Both are useful: this one saves the work, that one
+bounds the result.
+
 ## Environment variables
 
 Options live under `runtimeConfig.monitor`, so any of them can be overridden at

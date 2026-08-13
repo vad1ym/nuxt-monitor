@@ -58,6 +58,38 @@ events survive anyway and the condition is reported in the log and on the
 dashboard. An empty dashboard reads as "nothing is wrong" rather than "the limit
 is too low".
 
+## Not writing it in the first place
+
+All four bounds above evict *after* the fact. They bound the database, which is
+necessary and not sufficient: a route failing on every request still pays the
+full cost of recording each occurrence, still pushes every other event out of
+the shared buffer, and is then trimmed away anyway.
+
+[`sampling`](../config/#sampling) decides at the door instead:
+
+```ts
+// The first 20 occurrences of an issue each minute, then one in 20.
+sampling: { burst: 20 }
+```
+
+Off by default. On an ordinary application everything fits, and storing all of
+it is strictly better.
+
+**The counts stay exact.** This is the part that makes sampling safe to turn on:
+occurrences that are not stored are still counted, so an issue never
+under-reports how often it happened, alert thresholds fire on the true number,
+and `last seen` keeps moving while a fault is ongoing. Under-reporting would be
+worse than not recording at all — "12 occurrences" reads as a curiosity where
+40,000 reads as an emergency.
+
+What you lose is bodies: the stack, context and breadcrumbs of the occurrences
+that were skipped. The issue card already says `last 12 of 40,000`, and the
+dashboard shows a note while sampling is dropping anything, so a thin database
+never quietly passes for a quiet one.
+
+Measured on 10,000 events: 290 ms to write with sampling off, 31 ms with
+`burst: 20`, and the total count still exactly 10,000.
+
 ## When the database cannot be opened
 
 A read-only volume, a full disk, a directory that is not writable. A failed open

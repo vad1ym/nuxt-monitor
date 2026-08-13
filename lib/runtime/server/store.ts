@@ -18,6 +18,8 @@ import type {
 import type { IssueState } from './notify/triggers'
 import { evaluate } from './notify/triggers'
 import { MonitorNotifier } from './notify/notifier'
+import type { SamplingOptions } from './sampling'
+import { Sampler } from './sampling'
 import type { CompiledIgnore } from '../shared/ignore'
 import { compileIgnore, shouldIgnore } from '../shared/ignore'
 import { fingerprint } from '../shared/fingerprint'
@@ -43,6 +45,8 @@ export interface StoreOptions {
   ignore?: MonitorIgnoreOptions
   /** Alerting. Off when absent or when no channel is configured. */
   notifications?: MonitorNotificationOptions
+  /** Admission control per issue. Off unless a burst is set. */
+  sampling?: SamplingOptions
   /** Events buffered before an early flush. */
   flushSize?: number
   /** Milliseconds between periodic flushes. */
@@ -137,6 +141,10 @@ export class MonitorStore {
   private statements = new Map<string, Statement>()
   /** Absent until a channel is configured; alerting is off by default. */
   private notifier: MonitorNotifier | undefined
+  /** Decides which occurrences are written. Inert unless a burst is set. */
+  private readonly sampler: Sampler
+  /** Occurrences counted but not stored, for health. */
+  private sampled = 0
 
   /**
    * Opens a store, ready to use.
@@ -163,6 +171,7 @@ export class MonitorStore {
     this.maxIssues = options.maxIssues ?? 5_000
     this.maxBytes = options.maxBytes ?? 0
     this.ignore = compileIgnore(options.ignore)
+    this.sampler = new Sampler(options.sampling)
 
     if (options.notifications) {
       const notifier = new MonitorNotifier(options.notifications, this.db)
@@ -284,6 +293,17 @@ export class MonitorStore {
     }
 
     const fp = fingerprint(event)
+
+    // Admission control, before the event is copied into the buffer. A route
+    // failing on every request would otherwise pay the full cost of recording
+    // each occurrence and push everything else out of the shared buffer, only
+    // for the trimmer to throw most of it away afterwards. The occurrence is
+    // still counted — see `drainSampled` — so the issue's total stays true.
+    if (!this.sampler.admit(fp)) {
+      this.sampled++
+      return fp
+    }
+
     this.buffer.push({ ...event, fingerprint: fp })
 
     // Size-triggered flushes are suppressed while writes are failing. A failed
@@ -438,6 +458,11 @@ export class MonitorStore {
     await this.flushCounters()
 
     if (this.closed || this.buffer.length === 0) {
+      // Still drained: a spike that is entirely sampled out after its burst
+      // puts nothing in the buffer, and attributing the skipped occurrences
+      // only when there is something to write would lose exactly the counts
+      // that matter most — the ones from the heaviest spikes.
+      await this.drainSampled()
       return
     }
 
@@ -564,6 +589,13 @@ export class MonitorStore {
     // Written successfully, so the hot path may flush on size again.
     this.retryAfter = 0
 
+    // After the commit, not before it. The first occurrence of any fingerprint
+    // is inside the burst and therefore in this batch, so an issue sampled for
+    // the first time has no row until the transaction above has run — and an
+    // UPDATE against a row that does not exist yet silently counts nothing.
+    // That is how a spike of fifty came out as two.
+    await this.drainSampled()
+
     // After the commit, never before: an alert about an issue that a rolled-back
     // transaction did not write points at a fingerprint the dashboard does not
     // have, and the link in the message leads to a 404.
@@ -587,6 +619,50 @@ export class MonitorStore {
       // The events are safely written; only the cap was not applied. Retention
       // and the next flush will both try again.
       console.error('[monitor] failed to trim events', error)
+    }
+  }
+
+  /**
+   * Adds the occurrences that were counted but not stored.
+   *
+   * This is what keeps sampling honest. Under-reporting how often something
+   * happened is the one failure a monitoring tool cannot afford — "12
+   * occurrences" when it was 40,000 reads as a curiosity rather than an
+   * emergency — so an issue's count advances by every occurrence, and only the
+   * event bodies are thinned.
+   *
+   * Only ever touches issues that already exist: the first occurrence of any
+   * fingerprint is inside the burst and therefore always stored, so a row is
+   * present before any of its occurrences can be sampled out.
+   */
+  private async drainSampled(): Promise<void> {
+    if (!this.sampler.active) {
+      return
+    }
+
+    const owed = this.sampler.drainPending()
+
+    if (owed.size === 0) {
+      return
+    }
+
+    const bump = this.statement('bumpCount', `
+      UPDATE issues SET count = count + ?, last_seen = ${pick(this.connection.dialect, 'max', 'last_seen', '?')}
+      WHERE fingerprint = ?
+    `)
+
+    const now = Date.now()
+
+    try {
+      for (const [fp, weight] of owed) {
+        // `last_seen` moves too: a fault whose occurrences are being sampled is
+        // by definition still happening, and an issue that looks stale while it
+        // fires forty times a second is worse than one that is merely thinned.
+        await bump.run(weight, now, fp)
+      }
+    }
+    catch (error) {
+      console.error('[monitor] failed to record sampled occurrences', error)
     }
   }
 
@@ -845,6 +921,12 @@ export class MonitorStore {
       events: await this.count('events'),
       retentionDays: this.options.retentionDays,
       maxIssues: this.maxIssues,
+      // Surfaced because a sampled database looks like a quiet one from the
+      // inside: fewer stored occurrences than an issue's count, and no
+      // indication why. Counts stay exact; this says the bodies behind them do
+      // not all exist.
+      sampling: this.sampler.active,
+      sampled: this.sampled,
     }
   }
 

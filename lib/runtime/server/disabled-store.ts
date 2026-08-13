@@ -164,6 +164,9 @@ export class DisabledStore implements Pick<
       events: 0,
       retentionDays: 0,
       maxIssues: 0,
+      // Nothing is being admitted, let alone sampled.
+      sampling: false,
+      sampled: 0,
     }
   }
 }
