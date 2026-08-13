@@ -19,7 +19,18 @@ describe('normalizeMessage', () => {
   })
 
   it('strips quoted payloads', () => {
-    expect(normalizeMessage(`Cannot read 'foo'`)).toBe(normalizeMessage(`Cannot read 'bar'`))
+    // What is quoted here is data from the request: two customers, one fault.
+    expect(normalizeMessage(`User 'ada@example.com' not found`))
+      .toBe(normalizeMessage(`User 'bob@other.org' not found`))
+  })
+
+  it('keeps a quoted identifier, because it names the fault', () => {
+    // `reading 'width'` and `reading 'remaining'` are two different bugs. This
+    // was found in the example app: in development every handler compiles into
+    // one bundle, so the top frame is identical too — and with the property
+    // name stripped as well, two unrelated faults shared a single issue.
+    expect(normalizeMessage(`Cannot read properties of undefined (reading 'width')`))
+      .not.toBe(normalizeMessage(`Cannot read properties of undefined (reading 'remaining')`))
   })
 
   it('keeps genuinely different messages apart', () => {

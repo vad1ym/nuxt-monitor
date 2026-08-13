@@ -39,9 +39,9 @@ describe.skipIf(!URL_)('an external database', () => {
   })
 
   it('collects a server error and serves it to the dashboard', async () => {
-    await $fetch('/api/throw', { ignoreResponseError: true } as never).catch(() => {})
+    await $fetch('/api/catalog/cable-tray', { ignoreResponseError: true } as never).catch(() => {})
 
-    const issue = await waitForIssue(cookie, i => i.message.includes('reading \'url\''))
+    const issue = await waitForIssue(cookie, i => i.message.includes('reading \'width\''))
 
     expect(issue.side).toBe('server')
     expect(issue.type).toBe('TypeError')

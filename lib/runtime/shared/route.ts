@@ -141,7 +141,13 @@ export function routeKind(path: string | undefined, accept?: string): MonitorRou
   // like an endpoint, so this is a page. That is also the common case for a
   // client-side error, where all we ever have is the URL of the page it
   // happened on — and calling those pages is right by construction.
-  if (accept === undefined) {
+  //
+  // `*/*` counts as no header. It is a wildcard, not a preference: curl sends
+  // it, so do health checks, uptime probes and a fair number of crawlers, and
+  // every one of them was landing in `api` purely because the string does not
+  // contain `text/html`. That put page requests in the endpoint bucket — the
+  // one distinction this function exists to make.
+  if (accept === undefined || accept.trim() === '*/*') {
     return 'page'
   }
 

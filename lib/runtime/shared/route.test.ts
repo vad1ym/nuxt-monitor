@@ -157,6 +157,15 @@ describe('routeKind', () => {
     expect(routeKind('/checkout', undefined)).toBe('page')
   })
 
+  it('treats a wildcard Accept as no header at all', () => {
+    // `*/*` is not a preference, it is "anything" — curl sends it, so do
+    // health checks and uptime probes. Read literally it does not contain
+    // `text/html`, which put every one of those page requests in the endpoint
+    // bucket: the one distinction this function exists to make.
+    expect(routeKind('/checkout', '*/*')).toBe('page')
+    expect(routeKind('/api/orders', '*/*')).toBe('api')
+  })
+
   it('does not let the header override an obvious endpoint', () => {
     // A browser navigating straight to an API URL is still an API failure.
     expect(routeKind('/api/orders', 'text/html')).toBe('api')

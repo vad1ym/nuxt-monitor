@@ -1,14 +1,21 @@
 <template>
   <div class="page">
-    <h1>
-      <NuxtLink to="/">
-        nuxt-monitor example
-      </NuxtLink>
-    </h1>
-    <p class="lede">
-      Trigger a few errors, then open <a href="/_monitor">/_monitor</a> to see how
-      they were captured.
-    </p>
+    <header class="head">
+      <h1>
+        <NuxtLink to="/">
+          Desk Supply Co.
+        </NuxtLink>
+      </h1>
+      <nav>
+        <NuxtLink to="/cart">
+          Basket
+        </NuxtLink>
+        <NuxtLink to="/admin">
+          Admin
+        </NuxtLink>
+        <a href="/_monitor">Monitor</a>
+      </nav>
+    </header>
 
     <NuxtPage />
   </div>
@@ -29,9 +36,20 @@ body {
   padding: 2rem 1.5rem 4rem;
 }
 
+.head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-bottom: 1rem;
+  margin-bottom: 1.5rem;
+  border-bottom: 1px solid #e4e4e7;
+}
+
 h1 {
-  margin-bottom: 0.25rem;
-  font-size: 1.5rem;
+  margin: 0;
+  font-size: 1.25rem;
 }
 
 h1 a {
@@ -39,30 +57,21 @@ h1 a {
   text-decoration: none;
 }
 
-h2 {
-  margin-top: 2rem;
-  font-size: 0.8125rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #71717a;
+nav {
+  display: flex;
+  gap: 1rem;
+  font-size: 0.875rem;
 }
 
 .lede {
   color: #52525b;
 }
 
-ul {
-  padding-left: 1.25rem;
-}
-
-li {
-  margin: 0.35rem 0;
-}
-
 .row {
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem;
+  margin: 1rem 0;
 }
 
 button {
@@ -75,7 +84,12 @@ button {
   border-radius: 0.375rem;
 }
 
-button:hover {
+button:hover:not(:disabled) {
   background: #f4f4f5;
+}
+
+button:disabled {
+  color: #a1a1aa;
+  cursor: not-allowed;
 }
 </style>

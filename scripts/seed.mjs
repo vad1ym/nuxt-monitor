@@ -69,25 +69,52 @@ const AGENTS = {
     + '(KHTML, like Gecko) Chrome/119.0.0.0 Mobile Safari/537.36',
 }
 
-/** The example's server-side failures, each a distinct capture path. */
+/**
+ * The shop's server-side failures.
+ *
+ * Weighted so the issue list has a shape rather than one of each — which is
+ * also what real traffic looks like: the catalogue is browsed constantly and
+ * the back office is opened twice a day, so a bad product row outnumbers a
+ * failing export by an order of magnitude.
+ */
 const SERVER_CASES = [
-  { path: '/api/throw', weight: 4 },
-  { path: '/api/create-error', weight: 3 },
-  { path: '/api/async-throw', weight: 3 },
-  { path: '/api/scrub-me?token=leaked-secret', weight: 2 },
-  { path: '/middleware-error', weight: 5 },
-  { path: '/ssr-error', weight: 3 },
+  // A row with no `dimensions`, hit every time somebody opens that product.
+  { path: '/api/catalog/cable-tray', weight: 6 },
+  { path: '/product/cable-tray', weight: 4 },
+  // The rate limiter reading through a cache it does not have.
+  { path: '/api/admin/bulk', weight: 3 },
+  // An async rejection several awaits from the handler.
+  { path: '/api/admin/report', weight: 3 },
+  // Credentials in the query string and the payload, all of which must be
+  // redacted before anything is stored.
+  { path: '/api/admin/export?token=leaked-secret', weight: 2 },
+  // Route middleware failing during navigation, before the component exists.
+  { path: '/admin', weight: 2 },
 ]
 
 /**
- * Successful traffic, so the error rate has a denominator.
+ * Traffic that works, so the error rate has a denominator.
  *
- * `/api/reconcile` is in here rather than among the failures on purpose: it
- * answers 200 and reports through `exception()`, which is the whole point of
- * that route. It also gives the dashboard manual reports to filter by, and the
- * notification routing two named groups to route on.
+ * `/api/admin/reconcile` is in here rather than among the failures on purpose:
+ * it answers 200 and reports through `exception()`, which is the whole point
+ * of that route. It also gives the dashboard manual reports to filter by, and
+ * the notification routing two named groups to route on.
  */
-const HEALTHY = ['/', '/client-error', '/fetch-error', '/api/reconcile']
+const HEALTHY = [
+  '/',
+  '/api/catalog',
+  '/product/aeron-chair',
+  '/product/standing-desk',
+  '/product/monitor-arm',
+  '/cart',
+  '/api/admin/reconcile',
+]
+
+/**
+ * A basket somebody would actually have. Two lines, so the order settles for
+ * less than its total and `/api/checkout/confirm` has something to report.
+ */
+const BASKET = [{ slug: 'aeron-chair', quantity: 1 }, { slug: 'monitor-arm', quantity: 2 }]
 
 let requests = 0
 
@@ -98,6 +125,53 @@ function pick(values, index) {
 async function hit(path, agent) {
   await fetch(`${BASE}${path}`, { headers: { 'user-agent': agent } }).catch(() => {})
   requests++
+}
+
+async function post(path, body, agent) {
+  requests++
+
+  const answer = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: {
+      'user-agent': agent,
+      'content-type': 'application/json',
+      // A card token on every checkout call, because the thing worth proving
+      // about a monitor is not that it stores an error — it is that the error
+      // it stored is safe to keep.
+      'x-card-token': 'tok_live_4242424242424242',
+    },
+    body: JSON.stringify(body),
+  }).catch(() => null)
+
+  return answer?.ok ? await answer.json().catch(() => null) : null
+}
+
+/**
+ * Buys things, the way a customer does: price, pay, confirm.
+ *
+ * All three steps, not just the failing one. `pay` is down for one attempt in
+ * five and `confirm` reports a shortfall through `exception()` on every
+ * multi-line order — neither of which means anything without the successful
+ * attempts around them, which is the entire argument for measuring errors
+ * against traffic rather than counting them.
+ */
+async function checkout(agents, rounds) {
+  for (let round = 0; round < rounds; round++) {
+    const agent = pick(agents, round)
+
+    await post('/api/checkout/quote', { lines: BASKET }, agent)
+
+    const order = await post('/api/checkout/pay', { lines: BASKET }, agent)
+
+    if (order?.orderId) {
+      await post('/api/checkout/confirm', { orderId: order.orderId }, agent)
+    }
+
+    // A basket carrying something withdrawn since the browser stored it.
+    if (round % 4 === 3) {
+      await post('/api/checkout/quote', { lines: [{ slug: 'discontinued-rug', quantity: 1 }] }, agent)
+    }
+  }
 }
 
 /**
@@ -138,25 +212,36 @@ async function clientErrors() {
       const context = await browser.newContext({ userAgent: pick(Object.values(AGENTS), round) })
       const page = await context.newPage()
 
-      // A component error raised after hydration, through `vue:error`.
-      await page.goto(`${BASE}/client-error`, { waitUntil: 'networkidle' }).catch(() => {})
-      await page.waitForTimeout(900)
-      await page.click('button').catch(() => {})
-      await page.waitForTimeout(900)
-
-      // Errors outside Vue: a throwing handler, a rejected promise, a timer.
+      // Browse first, so the session has traffic behind its errors.
       await page.goto(BASE, { waitUntil: 'networkidle' }).catch(() => {})
-      await page.waitForTimeout(900)
+      await page.waitForTimeout(600)
+      await page.goto(`${BASE}/product/aeron-chair`, { waitUntil: 'networkidle' }).catch(() => {})
+      await page.waitForTimeout(600)
+      await page.getByRole('button', { name: /add to basket/i }).click().catch(() => {})
+      await page.waitForTimeout(300)
 
-      for (const label of ['Thrown from a click', 'Unhandled rejection', 'Thrown from a timer']) {
+      // A product whose row has no dimensions. The endpoint throws during SSR,
+      // so this is one bug seen from the server while the page shows its
+      // fallback.
+      await page.goto(`${BASE}/product/cable-tray`, { waitUntil: 'networkidle' }).catch(() => {})
+      await page.waitForTimeout(700)
+
+      // The basket, and the ways a checkout goes wrong in the browser: a
+      // rejected `$fetch` when the provider is down, and a render that reads
+      // through a field an older version of the site used to write.
+      await page.goto(`${BASE}/cart`, { waitUntil: 'networkidle' }).catch(() => {})
+      await page.waitForTimeout(600)
+
+      for (const label of ['Add a withdrawn product', 'Price the basket', 'Pay', 'Restore a saved basket']) {
         await page.getByRole('button', { name: new RegExp(label, 'i') }).click().catch(() => {})
-        await page.waitForTimeout(300)
+        await page.waitForTimeout(400)
       }
 
-      // Route middleware, and a `useFetch` against a failing route.
-      await page.goto(`${BASE}/route-middleware-error`, { waitUntil: 'networkidle' }).catch(() => {})
-      await page.waitForTimeout(700)
-      await page.goto(`${BASE}/fetch-error`, { waitUntil: 'networkidle' }).catch(() => {})
+      // Route middleware failing during a client-side navigation — the same
+      // bug the server sees on a direct visit, captured from the other side.
+      await page.goto(BASE, { waitUntil: 'networkidle' }).catch(() => {})
+      await page.waitForTimeout(400)
+      await page.getByRole('link', { name: /^admin$/i }).first().click().catch(() => {})
       await page.waitForTimeout(900)
 
       // The queue batches and flushes on hide; without this the last events
@@ -419,6 +504,12 @@ async function main() {
   for (let i = 0; i < Math.round(40 * SCALE); i++) {
     await hit(pick(HEALTHY, i), pick(agents, index++))
   }
+
+  // People buying things. The provider is down for one attempt in five and
+  // every multi-line order settles short, so this produces both a caught
+  // failure and a manual report — from the same flow, which is what makes the
+  // two comparable in the dashboard.
+  await checkout(agents, Math.max(2, Math.round(6 * SCALE)))
 
   console.log(`· ${requests} requests made`)
 

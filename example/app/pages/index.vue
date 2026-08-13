@@ -1,72 +1,78 @@
 <script setup lang="ts">
+import { formatPrice } from '../utils/format'
+
 /**
- * Index of the error cases. Each link triggers one distinct capture path, so a
- * change to collection can be checked against every path it should cover.
+ * The shop front.
+ *
+ * A page that works, listing products that mostly work — which is the point:
+ * an example where every link is a landmine teaches nothing about a tool whose
+ * whole job is to find the few things that are broken among the many that are
+ * not. The failures are reachable from here, in the places a customer would
+ * reach them.
  */
-const serverCases = [
-  { path: '/api/throw', label: 'API route: plain throw' },
-  { path: '/api/create-error', label: 'API route: createError with statusCode' },
-  { path: '/api/not-found', label: 'API route: 404 (ignored by default)' },
-  { path: '/api/async-throw', label: 'API route: rejected promise' },
-  { path: '/api/scrub-me?token=leaked', label: 'API route: secrets in headers and query' },
-  { path: '/middleware-error', label: 'Server middleware' },
-  { path: '/ssr-error', label: 'SSR render' },
-]
-
-const clientCases = [
-  { path: '/client-error', label: 'Component error after hydration' },
-  { path: '/route-middleware-error', label: 'Route middleware' },
-  { path: '/fetch-error', label: 'useFetch against a failing route' },
-]
-
-function throwInHandler(): void {
-  throw new Error('Thrown from a click handler')
-}
-
-function rejectPromise(): void {
-  void Promise.reject(new Error('Unhandled rejection from a click'))
-}
-
-function throwInTimer(): void {
-  setTimeout(() => {
-    throw new Error('Thrown from a timer')
-  }, 0)
-}
+const { data } = await useFetch('/api/catalog')
 </script>
 
 <template>
   <div>
-    <h2>Server</h2>
-    <ul>
-      <li v-for="item in serverCases" :key="item.path">
-        <a :href="item.path">{{ item.label }}</a>
-      </li>
-    </ul>
-
-    <h2>Client</h2>
-    <ul>
-      <li v-for="item in clientCases" :key="item.path">
-        <NuxtLink :to="item.path">
-          {{ item.label }}
-        </NuxtLink>
-      </li>
-    </ul>
-
-    <h2>In-page</h2>
-    <p>
-      These fire without navigating, which is how most real client errors
-      happen.
+    <p class="lede">
+      A very small shop. Buy something, or open
+      <a href="/_monitor">/_monitor</a> to see what broke while you tried.
     </p>
-    <div class="row">
-      <button @click="throwInHandler">
-        Event handler
-      </button>
-      <button @click="rejectPromise">
-        Unhandled rejection
-      </button>
-      <button @click="throwInTimer">
-        Timer
-      </button>
-    </div>
+
+    <ul class="products">
+      <li v-for="product in data?.products" :key="product.slug">
+        <NuxtLink :to="`/product/${product.slug}`">
+          {{ product.title }}
+        </NuxtLink>
+        <span class="price">{{ formatPrice(product.price) }}</span>
+        <span v-if="!product.inStock" class="tag">out of stock</span>
+      </li>
+    </ul>
+
+    <p class="note">
+      <NuxtLink to="/cart">
+        Basket
+      </NuxtLink>
+      ·
+      <NuxtLink to="/admin">
+        Admin
+      </NuxtLink>
+    </p>
   </div>
 </template>
+
+<style scoped>
+.products {
+  padding: 0;
+  margin: 1.5rem 0;
+  list-style: none;
+}
+
+.products li {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid #e4e4e7;
+}
+
+.price {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: #52525b;
+}
+
+.tag {
+  padding: 0.1rem 0.4rem;
+  font-size: 0.75rem;
+  color: #b45309;
+  background: #fef3c7;
+  border-radius: 0.25rem;
+}
+
+.note {
+  font-size: 0.875rem;
+  color: #71717a;
+}
+</style>

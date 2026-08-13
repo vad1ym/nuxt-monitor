@@ -48,18 +48,21 @@ async function trigger(path: string, options: Record<string, unknown> = {}): Pro
 
 describe('server collection', () => {
   it('captures a plain throw in a route handler', async () => {
-    await trigger('/api/throw')
+    await trigger('/api/catalog/cable-tray')
 
-    const issue = await waitForIssue(cookie, i => i.message.includes('reading \'url\''))
+    const issue = await waitForIssue(cookie, i => i.message.includes('reading \'width\''))
 
     expect(issue.side).toBe('server')
     expect(issue.type).toBe('TypeError')
   })
 
   it('captures createError with its status code and data', async () => {
-    await trigger('/api/create-error')
+    await trigger('/api/checkout/quote', {
+      method: 'POST',
+      body: { lines: [{ slug: 'discontinued-rug', quantity: 1 }] },
+    })
 
-    const issue = await waitForIssue(cookie, i => i.message.includes('Order could not be placed'))
+    const issue = await waitForIssue(cookie, i => i.message.includes('no longer in the catalogue'))
     const detail = await $fetch<{ events: { context?: Record<string, unknown> }[] }>(
       `/_monitor/api/issues/${issue.fingerprint}`,
       { headers: { cookie } },
@@ -67,15 +70,15 @@ describe('server collection', () => {
 
     const context = detail.events[0]?.context
 
-    expect(context?.statusCode).toBe(502)
-    expect(context?.method).toBe('GET')
-    expect(context?.url).toBe('/api/create-error')
+    expect(context?.statusCode).toBe(500)
+    expect(context?.method).toBe('POST')
+    expect(context?.url).toBe('/api/checkout/quote')
     // Non-sensitive payload survives, so the report stays useful.
-    expect((context?.data as Record<string, unknown>)?.reason).toBe('insufficient stock')
+    expect((context?.data as Record<string, unknown>)?.slug).toBe('discontinued-rug')
   })
 
   it('ignores 4xx, which are client mistakes rather than application faults', async () => {
-    await trigger('/api/not-found')
+    await trigger('/api/catalog/no-such-product')
 
     // Give collection the same chance it gets everywhere else, then assert it
     // did *not* record anything — 404s would otherwise bury the real errors.
@@ -85,34 +88,34 @@ describe('server collection', () => {
       headers: { cookie },
     })
 
-    expect(issues.some(i => i.message.includes('No such widget'))).toBe(false)
+    expect(issues.some(i => i.message.includes('No product named'))).toBe(false)
   })
 
   it('records where the error happened, for the list to show', async () => {
-    await trigger('/api/async-throw')
+    await trigger('/api/admin/report')
 
-    const issue = await waitForIssue(cookie, i => i.message.includes('Record 17'))
+    const issue = await waitForIssue(cookie, i => i.message.includes('timed out after'))
 
     // Enough to know where to look without opening the issue — and not a
     // framework file, which would be the same unhelpful answer every time.
-    expect(issue.culprit).toMatch(/async-throw/)
+    expect(issue.culprit).toMatch(/report/)
     expect(issue.culprit).not.toMatch(/nitro|node_modules/)
-    expect(issue.route).toBe('/api/async-throw')
+    expect(issue.route).toBe('/api/admin/report')
     expect(issue.method).toBe('GET')
   })
 
   it('captures a rejection from an awaited call', async () => {
-    await trigger('/api/async-throw')
+    await trigger('/api/admin/report')
 
-    const issue = await waitForIssue(cookie, i => i.message.includes('Record 17'))
+    const issue = await waitForIssue(cookie, i => i.message.includes('timed out after'))
 
     expect(issue.side).toBe('server')
   })
 
   it('captures a failure in server middleware', async () => {
-    await trigger('/middleware-error')
+    await trigger('/api/admin/bulk')
 
-    const issue = await waitForIssue(cookie, i => i.message.includes('Server middleware rejected'))
+    const issue = await waitForIssue(cookie, i => i.message.includes('reading \'remaining\''))
 
     expect(issue.side).toBe('server')
   })
@@ -125,9 +128,9 @@ describe('server collection', () => {
    * trace pointing at `nitro.mjs` while the answer sits in the map beside it.
    */
   it('resolves a server frame to the source file it came from', async () => {
-    await trigger('/middleware-error')
+    await trigger('/api/admin/bulk')
 
-    const issue = await waitForIssue(cookie, i => i.message.includes('Server middleware rejected'))
+    const issue = await waitForIssue(cookie, i => i.message.includes('reading \'remaining\''))
 
     const detail = await $fetch<{
       events: { frames: { original?: { file: string, line: number } }[] }[]
@@ -135,17 +138,17 @@ describe('server collection', () => {
 
     const resolved = detail.events[0]?.frames
       .map(frame => frame.original)
-      .find(original => original?.file.includes('middleware/fail'))
+      .find(original => original?.file.includes('middleware/rate-limit'))
 
     expect(resolved).toBeDefined()
-    // The `throw`, not the handler wrapping it.
-    expect(resolved!.line).toBe(9)
+    // The quota read, not the handler wrapping it.
+    expect(resolved!.line).toBe(20)
   })
 
   it('captures an SSR render failure exactly once', async () => {
-    await trigger('/ssr-error')
+    await trigger('/admin')
 
-    const issue = await waitForIssue(cookie, i => i.message.includes('reading \'theme\''))
+    const issue = await waitForIssue(cookie, i => i.message.includes('reading \'permissions\''))
 
     // Nuxt reports this through `vue:error` and it also propagates to Nitro.
     // Both arrivals must collapse into one issue, and the real constructor
@@ -156,20 +159,20 @@ describe('server collection', () => {
       headers: { cookie },
     })
 
-    const matching = issues.filter(i => i.message.includes('reading \'theme\''))
+    const matching = issues.filter(i => i.message.includes('reading \'permissions\''))
 
     expect(matching).toHaveLength(1)
   })
 
   it('counts repeats of one fault as a single issue', async () => {
-    const before = await waitForIssue(cookie, i => i.message.includes('Record 17'))
+    const before = await waitForIssue(cookie, i => i.message.includes('timed out after'))
 
-    await trigger('/api/async-throw')
-    await trigger('/api/async-throw')
+    await trigger('/api/admin/report')
+    await trigger('/api/admin/report')
 
     const after = await waitForIssue(
       cookie,
-      i => i.message.includes('Record 17') && i.count > before.count,
+      i => i.message.includes('timed out after') && i.count > before.count,
     )
 
     expect(after.fingerprint).toBe(before.fingerprint)
@@ -179,14 +182,14 @@ describe('server collection', () => {
 
 describe('redaction', () => {
   it('never stores credentials from headers, query or payload', async () => {
-    await trigger('/api/scrub-me?token=leaked-token-value', {
+    await trigger('/api/admin/export?token=leaked-token-value', {
       headers: {
         authorization: 'Bearer super-secret-token',
         cookie: 'session=very-secret-session',
       },
     })
 
-    const issue = await waitForIssue(cookie, i => i.message.includes('Upstream rejected'))
+    const issue = await waitForIssue(cookie, i => i.message.includes('could not reach the warehouse'))
     const detail = await $fetch<{ events: { context?: Record<string, unknown> }[] }>(
       `/_monitor/api/issues/${issue.fingerprint}`,
       { headers: { cookie } },
@@ -266,7 +269,7 @@ describe('client intake', () => {
 
 describe('issue management', () => {
   it('resolves and reopens an issue', async () => {
-    const issue = await waitForIssue(cookie, i => i.message.includes('Server middleware rejected'))
+    const issue = await waitForIssue(cookie, i => i.message.includes('reading \'remaining\''))
 
     const resolved = await $fetch<{ resolved: boolean }>(`/_monitor/api/issues/${issue.fingerprint}`, {
       method: 'PATCH',
@@ -279,7 +282,7 @@ describe('issue management', () => {
     expect(resolved.resolved).toBe(true)
 
     // A resolved issue that happens again is open again.
-    await trigger('/middleware-error')
+    await trigger('/api/admin/bulk')
 
     const reopened = await waitForIssue(
       cookie,
