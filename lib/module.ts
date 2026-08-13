@@ -38,6 +38,7 @@ export default defineNuxtModule<MonitorOptions>({
     keepSourcemapsFor: 5,
     scrubKeys: [],
     ignore: {},
+    notifications: {},
     auth: {
       username: 'admin',
       sessionTtl: 60 * 60 * 24 * 7,
@@ -80,6 +81,9 @@ export default defineNuxtModule<MonitorOptions>({
         maxDatabaseMb: options.maxDatabaseMb,
         scrubKeys: options.scrubKeys,
         ignore: options.ignore,
+        // Private half, like `auth`: a channel carries a bot token, and the
+        // public half of `runtimeConfig` is serialized into the page.
+        notifications: options.notifications ?? {},
         // Secrets live under the private half of runtimeConfig, so they are
         // never serialized into the client payload.
         auth: {
@@ -580,6 +584,12 @@ function registerDashboard(
     route: `${route}/api/health`,
     method: 'get',
     handler: resolver.resolve('./runtime/server/routes/health'),
+  })
+
+  // Both methods on one handler: `GET` reads the log, `POST` sends a test.
+  addServerHandler({
+    route: `${route}/api/notifications`,
+    handler: resolver.resolve('./runtime/server/routes/notifications'),
   })
 
   addServerHandler({

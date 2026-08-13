@@ -1,6 +1,11 @@
 import type { H3Event } from 'h3'
 import { createError, useRuntimeConfig } from '#imports'
-import type { MonitorEvent, MonitorIgnoreOptions, MonitorSide } from '../../types'
+import type {
+  MonitorEvent,
+  MonitorIgnoreOptions,
+  MonitorNotificationOptions,
+  MonitorSide,
+} from '../../types'
 import { DisabledStore } from './disabled-store'
 import { MonitorStore } from './store'
 import type { ResolvedAuth } from './session'
@@ -19,6 +24,7 @@ export interface MonitorRuntimeConfig {
   maxDatabaseMb: number
   scrubKeys: string[]
   ignore: MonitorIgnoreOptions
+  notifications: MonitorNotificationOptions
   baseURL: string
   cdnURL: string
   mapsDir: string
@@ -92,6 +98,7 @@ async function openStore(): Promise<MonitorCollector> {
       // and the store compares against a page count.
       maxBytes: Math.max(0, config.maxDatabaseMb) * 1_024 * 1_024,
       ignore: config.ignore,
+      notifications: config.notifications,
     })
   }
   catch (error) {

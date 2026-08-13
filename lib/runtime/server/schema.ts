@@ -66,6 +66,9 @@ const INDEXES: [name: string, table: string, columns: string][] = [
   // Facet queries filter on time first and group second, so the timestamp
   // leads.
   ['idx_events_ts', 'events', 'ts DESC'],
+  // The log is only ever read newest-first, and it is the one table that grows
+  // without a per-row cap.
+  ['idx_notifications_at', 'notifications', 'at DESC'],
 ]
 
 function tables(dialect: MonitorDialect): string[] {
@@ -129,6 +132,22 @@ function tables(dialect: MonitorDialect): string[] {
   count   ${t.int} NOT NULL DEFAULT 0,
   PRIMARY KEY (bucket, route, method, class)${indexesFor('request_stats')}
 )`,
+
+    // Every attempt to alert somebody, including the ones that were silenced.
+    // A log of successes only cannot answer the question people actually ask of
+    // an alerting system — "why did nobody tell me?" — and the answers to that
+    // are all in the rows that are not sends: a cooldown, a quiet window, a bot
+    // token that stopped working three weeks ago.
+    `CREATE TABLE IF NOT EXISTS notifications (
+  id          ${t.id},
+  at          ${t.int} NOT NULL,
+  channel     ${t.key(64)} NOT NULL,
+  reason      ${t.key(32)} NOT NULL,
+  fingerprint ${t.key(64)},
+  alerts      ${t.int} NOT NULL DEFAULT 1,
+  status      ${t.key(16)} NOT NULL,
+  detail      ${t.text}${indexesFor('notifications')}
+)`,
   ]
 }
 
@@ -160,6 +179,13 @@ export async function migrate(db: Database, dialect: MonitorDialect = 'sqlite'):
     // only way to quiet noise is to mark it fixed, which makes the resolved
     // list a lie and eventually makes the open list unreadable.
     ['ignored', TYPES[dialect].int],
+    // Alerting state, on the issue rather than in memory: a cooldown that lives
+    // in a process is no cooldown at all on a server that restarts on deploy,
+    // and a deploy is exactly when the alerts are firing.
+    ['alerted_at', TYPES[dialect].int],
+    // The highest threshold already announced, so crossing 100 is reported once
+    // and not again on every occurrence after it.
+    ['alerted_count', TYPES[dialect].int],
   ])
 
   // Facets, added after the first release. Existing rows keep NULL and show

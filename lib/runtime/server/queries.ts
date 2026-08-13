@@ -1,5 +1,6 @@
 import type { Database } from 'db0'
 import type {
+  MonitorDelivery,
   MonitorEvent,
   MonitorFacetCounts,
   MonitorFacetFilter,
@@ -814,4 +815,27 @@ export async function setIgnored(db: Database, fp: string, ignored: boolean): Pr
     .run(ignored ? 1 : 0, fp)
 
   return changesOf(result) > 0
+}
+
+/**
+ * The delivery log, newest first.
+ *
+ * Suppressed and failed attempts included, because the question this table
+ * answers is "why was I not told", and the answer is never in the successes.
+ */
+export async function deliveries(db: Database, limit = 100): Promise<MonitorDelivery[]> {
+  const rows = await db
+    .prepare('SELECT * FROM notifications ORDER BY at DESC LIMIT ?')
+    .all(limit) as Record<string, unknown>[]
+
+  return rows.map(row => ({
+    id: Number(row.id),
+    at: Number(row.at),
+    channel: row.channel as string,
+    reason: row.reason as MonitorDelivery['reason'],
+    fingerprint: (row.fingerprint as string | null) ?? undefined,
+    alerts: Number(row.alerts),
+    status: row.status as MonitorDelivery['status'],
+    detail: (row.detail as string | null) ?? undefined,
+  }))
 }

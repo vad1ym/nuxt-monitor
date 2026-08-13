@@ -1,4 +1,5 @@
 import type {
+  MonitorDelivery,
   MonitorEvent,
   MonitorFacetCounts,
   MonitorHealth,
@@ -31,6 +32,7 @@ export class DisabledStore implements Pick<
   'capture' | 'countRequest' | 'flush' | 'close' | 'listIssues' | 'getIssue'
   | 'getEvents' | 'facetCounts' | 'sessionCount' | 'eventCount' | 'overview'
   | 'setResolved' | 'setIgnored' | 'purge' | 'releases' | 'routes' | 'sessions' | 'health'
+  | 'deliveries' | 'alerts'
 > {
   /** Why collection is off, for the health endpoint and the dashboard. */
   constructor(readonly reason: string) {}
@@ -123,6 +125,21 @@ export class DisabledStore implements Pick<
 
   async setIgnored(): Promise<boolean> {
     return false
+  }
+
+  /**
+   * No log, because no database to have written one.
+   *
+   * Alerting is not separately disabled here — it never ran. The triggers are
+   * evaluated from the issue rows a flush wrote, and nothing was flushed.
+   */
+  async deliveries(): Promise<MonitorDelivery[]> {
+    return []
+  }
+
+  /** Nothing to send through; the dashboard reads this to say alerting is off. */
+  get alerts(): undefined {
+    return undefined
   }
 
   /**

@@ -1,5 +1,6 @@
 import type { Database, Statement } from 'db0'
 import type {
+  MonitorDelivery,
   MonitorEvent,
   MonitorFacetCounts,
   MonitorFacetFilter,
@@ -7,17 +8,21 @@ import type {
   MonitorIgnoreOptions,
   MonitorIssue,
   MonitorIssueTrend,
+  MonitorNotificationOptions,
   MonitorOverview,
   MonitorRelease,
   MonitorRouteStat,
   MonitorSessionStats,
   MonitorTrafficStats,
 } from '../../types'
+import type { IssueState } from './notify/triggers'
+import { evaluate } from './notify/triggers'
+import { MonitorNotifier } from './notify/notifier'
 import type { CompiledIgnore } from '../shared/ignore'
 import { compileIgnore, shouldIgnore } from '../shared/ignore'
 import { fingerprint } from '../shared/fingerprint'
 import { bucketOf, normalizeRoute, statusClass } from '../shared/route'
-import { culpritOf } from './rows'
+import { culpritOf, toIssue } from './rows'
 import * as queries from './queries'
 import { BUCKET_MS, migrate } from './schema'
 import { changesOf, openDatabase, pick, upsertClause } from './db'
@@ -36,6 +41,8 @@ export interface StoreOptions {
   maxBytes?: number
   /** Rules for what never reaches the database. */
   ignore?: MonitorIgnoreOptions
+  /** Alerting. Off when absent or when no channel is configured. */
+  notifications?: MonitorNotificationOptions
   /** Events buffered before an early flush. */
   flushSize?: number
   /** Milliseconds between periodic flushes. */
@@ -128,6 +135,8 @@ export class MonitorStore {
   private nextCeilingReport = 0
   /** Reused prepared statements, keyed by role. */
   private statements = new Map<string, Statement>()
+  /** Absent until a channel is configured; alerting is off by default. */
+  private notifier: MonitorNotifier | undefined
 
   /**
    * Opens a store, ready to use.
@@ -154,6 +163,19 @@ export class MonitorStore {
     this.maxIssues = options.maxIssues ?? 5_000
     this.maxBytes = options.maxBytes ?? 0
     this.ignore = compileIgnore(options.ignore)
+
+    if (options.notifications) {
+      const notifier = new MonitorNotifier(options.notifications, this.db)
+
+      // Kept only when it would actually send. Every alert path then reduces to
+      // one `if`, rather than each one re-deriving whether alerting is on.
+      this.notifier = notifier.active ? notifier : undefined
+    }
+  }
+
+  /** The notifier, for the dashboard's test-send and log routes. */
+  get alerts(): MonitorNotifier | undefined {
+    return this.notifier
   }
 
   /** Schema, pragmas and the background timers. */
@@ -422,6 +444,11 @@ export class MonitorStore {
     const batch = this.buffer
     this.buffer = []
 
+    // Read before the upsert changes them: "was this fingerprint here before,
+    // and was it resolved" is unanswerable afterwards, because the upsert's
+    // whole job is to make every issue in the batch present and unresolved.
+    const before = await this.alertStates(batch)
+
     // `culprit`/`route`/`method`/`status` keep the freshest location: a moved
     // line is more useful than the one recorded when the issue first appeared.
     // `resolved = 0` reopens an issue that happens again.
@@ -523,6 +550,18 @@ export class MonitorStore {
     // Written successfully, so the hot path may flush on size again.
     this.retryAfter = 0
 
+    // After the commit, never before: an alert about an issue that a rolled-back
+    // transaction did not write points at a fingerprint the dashboard does not
+    // have, and the link in the message leads to a 404.
+    try {
+      await this.raiseAlerts(before)
+    }
+    catch (error) {
+      // Alerting is downstream of collection and must not undo it. The events
+      // are written either way.
+      console.error('[monitor] failed to evaluate alerts', error)
+    }
+
     // Outside the transaction and previously outside any guard, so a locked
     // database turned a successful write into an exception that escaped
     // `flush` — and `flush` is called from every read path, where nothing
@@ -534,6 +573,105 @@ export class MonitorStore {
       // The events are safely written; only the cap was not applied. Retention
       // and the next flush will both try again.
       console.error('[monitor] failed to trim events', error)
+    }
+  }
+
+  /**
+   * How the issues in a batch stood before it was written.
+   *
+   * One query for the whole batch rather than one per event: a flush of a
+   * hundred events touches a handful of distinct fingerprints, and asking about
+   * each separately would put a hundred round trips on a path that exists to
+   * batch them.
+   */
+  private async alertStates(
+    batch: (MonitorEvent & { fingerprint: string })[],
+  ): Promise<Map<string, IssueState>> {
+    const states = new Map<string, IssueState>()
+
+    if (!this.notifier) {
+      return states
+    }
+
+    const fingerprints = [...new Set(batch.map(event => event.fingerprint))]
+    const placeholders = fingerprints.map(() => '?').join(', ')
+
+    const rows = await this.db.prepare(`
+      SELECT fingerprint, count, resolved, alerted_at, alerted_count
+      FROM issues WHERE fingerprint IN (${placeholders})
+    `).all(...fingerprints) as Record<string, unknown>[]
+
+    for (const row of rows) {
+      states.set(String(row.fingerprint), {
+        previousCount: Number(row.count ?? 0),
+        wasResolved: Number(row.resolved ?? 0) === 1,
+        alertedCount: Number(row.alerted_count ?? 0),
+        alertedAt: Number(row.alerted_at ?? 0),
+      })
+    }
+
+    // A fingerprint with no row is new, which is the state the `new-issue`
+    // trigger is looking for. Left absent rather than defaulted at the read
+    // site so the distinction stays explicit.
+    for (const fp of fingerprints) {
+      if (!states.has(fp)) {
+        states.set(fp, { previousCount: 0, wasResolved: false, alertedCount: 0, alertedAt: 0 })
+      }
+    }
+
+    return states
+  }
+
+  /**
+   * Queues alerts for the issues this flush changed.
+   *
+   * The cooldown is applied here rather than in the notifier because it is per
+   * issue and its state lives on the issue row — which is what makes it survive
+   * a restart. A cooldown held in memory would reset on every deploy, and a
+   * deploy is when the alerts are firing.
+   */
+  private async raiseAlerts(before: Map<string, IssueState>): Promise<void> {
+    if (!this.notifier || before.size === 0) {
+      return
+    }
+
+    const now = Date.now()
+    const cooldown = this.notifier.cooldownMs
+    const fingerprints = [...before.keys()]
+    const placeholders = fingerprints.map(() => '?').join(', ')
+
+    const rows = await this.db.prepare(`
+      SELECT * FROM issues WHERE fingerprint IN (${placeholders})
+    `).all(...fingerprints) as Record<string, unknown>[]
+
+    for (const row of rows) {
+      const state = before.get(String(row.fingerprint))
+
+      if (!state) {
+        continue
+      }
+
+      const alert = evaluate(toIssue(row), state, this.options.notifications?.triggers, now)
+
+      if (!alert) {
+        continue
+      }
+
+      // A new issue and a regression are each announced once and are therefore
+      // not the noise the cooldown exists to stop — but they still start it, so
+      // that the thousand occurrences behind them stay quiet.
+      if (alert.reason === 'threshold' && now - state.alertedAt < cooldown) {
+        continue
+      }
+
+      this.notifier.enqueue(alert)
+
+      // Written before the send, not after: the message goes out detached, and
+      // a cooldown recorded only on success would let a failing channel raise
+      // the same alert on every flush for as long as it stays broken.
+      await this.db.prepare(
+        'UPDATE issues SET alerted_at = ?, alerted_count = ? WHERE fingerprint = ?',
+      ).run(now, Math.max(state.alertedCount, alert.threshold ?? 0), String(row.fingerprint))
     }
   }
 
@@ -823,7 +961,7 @@ export class MonitorStore {
     this.buffer = []
     this.counters.clear()
 
-    for (const table of ['events', 'issues', 'request_stats']) {
+    for (const table of ['events', 'issues', 'request_stats', 'notifications']) {
       await this.db.exec(`DELETE FROM ${table}`)
     }
   }
@@ -848,6 +986,10 @@ export class MonitorStore {
     // remove anyway.
     const evictedIssues = changesOf(issues) + await this.enforceIssueCeiling()
     const evictedEvents = changesOf(events) + await this.enforceByteCeiling()
+
+    // The log has no per-row cap of its own and is written on every alert, so
+    // the sweep is the only thing bounding it.
+    await this.notifier?.trimLog()
 
     // Retention frees pages too, and without this they stay in the file.
     await this.reclaim()
@@ -929,6 +1071,11 @@ export class MonitorStore {
     return queries.sessions(this.db, since)
   }
 
+  /** The alert delivery log, newest first. No flush: nothing buffers into it. */
+  async deliveries(limit = 100): Promise<MonitorDelivery[]> {
+    return queries.deliveries(this.db, limit)
+  }
+
   async setCulprit(fp: string, culprit: string): Promise<boolean> {
     return queries.setCulprit(this.db, fp, culprit)
   }
@@ -947,6 +1094,12 @@ export class MonitorStore {
     }
 
     await this.flush()
+
+    // Before `closed`, so the flush above can still queue alerts, and awaited
+    // so a group window still open at shutdown is sent rather than lost — the
+    // error that precedes a process going away is one worth hearing about.
+    await this.notifier?.close()
+
     this.closed = true
 
     if (this.timer) {

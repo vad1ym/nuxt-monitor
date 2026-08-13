@@ -123,6 +123,166 @@ export interface MonitorOptions {
   scrubKeys?: string[]
   /** What to drop before it is ever recorded. */
   ignore?: MonitorIgnoreOptions
+  /** Where alerts go, and what is worth one. */
+  notifications?: MonitorNotificationOptions
+}
+
+/**
+ * Alerting.
+ *
+ * Off until a channel is configured. The defaults underneath are deliberately
+ * quiet rather than deliberately complete: an alerting feature is judged by
+ * what it does *not* send, because the first day of noise is the day somebody
+ * mutes the chat, and a muted chat is worth less than no alerts at all — it
+ * looks like coverage.
+ */
+export interface MonitorNotificationOptions {
+  /** Master switch. Default: `true` when at least one channel is configured. */
+  enabled?: boolean
+  /**
+   * Where messages go. Every configured channel receives every alert that
+   * passes the triggers; per-channel routing arrives with watcher groups.
+   */
+  channels?: MonitorChannelOptions[]
+  /** What is worth sending. */
+  triggers?: MonitorTriggerOptions
+  /**
+   * Absolute URL of the dashboard, e.g. `https://app.example.com/_monitor`.
+   *
+   * An alert without a link is a notification that something happened
+   * somewhere. The module knows its own route but not the host it is served
+   * under — a request would tell it, and alerts are raised on a timer and from
+   * background flushes where there is no request. So it has to be given.
+   */
+  dashboardUrl?: string
+  /**
+   * Minutes of silence per issue after an alert about it. Default: 60.
+   *
+   * The single most important number here. Without it a spike sends one message
+   * per occurrence, which is how alerting gets turned off.
+   */
+  cooldownMinutes?: number
+  /**
+   * How long new alerts are held back so they can travel together, in seconds.
+   * Default: 30.
+   *
+   * A deploy that breaks four things breaks them within the same second. Four
+   * messages say the same thing as one message listing four, and cost four
+   * times the attention. `0` sends each immediately.
+   */
+  groupWindowSeconds?: number
+  /** When not to send at all. */
+  quietHours?: MonitorQuietHours
+}
+
+/**
+ * One destination.
+ *
+ * A discriminated union rather than a bag of optional fields, so a Telegram
+ * channel missing its chat id is a type error at the config site rather than a
+ * silent no-op at three in the morning.
+ */
+export type MonitorChannelOptions =
+  | MonitorTelegramChannel
+  | MonitorWebhookChannel
+
+interface MonitorChannelBase {
+  /**
+   * Name shown in the delivery log. Defaults to the channel type.
+   *
+   * Worth setting once there are two of a kind — "telegram" twice in a log
+   * cannot answer which chat did not receive the message.
+   */
+  name?: string
+  /** Skip this channel without deleting its configuration. */
+  enabled?: boolean
+}
+
+export interface MonitorTelegramChannel extends MonitorChannelBase {
+  type: 'telegram'
+  /** Bot token from `@BotFather`. Read at runtime; keep it in the environment. */
+  token: string
+  /** Target chat. A user id, a group id (negative) or `@channelname`. */
+  chatId: string
+}
+
+export interface MonitorWebhookChannel extends MonitorChannelBase {
+  type: 'webhook'
+  /** Receives a POST with the alert as JSON. */
+  url: string
+  /** Extra headers, for a signature or a bearer token. */
+  headers?: Record<string, string>
+}
+
+export interface MonitorTriggerOptions {
+  /** Alert the first time a fingerprint is seen. Default: `true`. */
+  newIssue?: boolean
+  /**
+   * Alert when a resolved issue happens again. Default: `true`.
+   *
+   * The most valuable of the three: somebody claimed this was fixed, and the
+   * claim turned out to be false. Nothing else in the tool contradicts a human
+   * on the record.
+   */
+  regression?: boolean
+  /**
+   * Occurrence counts that raise an alert when an issue crosses them.
+   * Default: `[10, 100, 1000]`, i.e. an order of magnitude at a time.
+   *
+   * Set to `[]` to alert only on new issues and regressions.
+   */
+  thresholds?: number[]
+}
+
+/**
+ * A window in which nothing is sent.
+ *
+ * Not "delay until morning": an alert about a fault that is over by then is
+ * worth less than the sleep it would have cost, and one about a fault that is
+ * still going will be raised again by the next occurrence anyway. Suppressed
+ * alerts are still written to the log with the reason, so the morning question
+ * "did anything happen overnight" has an answer.
+ */
+export interface MonitorQuietHours {
+  /** `HH:MM`, inclusive. May wrap past midnight, which is the usual case. */
+  from: string
+  /** `HH:MM`, exclusive. */
+  to: string
+  /**
+   * IANA zone the window is read in, e.g. `Europe/Kyiv`. Defaults to the
+   * server's. A server on UTC and a team that is not makes "22:00" mean the
+   * wrong thing by however many hours, silently.
+   */
+  timezone?: string
+  /** Days the window applies to, `0` Sunday–`6` Saturday. Default: every day. */
+  days?: number[]
+}
+
+/** Why an alert was raised. */
+export type MonitorAlertReason = 'new-issue' | 'regression' | 'threshold' | 'test'
+
+/** One thing worth telling somebody about. */
+export interface MonitorAlert {
+  reason: MonitorAlertReason
+  issue: MonitorIssue
+  /** The threshold that was crossed, for `threshold` alerts. */
+  threshold?: number
+  at: number
+}
+
+/** One attempt to deliver one alert to one channel. */
+export interface MonitorDelivery {
+  id: number
+  at: number
+  channel: string
+  reason: MonitorAlertReason
+  /** Fingerprint of the issue, or of the first one when several were grouped. */
+  fingerprint?: string
+  /** How many alerts this message carried. */
+  alerts: number
+  status: 'sent' | 'failed' | 'suppressed'
+  /** Error text for `failed`, or which rule silenced it for `suppressed`. */
+  detail?: string
 }
 
 export interface MonitorIgnoreOptions {

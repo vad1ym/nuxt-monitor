@@ -46,6 +46,7 @@ export default defineConfig({
           { text: 'Getting started', link: '/guide/getting-started' },
           { text: 'Authentication', link: '/guide/authentication' },
           { text: 'Sourcemaps', link: '/guide/sourcemaps' },
+          { text: 'Notifications', link: '/guide/notifications' },
           { text: 'Grouping', link: '/guide/grouping' },
           { text: 'Privacy', link: '/guide/privacy' },
           { text: 'Storage', link: '/guide/storage' },

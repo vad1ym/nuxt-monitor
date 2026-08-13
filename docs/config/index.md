@@ -168,6 +168,44 @@ ignore: {
 }
 ```
 
+## notifications
+
+Where alerts go, and what is worth one. Off until a channel is configured. See
+[Notifications](../guide/notifications).
+
+| Option | Type | Default |
+| --- | --- | --- |
+| `notifications.enabled` | `boolean` | `true` once a channel exists |
+| `notifications.channels` | `channel[]` | `[]` |
+| `notifications.dashboardUrl` | `string` | — |
+| `notifications.cooldownMinutes` | `number` | `60` |
+| `notifications.groupWindowSeconds` | `number` | `30` |
+| `notifications.triggers.newIssue` | `boolean` | `true` |
+| `notifications.triggers.regression` | `boolean` | `true` |
+| `notifications.triggers.thresholds` | `number[]` | `[10, 100, 1000]` |
+| `notifications.quietHours` | `{ from, to, timezone?, days? }` | — |
+
+A channel is `{ type: 'telegram', token, chatId }` or
+`{ type: 'webhook', url, headers? }`, each with an optional `name` for the
+delivery log and `enabled: false` to keep it configured but silent.
+
+```ts
+notifications: {
+  channels: [{
+    type: 'telegram',
+    token: process.env.MONITOR_TELEGRAM_TOKEN!,
+    chatId: process.env.MONITOR_TELEGRAM_CHAT!,
+  }],
+  dashboardUrl: 'https://app.example.com/_monitor',
+  quietHours: { from: '22:00', to: '07:00', timezone: 'Europe/Kyiv' },
+}
+```
+
+`cooldownMinutes` is the number that decides whether this feature is usable: it
+is one message per issue per hour rather than one per occurrence. `dashboardUrl`
+must be absolute — alerts are raised from background flushes, where there is no
+request to derive a host from.
+
 ## Environment variables
 
 Options live under `runtimeConfig.monitor`, so any of them can be overridden at
@@ -181,6 +219,7 @@ start-up by the matching `NUXT_MONITOR_*` variable, with nesting spelled as `_`.
 | `NUXT_MONITOR_STORAGE_DIR` | Storage directory |
 | `NUXT_MONITOR_DATABASE_URL` | External database |
 | `NUXT_MONITOR_RETENTION_DAYS` | Retention window |
+| `NUXT_MONITOR_NOTIFICATIONS_DASHBOARD_URL` | Where alert links point |
 
 These are read when the server starts, which is what makes one build deployable
 to several environments.

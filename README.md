@@ -55,6 +55,9 @@ Requires Node 22.13+ (`node:sqlite`) and Nuxt 4.
   first frame in your own code — so a message carrying an id does not become a
   thousand issues.
 - **Breakdown** by browser, OS, device, release, route and session.
+- **Alerts to Telegram or a webhook** on a new issue, a regression or an issue
+  growing — with a per-issue cooldown, grouping and quiet hours, because the
+  version without those is the version people mute on the first day.
 - **Redaction on collect.** Authorization headers, cookies, passwords and
   tokens never reach the database.
 - **Bounded storage.** One SQLite file, capped by age, count and bytes. If it
@@ -71,6 +74,7 @@ or `pnpm docs:dev` to read it locally.
 - [Configuration](https://vad1ym.github.io/nuxt-monitor/config/)
 - [Authentication](https://vad1ym.github.io/nuxt-monitor/guide/authentication)
 - [Sourcemaps](https://vad1ym.github.io/nuxt-monitor/guide/sourcemaps)
+- [Notifications](https://vad1ym.github.io/nuxt-monitor/guide/notifications)
 - [Deployment](https://vad1ym.github.io/nuxt-monitor/guide/deployment)
 
 ## Limitations
@@ -80,7 +84,9 @@ or `pnpm docs:dev` to read it locally.
   lifts this.
 - **Not for serverless on SQLite.** An ephemeral filesystem loses everything
   when the instance goes away; an external database does not.
-- **No alerting**, multi-year retention, or one view across many apps.
+- **No multi-year retention** or one view across many apps. Alerting covers new
+  issues, regressions and growth; alerting on a spike against a baseline does
+  not exist yet.
 
 It is for the case those tools handle badly: one app, one server, errors you
 want to read now, on infrastructure you already have.

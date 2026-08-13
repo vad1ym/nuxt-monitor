@@ -95,6 +95,46 @@ numbers on one screen to disagree about which instant they describe.
 
 The collector's own state. See [Storage](../guide/storage#checking-on-it).
 
+## GET /api/notifications
+
+What is configured and what has been sent. See
+[Notifications](../guide/notifications).
+
+Query: `limit` (default 100, max 200).
+
+```json
+{
+  "enabled": true,
+  "channels": [{ "name": "ops-chat", "type": "telegram", "enabled": true }],
+  "triggers": { … },
+  "cooldownMinutes": 60,
+  "deliveries": [
+    { "id": 41, "at": 1737000000000, "channel": "ops-chat", "reason": "regression",
+      "fingerprint": "9f2c…", "alerts": 1, "status": "sent" }
+  ]
+}
+```
+
+Channel names and types only — a token in a response is a token in a browser's
+memory and in anything that later reads it.
+
+`status` is `sent`, `failed` with the reason the channel gave, or `suppressed`
+with the rule that silenced it. The failures are the point: the question asked
+of an alerting system is "why did nobody tell me?", and the answer is never
+among the successes.
+
+## POST /api/notifications
+
+Sends a test alert to every configured channel and returns what happened. Takes
+no body — what a test sends is not the caller's choice, or the endpoint becomes
+a way to post arbitrary text through somebody's bot token.
+
+```json
+{ "sent": true, "deliveries": [ … ] }
+```
+
+Answers `{ "sent": false, "reason": … }` when no channel is configured.
+
 ## POST /api/ingest
 
 The one route without a session — the browser posts here and has no credentials
