@@ -353,7 +353,13 @@ onMounted(async () => {
   <UApp>
     <LoginView v-if="authenticated === false" @authenticated="onAuthenticated" />
 
-    <div v-else-if="authenticated" class="min-h-screen flex">
+    <!-- The viewport is the frame, not the page.
+         With `min-h-screen` the whole document scrolled, so the logo and the
+         navigation slid away and "Sign out" drifted with them — on a long
+         screen the sidebar was somewhere above the fold and the way out of it
+         was unreachable without scrolling back. Now the shell is exactly the
+         viewport and only the content column moves. -->
+    <div v-else-if="authenticated" class="h-screen flex overflow-hidden">
       <aside class="w-52 shrink-0 border-e border-default flex flex-col">
         <div class="flex items-center gap-2 px-4 h-14 border-b border-default">
           <MonitorLogo class="h-6 w-auto" />
@@ -393,12 +399,12 @@ onMounted(async () => {
         </div>
       </aside>
 
-      <div class="flex-1 min-w-0 flex flex-col">
+      <div class="flex-1 min-w-0 flex flex-col overflow-hidden">
         <!-- The bar spans the viewport so it can stick, but its contents share
              the column the list below is centred in — otherwise the search
              field sits at the far left while the issues start halfway across. -->
         <header
-          class="sticky top-0 z-10 h-14 border-b border-default bg-default/80 backdrop-blur"
+          class="shrink-0 h-14 border-b border-default bg-default/80 backdrop-blur"
         >
           <div class="flex h-full max-w-7xl items-center gap-3 px-5">
             <UInput
@@ -447,7 +453,8 @@ onMounted(async () => {
           </div>
         </header>
 
-        <main class="flex-1 p-5">
+        <!-- The one scrolling region on the screen. -->
+        <main class="flex-1 overflow-y-auto p-5">
           <!-- Left-aligned, not centred: the sidebar already anchors the eye
                to the left, and centring the column pulled the content away
                from it on a wide screen. The width cap stays — long message
