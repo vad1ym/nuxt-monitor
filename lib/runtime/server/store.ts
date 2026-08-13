@@ -20,6 +20,8 @@ import { evaluate } from './notify/triggers'
 import { MonitorNotifier } from './notify/notifier'
 import type { SamplingOptions } from './sampling'
 import { Sampler } from './sampling'
+import type { ExportOptions } from './export'
+import { exportRows } from './export'
 import type { CompiledIgnore } from '../shared/ignore'
 import { compileIgnore, shouldIgnore } from '../shared/ignore'
 import { fingerprint } from '../shared/fingerprint'
@@ -480,9 +482,9 @@ export class MonitorStore {
     const upsertIssue = this.statement('issue', `
       INSERT INTO issues (
         fingerprint, type, message, side, count, first_seen, last_seen,
-        culprit, route, method, status, manual, level, group_name
+        culprit, route, method, status, manual, level, group_name, kind
       )
-      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ${upsertClause(this.connection.dialect, 'issues', ['fingerprint'], [
         'count = count + 1',
         // Extremes, not "whatever arrived last". Assigning `excluded` directly
@@ -507,6 +509,7 @@ export class MonitorStore {
         'manual = COALESCE(excluded.manual, manual)',
         'level = COALESCE(excluded.level, level)',
         'group_name = COALESCE(excluded.group_name, group_name)',
+        'kind = COALESCE(excluded.kind, kind)',
         'resolved = 0',
       ])}
     `)
@@ -515,9 +518,9 @@ export class MonitorStore {
       INSERT INTO events (
         fingerprint, ts, stack, context, breadcrumbs, tags, message,
         session, browser, browser_version, os, os_version, device_type, \`release\`, route,
-        manual, level, group_name
+        manual, level, group_name, kind
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     await this.db.exec('BEGIN')
@@ -540,6 +543,7 @@ export class MonitorStore {
           event.manual ? 1 : null,
           event.level ?? null,
           event.group ?? null,
+          event.kind ?? null,
         )
 
         const facets = event.facets ?? {}
@@ -565,6 +569,7 @@ export class MonitorStore {
           event.manual ? 1 : null,
           event.level ?? null,
           event.group ?? null,
+          event.kind ?? null,
         )
       }
 
@@ -1165,6 +1170,17 @@ export class MonitorStore {
   async sessions(since: number): Promise<MonitorSessionStats> {
     await this.flush()
     return queries.sessions(this.db, since)
+  }
+
+  /**
+   * Streams the stored data out, a chunk at a time.
+   *
+   * Not `async` and not awaited: it hands back the generator so the caller
+   * pulls pages at its own pace. Callers flush first when they need pending
+   * events included — the route does.
+   */
+  exportRows(options: ExportOptions): AsyncGenerator<string> {
+    return exportRows(this.db, options)
   }
 
   /** The alert delivery log, newest first. No flush: nothing buffers into it. */

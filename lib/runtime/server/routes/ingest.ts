@@ -2,6 +2,7 @@ import type { H3Event } from 'h3'
 import { defineEventHandler, getRequestHeader, readRawBody, setResponseStatus } from '#imports'
 import type { MonitorBreadcrumb, MonitorEvent, MonitorFacets } from '../../../types'
 import { normalizeGroup, normalizeLevel } from '../../shared/exception'
+import { routeKind } from '../../shared/route'
 import { scrub, scrubUrl } from '../../shared/scrub'
 import type { ParsedUserAgent } from '../../shared/user-agent'
 import { parseUserAgent } from '../../shared/user-agent'
@@ -185,6 +186,13 @@ function normalize(raw: unknown, options: { extraKeys: string[] }): MonitorEvent
     // that could not have come from `exception()` cannot arrive through here
     // either, and neither can reach a column unbounded.
     ...manualFields(input),
+    // From the URL the browser reported. There is no `Accept` header to
+    // consult — the page's own request is long over — but a client error
+    // carries the page it happened on, and that is a page by construction
+    // unless the path says otherwise.
+    kind: routeKind(typeof (input.context as Record<string, unknown> | undefined)?.url === 'string'
+      ? (input.context as Record<string, string>).url
+      : undefined),
   }
 }
 

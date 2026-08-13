@@ -63,6 +63,11 @@ Requires Node 22.13+ (`node:sqlite`) and Nuxt 4.
   and a named group, and a channel can subscribe to just one group.
 - **Redaction on collect.** Authorization headers, cookies, passwords and
   tokens never reach the database.
+- **Endpoints apart from pages.** `/api/orders` failing for every consumer and
+  `/checkout` failing to render are both "a server error" and are not the same
+  problem; the list separates them.
+- **Your data, gettable.** `npx monitor export` to JSON or CSV, plus `stats`
+  and `purge` for when the dashboard is not reachable.
 - **Bounded storage.** One SQLite file, capped by age, count and bytes. If it
   cannot be opened, collection turns itself off and the app keeps serving.
 - **Or an external database.** Point `databaseUrl` at PostgreSQL or MySQL when
@@ -79,6 +84,7 @@ or `pnpm docs:dev` to read it locally.
 - [Sourcemaps](https://vad1ym.github.io/nuxt-monitor/guide/sourcemaps)
 - [Notifications](https://vad1ym.github.io/nuxt-monitor/guide/notifications)
 - [Reporting by hand](https://vad1ym.github.io/nuxt-monitor/guide/reporting)
+- [CLI and export](https://vad1ym.github.io/nuxt-monitor/guide/cli)
 - [Deployment](https://vad1ym.github.io/nuxt-monitor/guide/deployment)
 
 ## Limitations

@@ -6,7 +6,7 @@
  * that the totals did not add up. Without a deliberate report this is invisible
  * to a tool that watches for throws.
  */
-export default defineEventHandler(() => {
+export default defineEventHandler((event) => {
   const order = { id: 4821, total: 5990 }
   const charged = 5490
 
@@ -17,7 +17,10 @@ export default defineEventHandler(() => {
       level: 'critical',
       group: 'payments',
       meta: { order: order.id, expected: order.total, charged },
-    })
+      // Passing the event attaches the route and the method, which is the
+      // difference between "totals disagree" and "totals disagree on
+      // GET /api/reconcile".
+    }, event)
   }
 
   // Two groups from one handler, so the dashboard has something to filter.
@@ -25,7 +28,7 @@ export default defineEventHandler(() => {
     level: 'warning',
     group: 'data-integrity',
     meta: { sku: 'AB-12', drift: -3 },
-  })
+  }, event)
 
   return { ok: true, order: order.id }
 })

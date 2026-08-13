@@ -229,3 +229,36 @@ describe('routing alerts by group', () => {
     expect(sent[0]?.body.text).not.toContain('MonitorException')
   })
 })
+
+describe('endpoints against pages', () => {
+  it('separates a failing endpoint from a failing page', async () => {
+    // Both are `side: 'server'`, and they are not the same problem: one is an
+    // integration every consumer sees, the other is a page one visitor sees.
+    store = await open()
+    store.capture({ ...caught('endpoint blew up'), kind: 'api' })
+    store.capture({ ...caught('page blew up'), kind: 'page' })
+    await store.flush()
+
+    const api = await store.listIssues({ kind: 'api' })
+    const pages = await store.listIssues({ kind: 'page' })
+
+    expect(api.issues.map(issue => issue.message)).toEqual(['endpoint blew up'])
+    expect(pages.issues.map(issue => issue.message)).toEqual(['page blew up'])
+  })
+
+  it('carries the kind onto the issue', async () => {
+    store = await open()
+    store.capture({ ...caught(), kind: 'api' })
+    await store.flush()
+
+    expect((await store.listIssues()).issues[0]?.kind).toBe('api')
+  })
+
+  it('leaves it unset when nothing classified it', async () => {
+    store = await open()
+    store.capture(caught())
+    await store.flush()
+
+    expect((await store.listIssues()).issues[0]?.kind).toBeUndefined()
+  })
+})

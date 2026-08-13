@@ -1,7 +1,7 @@
 import { defineEventHandler, getQuery } from '#imports'
 import { parseSide, requireDashboardAccess, useMonitorStore } from '../context'
 import { parseFacetFilter } from '../facets'
-import type { MonitorLevel } from '../../../types'
+import type { MonitorLevel, MonitorRouteKind } from '../../../types'
 import type { MonitorIssueSort } from '../queries'
 
 export default defineEventHandler(async (event) => {
@@ -24,6 +24,7 @@ export default defineEventHandler(async (event) => {
     manual,
     group: toText(query.group),
     level: parseLevel(query.level),
+    kind: parseKind(query.kind),
     ignored: query.ignored === 'true' || query.ignored === '1',
     sort: parseSort(query.sort),
     search: toText(query.search),
@@ -52,6 +53,13 @@ function parseLevel(value: unknown): MonitorLevel | undefined {
   const levels: MonitorLevel[] = ['info', 'warning', 'error', 'critical']
 
   return levels.find(level => level === value)
+}
+
+/** One of the three, or nothing. The value reaches a column comparison. */
+function parseKind(value: unknown): MonitorRouteKind | undefined {
+  const kinds: MonitorRouteKind[] = ['api', 'page', 'asset']
+
+  return kinds.find(kind => kind === value)
 }
 
 function toText(value: unknown): string | undefined {

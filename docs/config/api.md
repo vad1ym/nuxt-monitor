@@ -52,6 +52,7 @@ The issue list.
 | `manual` | `true` for `exception()` reports only, `false` for caught only |
 | `group` | A priority group, e.g. `payments` |
 | `level` | `info`, `warning`, `error` or `critical` |
+| `kind` | `api`, `page` or `asset` |
 | `limit`, `offset` | Paging |
 | Facet names | Repeatable — `?browser=Safari&browser=Firefox` |
 
@@ -137,6 +138,22 @@ a way to post arbitrary text through somebody's bot token.
 ```
 
 Answers `{ "sent": false, "reason": … }` when no channel is configured.
+
+## GET /api/export
+
+Downloads the stored data. Streamed, so an export of a large table does not
+build the whole body in memory.
+
+| Parameter | Meaning |
+| --- | --- |
+| `table` | `issues` (default) or `events` |
+| `format` | `json` (default) or `csv` |
+| `since` | Epoch ms; only rows at or after it |
+| `limit` | Row ceiling. Defaults to 50,000; `limit=0` means everything |
+
+CSV cells beginning `=`, `+`, `-` or `@` are prefixed with an apostrophe:
+those are formulas to Excel and Sheets, and error messages are
+attacker-influenced text.
 
 ## POST /api/ingest
 

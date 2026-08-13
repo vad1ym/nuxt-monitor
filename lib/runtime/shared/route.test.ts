@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bucketOf, isAssetPath, normalizeRoute, statusClass } from './route'
+import { bucketOf, isAssetPath, normalizeRoute, routeKind, statusClass } from './route'
 
 describe('normalizeRoute', () => {
   it('collapses numeric ids so one endpoint is one row', () => {
@@ -123,5 +123,42 @@ describe('bucketOf', () => {
 
     expect(bucketOf(base + 1_000, minute)).toBe(bucketOf(base + 59_000, minute))
     expect(bucketOf(base + 1_000, minute)).not.toBe(bucketOf(base + 61_000, minute))
+  })
+})
+
+describe('routeKind', () => {
+  it('calls the convention an endpoint', () => {
+    expect(routeKind('/api/orders')).toBe('api')
+    expect(routeKind('/api/orders/42?x=1')).toBe('api')
+    expect(routeKind('/graphql')).toBe('api')
+  })
+
+  it('calls a page a page', () => {
+    expect(routeKind('/checkout')).toBe('page')
+    expect(routeKind('/')).toBe('page')
+  })
+
+  it('keeps assets out of both', () => {
+    // A missing image is not an endpoint failure and not a page failure.
+    expect(routeKind('/logo.svg')).toBe('asset')
+    expect(routeKind('/_nuxt/entry.abc123.js')).toBe('asset')
+  })
+
+  it('trusts the Accept header over the path', () => {
+    // The point of reading the header: an application that mounts endpoints
+    // somewhere other than `/api` still gets them classified correctly.
+    expect(routeKind('/orders', 'application/json')).toBe('api')
+    expect(routeKind('/orders', 'text/html,application/xhtml+xml')).toBe('page')
+  })
+
+  it('treats a path with no header as a page', () => {
+    // The common case for a client-side error, where the only thing known is
+    // the URL of the page it happened on.
+    expect(routeKind('/checkout', undefined)).toBe('page')
+  })
+
+  it('does not let the header override an obvious endpoint', () => {
+    // A browser navigating straight to an API URL is still an API failure.
+    expect(routeKind('/api/orders', 'text/html')).toBe('api')
   })
 })

@@ -10,6 +10,8 @@ import type {
   MonitorRouteStat,
   MonitorSessionStats,
 } from '../../types'
+import type { ExportOptions } from './export'
+import { csvHeader } from './export'
 import { FACET_NAMES } from './facets'
 import type { MonitorStore } from './store'
 
@@ -32,7 +34,7 @@ export class DisabledStore implements Pick<
   'capture' | 'countRequest' | 'flush' | 'close' | 'listIssues' | 'getIssue'
   | 'getEvents' | 'facetCounts' | 'sessionCount' | 'eventCount' | 'overview'
   | 'setResolved' | 'setIgnored' | 'purge' | 'releases' | 'routes' | 'sessions' | 'health'
-  | 'deliveries' | 'alerts'
+  | 'deliveries' | 'alerts' | 'exportRows'
 > {
   /** Why collection is off, for the health endpoint and the dashboard. */
   constructor(readonly reason: string) {}
@@ -140,6 +142,17 @@ export class DisabledStore implements Pick<
   /** Nothing to send through; the dashboard reads this to say alerting is off. */
   get alerts(): undefined {
     return undefined
+  }
+
+  /**
+   * A well-formed empty export.
+   *
+   * An empty file rather than an error: the caller asked for the data there
+   * is, and there is none. A download that fails would read as "export is
+   * broken" when the truth is that collection never started.
+   */
+  async* exportRows(options: ExportOptions): AsyncGenerator<string> {
+    yield options.format === 'csv' ? csvHeader(options.table) : '[\n\n]\n'
   }
 
   /**

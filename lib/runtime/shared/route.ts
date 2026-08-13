@@ -1,3 +1,4 @@
+import type { MonitorRouteKind } from '../../types'
 /**
  * Collapses request paths into route shapes.
  *
@@ -104,6 +105,47 @@ export function isAssetPath(path: string | undefined): boolean {
   const last = withoutQuery.slice(withoutQuery.lastIndexOf('/') + 1)
 
   return /\.[a-z0-9]{1,8}$/i.test(last)
+}
+
+/**
+ * Classifies a request.
+ *
+ * The path is the weaker signal and the header is the stronger one, so both
+ * are used. A browser navigating sends `Accept: text/html`; `$fetch` and a
+ * mobile client do not — that holds regardless of where an application chooses
+ * to mount its endpoints, which a path convention does not. `/api/` is
+ * checked first anyway because it is right far more often than not and is
+ * available in places no header is, such as a client-side error carrying only
+ * a URL.
+ */
+export function routeKind(path: string | undefined, accept?: string): MonitorRouteKind {
+  if (isAssetPath(path)) {
+    return 'asset'
+  }
+
+  const [withoutQuery = ''] = (path ?? '').split('?')
+
+  // The convention, and Nuxt's own default for `server/api`.
+  if (/^\/(?:api|_?trpc|graphql)(?:\/|$)/i.test(withoutQuery)) {
+    return 'api'
+  }
+
+  // Nitro's other server routes are endpoints too, whatever they are called.
+  if (withoutQuery.startsWith('/_')) {
+    return 'api'
+  }
+
+  // Then the header. A navigation asks for HTML; a data request does not.
+  //
+  // With no header at all the path has already had its say and did not look
+  // like an endpoint, so this is a page. That is also the common case for a
+  // client-side error, where all we ever have is the URL of the page it
+  // happened on — and calling those pages is right by construction.
+  if (accept === undefined) {
+    return 'page'
+  }
+
+  return accept.includes('text/html') ? 'page' : 'api'
 }
 
 /** `500` → `5xx`, so counters stay small and read as classes. */

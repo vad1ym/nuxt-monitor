@@ -165,6 +165,19 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
 
             <span v-else class="font-medium text-muted">{{ issue.type }}</span>
 
+            <!-- Endpoint or page, when it is known and interesting. Not for
+                 assets — a failing image is already obvious from its path —
+                 and not on manual reports, whose group says more. -->
+            <template v-if="!issue.manual && (issue.kind === 'api' || issue.kind === 'page')">
+              <span aria-hidden="true">·</span>
+              <span class="inline-flex items-center gap-1">
+                <UIcon
+                  :name="issue.kind === 'api' ? 'i-lucide-plug' : 'i-lucide-file-text'"
+                  class="size-3"
+                />{{ issue.kind === 'api' ? 'API' : 'page' }}
+              </span>
+            </template>
+
             <template v-if="issue.culprit">
               <span aria-hidden="true">·</span>
               <span class="font-mono text-primary/90">{{ issue.culprit }}</span>

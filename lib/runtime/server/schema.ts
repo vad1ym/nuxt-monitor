@@ -196,6 +196,10 @@ export async function migrate(db: Database, dialect: MonitorDialect = 'sqlite'):
     // engines, so every query naming it would depend on the quoting being
     // right. A column name nobody has to quote cannot be got wrong.
     ['group_name', TYPES[dialect].key(64)],
+    // Endpoint, page or asset. `side` says which machine ran the code, which
+    // stops being the useful split once an app has both: a failing endpoint
+    // and a failing page are different faults with different owners.
+    ['kind', TYPES[dialect].key(16)],
   ])
 
   // Facets, added after the first release. Existing rows keep NULL and show
@@ -215,6 +219,7 @@ export async function migrate(db: Database, dialect: MonitorDialect = 'sqlite'):
     ['manual', TYPES[dialect].int],
     ['level', TYPES[dialect].key(16)],
     ['group_name', TYPES[dialect].key(64)],
+    ['kind', TYPES[dialect].key(16)],
   ])
 }
 

@@ -463,6 +463,14 @@ export interface MonitorFrame {
 export type MonitorSide = 'client' | 'server'
 
 /**
+ * What kind of thing broke: an endpoint, a page, or a static asset.
+ *
+ * Defined here rather than beside the classifier because it is part of the
+ * public shape — it appears on every issue the API returns.
+ */
+export type MonitorRouteKind = 'api' | 'page' | 'asset'
+
+/**
  * How much attention something deserves.
  *
  * Only for reports raised by hand. A caught error has no level — the fact that
@@ -515,6 +523,15 @@ export interface MonitorEvent {
   manual?: boolean
   level?: MonitorLevel
   group?: string
+  /**
+   * Whether this was an endpoint, a page or an asset.
+   *
+   * `side` says which machine the code ran on, which stops being the useful
+   * distinction once an application has both: `/api/orders` returning 500 to
+   * every mobile client and `/checkout` failing to render for one visitor are
+   * both "a server error", and they are not the same problem.
+   */
+  kind?: MonitorRouteKind
 }
 
 /**
@@ -721,6 +738,8 @@ export interface MonitorIssue {
   method?: string
   /** HTTP status, when the error carried one. */
   status?: number
+  /** Endpoint, page or asset. See `MonitorEvent.kind`. */
+  kind?: MonitorRouteKind
   /** Raised by `exception()` rather than caught. */
   manual?: boolean
   /** Only ever set on a manual report. */

@@ -68,6 +68,29 @@ browser, browser version, OS, OS version, device, release, route and session.
 "250 errors" is a number; "250 errors, all Safari 16" is a diagnosis. Clicking
 a slice filters the occurrences below it.
 
+## Endpoints, pages and assets
+
+Every issue is classified as `api`, `page` or `asset`, and the dashboard's
+filter bar has a scope for the first two.
+
+This exists because `side` — server or client — stops being the useful split as
+soon as an application has both. `/api/orders` returning 500 to every consumer
+and `/checkout` failing to render for one visitor are both "a server error",
+and they are not the same problem: usually different owners, different urgency,
+different fix. One is an integration; the other is a page.
+
+The path is checked first — `/api/…`, `/graphql`, Nitro's `/_…` routes — and
+then the `Accept` header, which is the reliable signal for an application that
+mounts its endpoints somewhere else: a browser navigating asks for `text/html`,
+`$fetch` and a mobile client do not.
+
+Assets are their own kind rather than being forced into one of the other two: a
+missing image is not an endpoint failure and not a page failure.
+
+Both scopes sit alongside Server and Client rather than replacing them. They
+answer different questions, and an error thrown while rendering a page during
+SSR is genuinely both.
+
 ## Resolving
 
 Marking an issue resolved hides it from the default view. If it happens again,

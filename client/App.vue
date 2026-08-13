@@ -26,10 +26,22 @@ import RoutesView from './components/RoutesView.vue'
  * with a denominator of its own — keeps a screen under Traffic.
  */
 
-interface Scope { side?: string, resolved?: boolean, ignored?: boolean, manual?: boolean }
+interface Scope { side?: string, resolved?: boolean, ignored?: boolean, manual?: boolean, kind?: string }
 
 const SCOPES: Record<string, { label: string, icon: string, value: Scope }> = {
   'open': { label: 'Open', icon: 'i-lucide-inbox', value: { resolved: false } },
+  // Endpoints and pages rather than server and client. `side` says which
+  // machine ran the code, which stops being the useful split once an app has
+  // both: `/api/orders` failing for every consumer and `/checkout` failing to
+  // render are both "server", and they are different problems with different
+  // owners. Side is still reachable through the facet filters.
+  // Alongside Server/Client below, not instead of them: `side` is not a facet,
+  // so dropping those scopes would remove the only way to ask the question at
+  // all. They answer different things — where the code ran, against what kind
+  // of thing it was serving — and an error in an API route rendered during SSR
+  // is genuinely both.
+  'api': { label: 'API', icon: 'i-lucide-plug', value: { kind: 'api' } },
+  'page': { label: 'Pages', icon: 'i-lucide-file-text', value: { kind: 'page' } },
   'server': { label: 'Server', icon: 'i-lucide-server', value: { side: 'server' } },
   'client': { label: 'Client', icon: 'i-lucide-monitor', value: { side: 'client' } },
   // Reports raised by `exception()`. Beside the sides rather than at the end:

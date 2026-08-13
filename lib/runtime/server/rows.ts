@@ -1,4 +1,4 @@
-import type { MonitorFacets, MonitorFrame, MonitorIssue, MonitorLevel, MonitorSide } from '../../types'
+import type { MonitorFacets, MonitorFrame, MonitorIssue, MonitorLevel, MonitorRouteKind, MonitorSide } from '../../types'
 import { isVendorFrame } from '../shared/vendor-frame'
 
 /**
@@ -45,6 +45,7 @@ export function toIssue(row: Record<string, unknown>): MonitorIssue {
     manual: Number(row.manual) === 1 ? true : undefined,
     level: (row.level as MonitorLevel | null) ?? undefined,
     group: (row.group_name as string | null) ?? undefined,
+    kind: (row.kind as MonitorRouteKind | null) ?? undefined,
   }
 }
 

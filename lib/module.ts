@@ -622,6 +622,12 @@ function registerDashboard(
   })
 
   addServerHandler({
+    route: `${route}/api/export`,
+    method: 'get',
+    handler: resolver.resolve('./runtime/server/routes/export'),
+  })
+
+  addServerHandler({
     route: `${route}/api/issues/:fingerprint`,
     handler: resolver.resolve('./runtime/server/routes/issue'),
   })

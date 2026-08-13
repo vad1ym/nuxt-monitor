@@ -144,6 +144,8 @@ export const api = {
     manual?: boolean
     group?: string
     level?: string
+    /** `api`, `page` or `asset`. */
+    kind?: string
     sort?: string
     search?: string
     type?: string

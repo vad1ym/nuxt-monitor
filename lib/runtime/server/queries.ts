@@ -7,6 +7,7 @@ import type {
   MonitorIssue,
   MonitorIssueTrend,
   MonitorLevel,
+  MonitorRouteKind,
   MonitorOverview,
   MonitorRelease,
   MonitorRouteStat,
@@ -74,6 +75,8 @@ export async function listIssues(db: Database, filter: {
   /** A named priority group, from `exception(msg, { group })`. */
   group?: string
   level?: MonitorLevel
+  /** `api`, `page` or `asset`. */
+  kind?: MonitorRouteKind
   sort?: MonitorIssueSort
   limit?: number
   offset?: number
@@ -113,6 +116,13 @@ export async function listIssues(db: Database, filter: {
   if (filter.level) {
     where.push('level = ?')
     params.push(filter.level)
+  }
+
+  // Endpoint failures and page failures are usually different people's work,
+  // so they are worth separating even though both say `side: 'server'`.
+  if (filter.kind) {
+    where.push('kind = ?')
+    params.push(filter.kind)
   }
 
   // Absent means "not ignored" rather than "either": noise that has been put

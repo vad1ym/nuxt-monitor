@@ -1,4 +1,5 @@
 import type { H3Event } from 'h3'
+import { getRequestHeader } from '#imports'
 import type { MonitorExceptionOptions } from '../../types'
 import {
   EXCEPTION_TYPE,
@@ -6,6 +7,7 @@ import {
   normalizeGroup,
   normalizeLevel,
 } from '../shared/exception'
+import { routeKind } from '../shared/route'
 import { scrub } from '../shared/scrub'
 import { captureSync, monitorConfig } from './context'
 
@@ -69,6 +71,10 @@ export function exception(
         ...(event ? { url: event.path, method: event.method } : {}),
         ...meta,
       },
+      // Only when the request was passed: a report raised from a task or a
+      // plugin has no route at all, and guessing one would be worse than
+      // leaving the issue unclassified.
+      kind: event ? routeKind(event.path, getRequestHeader(event, 'accept')) : undefined,
       manual: true,
       level: normalizeLevel(options.level),
       group: normalizeGroup(options.group),

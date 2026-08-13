@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
 import { defineNitroPlugin, getRequestHeader, getRequestHeaders, getResponseStatus } from '#imports'
 import type { MonitorEvent, MonitorFacets } from '../../types'
-import { isAssetPath } from '../shared/route'
+import { isAssetPath, routeKind } from '../shared/route'
 import { scrub, scrubUrl } from '../shared/scrub'
 import { parseUserAgent } from '../shared/user-agent'
 import type { MonitorRuntimeConfig } from './context'
@@ -224,6 +224,10 @@ function toEvent(
     stack: error?.stack,
     timestamp: Date.now(),
     tags: context.tags,
+    // Classified here, where the request is still in hand: the `Accept` header
+    // is the one reliable signal for an app that does not mount its endpoints
+    // under `/api`, and it is gone by the time anything reads the row back.
+    kind: event ? routeKind(event.path, getRequestHeader(event, 'accept')) : undefined,
     context: event ? requestContext(event, error, config.scrubKeys) : undefined,
     facets: serverFacets(event, config.release),
   }
