@@ -139,6 +139,15 @@ a way to post arbitrary text through somebody's bot token.
 
 Answers `{ "sent": false, "reason": … }` when no channel is configured.
 
+## GET /api/uptime
+
+The uptime bar: one entry per day, plus availability, error rate and the
+incidents behind them.
+
+Query: `days` (default 90, max 365).
+
+Not bounded by the dashboard's window — see [Uptime](../guide/uptime).
+
 ## GET /api/export
 
 Downloads the stored data. Streamed, so an export of a large table does not

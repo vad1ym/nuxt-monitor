@@ -51,6 +51,7 @@ export default defineConfig({
           { text: 'Grouping', link: '/guide/grouping' },
           { text: 'Privacy', link: '/guide/privacy' },
           { text: 'Storage', link: '/guide/storage' },
+          { text: 'Uptime', link: '/guide/uptime' },
           { text: 'CLI and export', link: '/guide/cli' },
           { text: 'Deployment', link: '/guide/deployment' },
         ],

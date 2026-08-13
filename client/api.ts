@@ -14,6 +14,7 @@ import type {
   MonitorSessionStats,
   MonitorTrafficStats,
   MonitorTriggerOptions,
+  MonitorUptime,
 } from '../lib/types'
 
 /**
@@ -228,6 +229,9 @@ export const api = {
       traffic?: MonitorTrafficStats
     }>(`/stats?${query}`)
   },
+
+  /** The uptime bar. Not windowed like the rest — see the route. */
+  uptime: (days = 90) => request<MonitorUptime>(`/uptime?days=${days}`),
 
   /** The collector's own state — see `HealthBanner`. */
   health: () => request<MonitorHealth & { release?: string, storageDir: string }>('/health'),

@@ -624,6 +624,12 @@ function registerDashboard(
   })
 
   addServerHandler({
+    route: `${route}/api/uptime`,
+    method: 'get',
+    handler: resolver.resolve('./runtime/server/routes/uptime'),
+  })
+
+  addServerHandler({
     route: `${route}/api/export`,
     method: 'get',
     handler: resolver.resolve('./runtime/server/routes/export'),

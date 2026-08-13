@@ -9,6 +9,7 @@ import type {
   MonitorRelease,
   MonitorRouteStat,
   MonitorSessionStats,
+  MonitorUptime,
 } from '../../types'
 import type { ExportOptions } from './export'
 import { csvHeader } from './export'
@@ -34,7 +35,7 @@ export class DisabledStore implements Pick<
   'capture' | 'countRequest' | 'countTraffic' | 'flush' | 'close' | 'listIssues' | 'getIssue'
   | 'getEvents' | 'facetCounts' | 'sessionCount' | 'eventCount' | 'overview'
   | 'setResolved' | 'setIgnored' | 'purge' | 'releases' | 'routes' | 'sessions' | 'health'
-  | 'deliveries' | 'alerts' | 'exportRows'
+  | 'deliveries' | 'alerts' | 'exportRows' | 'uptime'
 > {
   /** Why collection is off, for the health endpoint and the dashboard. */
   constructor(readonly reason: string) {}
@@ -139,6 +140,17 @@ export class DisabledStore implements Pick<
    */
   async deliveries(): Promise<MonitorDelivery[]> {
     return []
+  }
+
+  /**
+   * No heartbeats, so nothing is claimed either way.
+   *
+   * Zero availability with no days would read as a total outage; an empty
+   * window reads as "nothing was observed", which is the truth when the
+   * database never opened.
+   */
+  async uptime(): Promise<MonitorUptime> {
+    return { days: [], availability: 0, incidents: [] }
   }
 
   /** Nothing to send through; the dashboard reads this to say alerting is off. */

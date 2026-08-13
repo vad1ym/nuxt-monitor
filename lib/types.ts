@@ -752,6 +752,49 @@ export interface MonitorTrafficStats {
   routes: MonitorRouteStat[]
 }
 
+/**
+ * One day of the uptime bar.
+ *
+ * `state` is the day's verdict, and it distinguishes the two silences that
+ * matter: a day with no traffic and a heartbeat throughout was quiet, and a day
+ * with no heartbeat was an outage. Measured on errors alone the two are
+ * identical, and the worse one renders green.
+ */
+export interface MonitorUptimeDay {
+  /** Start of the day, epoch ms, in the server's zone. */
+  day: number
+  requests: number
+  failed: number
+  /** Failed over total, 0–1. Undefined when nothing was served. */
+  rate?: number
+  /** Minutes the process reported itself alive, out of 1440. */
+  aliveMinutes: number
+  /**
+   * `up` — served traffic without crossing the failure threshold.
+   * `degraded` — served traffic, and too much of it failed.
+   * `down` — the process was not running for part of the day.
+   * `quiet` — running, but nothing was asked of it. Not a failure.
+   * `unknown` — before collection started. Not a failure either.
+   */
+  state: 'up' | 'degraded' | 'down' | 'quiet' | 'unknown'
+}
+
+/** The uptime screen: a bar to read at a glance, and the numbers under it. */
+export interface MonitorUptime {
+  days: MonitorUptimeDay[]
+  /**
+   * Share of the *observed* minutes the application was alive, 0–1.
+   *
+   * Against minutes since collection started, not against the whole window: a
+   * module installed on Tuesday must not report Monday as an outage.
+   */
+  availability: number
+  /** Requests that failed over requests served, across the window. */
+  errorRate?: number
+  /** Stretches with no heartbeat, newest first. */
+  incidents: { from: number, to: number, minutes: number }[]
+}
+
 /** How many people saw an error, and who saw the most. */
 export interface MonitorSessionStats {
   /** Distinct sessions with at least one error. */

@@ -13,6 +13,7 @@ import MonitorLogo from './components/MonitorLogo.vue'
 import NotificationsView from './components/NotificationsView.vue'
 import OverviewView from './components/OverviewView.vue'
 import RoutesView from './components/RoutesView.vue'
+import UptimeView from './components/UptimeView.vue'
 
 /**
  * Three screens, not six.
@@ -30,12 +31,9 @@ interface Scope { side?: string, resolved?: boolean, ignored?: boolean, manual?:
 
 const SCOPES: Record<string, { label: string, icon: string, value: Scope }> = {
   'open': { label: 'Open', icon: 'i-lucide-inbox', value: { resolved: false } },
-  // Endpoints and pages rather than server and client. `side` says which
+  // Endpoints and pages rather than server and client: `side` says which
   // machine ran the code, which stops being the useful split once an app has
-  // both: `/api/orders` failing for every consumer and `/checkout` failing to
-  // render are both "server", and they are different problems with different
-  // owners. Side is still reachable through the facet filters.
-  // Alongside Server/Client below, not instead of them: `side` is not a facet,
+  // both. Alongside Server/Client below, not instead of them: `side` is not a facet,
   // so dropping those scopes would remove the only way to ask the question at
   // all. They answer different things — where the code ran, against what kind
   // of thing it was serving — and an error in an API route rendered during SSR
@@ -72,6 +70,9 @@ const NAV: { view: View, label: string, icon: string }[] = [
   { view: 'overview', label: 'Overview', icon: 'i-lucide-layout-dashboard' },
   { view: 'issues', label: 'Issues', icon: 'i-lucide-inbox' },
   { view: 'traffic', label: 'Traffic', icon: 'i-lucide-route' },
+  // Next to Traffic, which is the other screen about the application rather
+  // than about its errors.
+  { view: 'uptime', label: 'Uptime', icon: 'i-lucide-activity' },
   // Last, and deliberately not beside the screens that answer "what broke":
   // this one answers "who was told", which is a question asked once at setup
   // and then only when something did not arrive.
@@ -436,7 +437,7 @@ onMounted(async () => {
             <!-- Hidden on Notifications: nothing there is windowed, and a
                  control that changes nothing is worse than no control — it
                  invites the reader to conclude the log respects it. -->
-            <div v-if="view !== 'notifications'" class="ms-auto flex items-center gap-1.5">
+            <div v-if="view !== 'notifications' && view !== 'uptime'" class="ms-auto flex items-center gap-1.5">
               <UButton
                 v-for="option in WINDOWS"
                 :key="option.hours"
@@ -475,6 +476,8 @@ onMounted(async () => {
             />
 
             <RoutesView v-else-if="view === 'traffic'" :hours="hours" />
+
+            <UptimeView v-else-if="view === 'uptime'" />
 
             <NotificationsView v-else-if="view === 'notifications'" />
 
