@@ -151,55 +151,36 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
           </p>
 
           <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-dimmed">
-            <!-- What kind of failure, first and in one badge. An endpoint that
-                 answered 500 is one fact, not three sitting apart — the icon,
-                 the word and the status used to be scattered along the row
-                 with the status at the far end. -->
+            <!-- The request, as one thing: method, route and the status it
+                 ended with. Which of those is an endpoint and which a page is
+                 legible from the path itself, so a separate api/page badge was
+                 a label for something already on screen — and the status used
+                 to sit at the far end of the row, three items away from the
+                 route it belonged to. -->
             <UBadge
-              v-if="issue.kind === 'api'"
+              v-if="issue.route"
               :color="issue.status ? statusColor(issue.status) : 'neutral'"
               variant="subtle"
               size="sm"
-              icon="i-lucide-plug"
-              class="shrink-0"
-              :label="issue.status ? `API ${issue.status}` : 'API'"
-            />
-
-            <UBadge
-              v-else-if="issue.kind === 'page'"
-              :color="issue.status ? statusColor(issue.status) : 'neutral'"
-              variant="subtle"
-              size="sm"
-              icon="i-lucide-file-text"
-              class="shrink-0"
-              :label="issue.status ? `page ${issue.status}` : 'page'"
-            />
-
-            <UBadge
-              v-else-if="issue.status"
-              :color="statusColor(issue.status)"
-              variant="subtle"
-              size="sm"
-              class="shrink-0"
-              :label="String(issue.status)"
-            />
-
-            <span v-if="!issue.manual" class="font-medium text-muted">{{ issue.type }}</span>
-
-            <!-- The file is skipped for an endpoint: the route is the thing
-                 somebody goes and looks at, and the compiled path beside it
-                 was two locations for one fault. -->
-            <template v-if="issue.culprit && issue.kind !== 'api'">
-              <span aria-hidden="true">·</span>
-              <span class="font-mono text-primary/90">{{ issue.culprit }}</span>
-            </template>
-
-            <template v-if="issue.route">
-              <span aria-hidden="true">·</span>
-              <span class="font-mono truncate max-w-[16rem]">
-                <span v-if="issue.method" class="text-muted">{{ issue.method }} </span>{{ issue.route }}
+              class="max-w-[22rem] shrink-0"
+            >
+              <!-- Spelled out rather than relying on whitespace inside the
+                   template: Vue trims text between tags, so `GET ` collapsed
+                   and the method ran straight into the path. -->
+              <span class="truncate font-mono">
+                <span v-if="issue.method" class="opacity-70">{{ `${issue.method} ` }}</span>{{ issue.route }}<span
+                  v-if="issue.status"
+                >{{ ` → ${issue.status}` }}</span>
               </span>
-            </template>
+            </UBadge>
+
+            <!-- The file, where there is one worth opening. Skipped for an
+                 endpoint: the route is what somebody goes and looks at, and a
+                 compiled path beside it is two locations for one fault. -->
+            <span
+              v-if="issue.culprit && issue.kind !== 'api'"
+              class="font-mono text-primary/90"
+            >{{ issue.culprit }}</span>
           </div>
         </div>
 
