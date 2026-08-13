@@ -55,6 +55,10 @@ const sort = defineModel<string>('sort', { required: true })
  * filter you cannot undo.
  */
 const GROUPS: { name: MonitorFacetName, label: string, icon: string }[] = [
+  // First: it is the one dimension somebody named themselves, either at an
+  // `exception()` call or in a config rule. The others describe whoever
+  // happened to hit the fault; this one says what the fault is about.
+  { name: 'group', label: 'Group', icon: 'i-lucide-flag' },
   { name: 'browser', label: 'Browser', icon: 'i-lucide-globe' },
   { name: 'os', label: 'OS', icon: 'i-lucide-monitor' },
   { name: 'osVersion', label: 'OS version', icon: 'i-lucide-hash' },
