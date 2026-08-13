@@ -132,7 +132,10 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
         />
 
         <div class="min-w-0 flex-1">
-          <!-- The message first: it is what a person recognises. -->
+          <!-- The message first: it is what a person recognises. Truncated at
+               whatever width is left rather than at a fixed 200px — the badges
+               that used to follow it now sit at the right-hand end, so there
+               is nothing for a long message to push off the row. -->
           <p class="flex items-center gap-2 text-sm text-highlighted">
             <span class="truncate">{{ issue.message }}</span>
 
@@ -148,37 +151,45 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
           </p>
 
           <div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-dimmed">
-            <!-- Every manual report has the same type, so printing it says
-                 nothing. The group and the level are what the caller chose to
-                 tell us, and the flag marks the row as somebody's decision
-                 rather than something that fell over. -->
-            <template v-if="issue.manual">
-              <UBadge
-                :color="levelColor(issue.level)"
-                variant="subtle"
-                size="sm"
-                icon="i-lucide-flag"
-                :label="issue.group || 'reported'"
-                :title="`Reported by exception()${issue.level ? `, ${issue.level}` : ''}`"
-              />
-            </template>
+            <!-- What kind of failure, first and in one badge. An endpoint that
+                 answered 500 is one fact, not three sitting apart — the icon,
+                 the word and the status used to be scattered along the row
+                 with the status at the far end. -->
+            <UBadge
+              v-if="issue.kind === 'api'"
+              :color="issue.status ? statusColor(issue.status) : 'neutral'"
+              variant="subtle"
+              size="sm"
+              icon="i-lucide-plug"
+              class="shrink-0"
+              :label="issue.status ? `API ${issue.status}` : 'API'"
+            />
 
-            <span v-else class="font-medium text-muted">{{ issue.type }}</span>
+            <UBadge
+              v-else-if="issue.kind === 'page'"
+              :color="issue.status ? statusColor(issue.status) : 'neutral'"
+              variant="subtle"
+              size="sm"
+              icon="i-lucide-file-text"
+              class="shrink-0"
+              :label="issue.status ? `page ${issue.status}` : 'page'"
+            />
 
-            <!-- Endpoint or page, when it is known and interesting. Not for
-                 assets — a failing image is already obvious from its path —
-                 and not on manual reports, whose group says more. -->
-            <template v-if="!issue.manual && (issue.kind === 'api' || issue.kind === 'page')">
-              <span aria-hidden="true">·</span>
-              <span class="inline-flex items-center gap-1">
-                <UIcon
-                  :name="issue.kind === 'api' ? 'i-lucide-plug' : 'i-lucide-file-text'"
-                  class="size-3"
-                />{{ issue.kind === 'api' ? 'API' : 'page' }}
-              </span>
-            </template>
+            <UBadge
+              v-else-if="issue.status"
+              :color="statusColor(issue.status)"
+              variant="subtle"
+              size="sm"
+              class="shrink-0"
+              :label="String(issue.status)"
+            />
 
-            <template v-if="issue.culprit">
+            <span v-if="!issue.manual" class="font-medium text-muted">{{ issue.type }}</span>
+
+            <!-- The file is skipped for an endpoint: the route is the thing
+                 somebody goes and looks at, and the compiled path beside it
+                 was two locations for one fault. -->
+            <template v-if="issue.culprit && issue.kind !== 'api'">
               <span aria-hidden="true">·</span>
               <span class="font-mono text-primary/90">{{ issue.culprit }}</span>
             </template>
@@ -189,16 +200,23 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
                 <span v-if="issue.method" class="text-muted">{{ issue.method }} </span>{{ issue.route }}
               </span>
             </template>
-
-            <UBadge
-              v-if="issue.status"
-              :color="statusColor(issue.status)"
-              variant="subtle"
-              size="sm"
-              :label="String(issue.status)"
-            />
           </div>
         </div>
+
+        <!-- The group sits at the right rather than after the message: the
+             title is truncated, so a badge trailing it landed at a different
+             distance on every row and the column of labels was unscannable.
+             Here it lines up, next to the numbers the eye already goes to. -->
+        <UBadge
+          v-if="issue.manual"
+          :color="levelColor(issue.level)"
+          variant="subtle"
+          size="sm"
+          icon="i-lucide-flag"
+          class="mt-0.5 shrink-0"
+          :label="issue.group || 'reported'"
+          :title="`Reported by exception()${issue.level ? `, ${issue.level}` : ''}`"
+        />
 
         <div class="shrink-0 text-right">
           <div class="text-sm font-medium tabular-nums" :title="`${issue.count} occurrences`">
