@@ -63,7 +63,7 @@ see [Storage](./storage).
 Once occurrences are one issue, they can be counted against what they share —
 browser, browser version, OS, OS version, device, release, route and session.
 
-![The same issue broken down by browser, browser version, OS and OS version, each as a ranked bar with percentages](/media/breakdown.png)
+![One issue narrowed by browser, with each value ranked by share of its occurrences](/media/breakdown.png)
 
 "250 errors" is a number; "250 errors, all Safari 16" is a diagnosis. Clicking
 a slice filters the occurrences below it.

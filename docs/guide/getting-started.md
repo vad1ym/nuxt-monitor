@@ -58,7 +58,7 @@ export default defineEventHandler(() => {
 Request it once, then open the dashboard. You should see one issue, with the
 stack resolved to `server/api/boom.ts` and the failing line shown in context.
 
-![The issue list showing server and client issues together, each with its type, resolved file, route and HTTP status](/media/issues.png)
+![The issue list showing server and client issues together, each with its request, group and either a resolved source file or nothing](/media/issues.png)
 
 Server and client errors land in one list, filterable by side, browser, OS and
 device.
@@ -74,11 +74,18 @@ through: handlers, plugins, cached functions, `unhandledRejection` and
 
 **Client errors** — a browser plugin posting to `/_monitor/api/ingest`. It
 listens on `vue:error` as well as the window handlers, since Nuxt drops its own
-Vue error handler once the app hydrates.
+Vue error handler once the app hydrates. Alongside each one it sends a short
+trail of what led up to it — navigations, requests and the labels of what was
+clicked.
 
-**Request counts** — a route shape, a method and a status class, never bodies or
-headers. They give the error count a denominator: ten failures out of ten
-requests and ten out of a million are different situations.
+**Bodies of failing requests** — the response body by default, the request body
+if you turn it on. See [`capture`](../config/#capture), and read
+[Privacy](./privacy) first if you are thinking about the request half.
+
+**Request counts** — for *every* request, failing or not: a route shape, a
+method and a status class, and never a body or a header. They give the error
+count a denominator: ten failures out of ten requests and ten out of a million
+are different situations.
 
 Every 4xx is ignored by default; see [`ignore`](../config/#ignore).
 

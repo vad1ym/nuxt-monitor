@@ -24,11 +24,13 @@ features:
   - title: Grouped into issues
     details: By side, type, normalised message and the first frame in your own code.
   - title: Broken down
-    details: Browser, OS, device, release, route, session — what the occurrences have in common.
+    details: Browser, OS, device, release, route, session — what the occurrences have in common, measured against real traffic.
+  - title: The bodies, not just the stack
+    details: What came back, and what was sent if you ask for it. A stack says where the code broke; a body says what broke it.
   - title: Redacted on the way in
     details: Authorization headers, cookies, passwords and tokens never reach the database.
   - title: Never the reason you are down
     details: Writes are batched off the request path. If the database cannot be opened, collection stops and the app keeps serving.
 ---
 
-![The overview: error rate, errors over time, the biggest contributor, and routes ranked by failure rate](/media/overview.png)
+![The overview: requests and failure rate, errors drawn against traffic, the biggest contributor, the busiest endpoints, and errors per page view by browser](/media/overview.png)

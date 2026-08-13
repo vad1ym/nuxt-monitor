@@ -145,6 +145,34 @@ disk budget, not a retention policy.
 Extra key patterns to redact, on top of the built-in set. Substring match,
 case-insensitive. See [Privacy](../guide/privacy).
 
+## capture
+
+What of the failing request to keep beside the stack.
+
+| Option | Type | Default |
+| --- | --- | --- |
+| `capture.request` | `boolean` | `false` |
+| `capture.response` | `boolean` | `true` |
+| `capture.maxBytes` | `number` | `8192` |
+
+A stack says where the code broke; a body says what broke it. "Cannot read
+properties of undefined" is one bug or fifty depending on what was posted.
+
+The response half is on: your application wrote it, and for a failure it is
+usually the error envelope you would have asked for first. The request half is
+off, because that is where passwords and card numbers live — turn it on
+deliberately, having thought about what your endpoints receive.
+
+Only failures are read. A successful request is never touched, so this cannot
+become a log of everything your users typed. Both halves are truncated past
+`maxBytes` with a marker, and go through the same redaction as everything else
+— which matches *keys*, so a token inside a field called `data` survives it.
+That is the reason for the default.
+
+```ts
+capture: { request: true }
+```
+
 ## ignore
 
 What never reaches the database. Filtering on the way in, because noise that is

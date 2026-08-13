@@ -5,7 +5,7 @@ this module is that the frame instead reads `server/api/orders.ts:42` with the
 failing line shown around it — and it manages that without an upload step,
 because it runs on the machine that holds the maps.
 
-![A client TypeError resolved to client-error.vue line 33, showing the failing line in context with six Vue frames collapsed](/media/issue.png)
+![A client TypeError resolved to cart.vue line 121, showing the failing line in context, six Vue frames collapsed, and the clicks that led up to it](/media/issue.png)
 
 Framework frames are folded away, because they are never what you are looking
 for.

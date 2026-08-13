@@ -47,10 +47,35 @@ errors, 250 sessions" and identifies nobody.
   the user agent.
 - The release.
 - The per-tab session id described above.
+- The **response body** of a failing request, which your application wrote.
+- What led up to a browser error: navigations, requests as
+  `POST /api/checkout → 500`, and the visible label of what was clicked. No
+  input values, no attributes, no page contents — a breadcrumb trail is not a
+  session recording.
+- The **request body**, but only if you turn it on — see below.
 
 Browser fields are recorded for server errors too. A server error on a page
 render still happened *to* somebody, and knowing it only breaks on one browser
 is as useful there as it is on the client.
+
+## Request bodies are opt-in
+
+`capture.request` is off by default and should stay off unless you have thought
+about what your endpoints receive. A request body is where passwords, card
+numbers and personal data actually live, and redaction matches *keys* — a token
+in a field called `payload` survives it.
+
+When it is on, only failing requests are read, so it cannot become a log of
+everything your users typed. Successful requests are counted, never stored.
+
+```ts
+// Off, and the default.
+capture: { request: false }
+```
+
+The response half is on by default because your application produced it rather
+than a visitor, and for a failure it is usually an error envelope. Turn it off
+the same way if your errors carry data you would rather not keep.
 
 ## Retention
 
@@ -64,6 +89,7 @@ counters are kept three times longer.
 monitor: {
   // Nothing beyond the error itself.
   scrubKeys: ['user', 'email', 'name', 'phone', 'address'],
+  capture: { request: false, response: false },
   retentionDays: 3,
 }
 ```

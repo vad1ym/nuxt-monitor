@@ -10,7 +10,7 @@ Local-first error monitoring for Nuxt. No DSN, no account, no sourcemap upload.
 Runs inside your app, stores errors in a SQLite file next to it, and reads
 sourcemaps off the disk they were built onto. Nothing leaves the machine.
 
-![The overview: error rate, errors over time, the biggest contributor, and routes ranked by failure rate](https://raw.githubusercontent.com/vad1ym/nuxt-monitor/main/docs/media/overview.png)
+![The overview: requests and failure rate, errors drawn against traffic, the biggest contributor, the busiest endpoints, and errors per page view by browser](https://raw.githubusercontent.com/vad1ym/nuxt-monitor/main/docs/media/overview.png)
 
 ## Installation
 
@@ -61,8 +61,14 @@ Requires Node 22.13+ (`node:sqlite`) and Nuxt 4.
 - **`exception()` for what does not throw.** A payment that does not reconcile
   is worth an alert and never reaches an error handler. Reports carry a level
   and a named group, and a channel can subscribe to just one group.
+- **The bodies, not just the stack.** The response body of a failing request is
+  kept, and the request body if you ask for it — "Cannot read properties of
+  undefined" is one bug or fifty depending on what was posted.
+- **What led up to it.** Navigations, requests and clicks before a browser
+  error, so the trail ends at the call that returned the wrong shape rather
+  than at the component that choked on it.
 - **Redaction on collect.** Authorization headers, cookies, passwords and
-  tokens never reach the database.
+  tokens never reach the database, and request bodies are off by default.
 - **Endpoints apart from pages.** `/api/orders` failing for every consumer and
   `/checkout` failing to render are both "a server error" and are not the same
   problem; the list separates them.
