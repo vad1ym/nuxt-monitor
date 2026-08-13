@@ -1,6 +1,7 @@
 import type { H3Event } from 'h3'
 import { createError, useRuntimeConfig } from '#imports'
 import type {
+  MonitorCaptureOptions,
   MonitorEvent,
   MonitorIgnoreOptions,
   MonitorGroupOptions,
@@ -26,6 +27,7 @@ export interface MonitorRuntimeConfig {
   maxIssues: number
   maxDatabaseMb: number
   scrubKeys: string[]
+  capture: MonitorCaptureOptions
   ignore: MonitorIgnoreOptions
   notifications: MonitorNotificationOptions
   sampling: MonitorSamplingOptions

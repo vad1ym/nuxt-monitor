@@ -81,20 +81,69 @@ const occurrenceLabel = computed(() => {
 /**
  * Request details are promoted out of the context list: route, method and
  * status answer "which call broke" before anything else does.
+ *
+ * On the client the same field means something else, and calling both
+ * "Request" was a lie the screen told: a browser error carries the URL of the
+ * page it happened on, not the call that failed. A `$fetch` to
+ * `/api/checkout/quote` failing on `/cart` was labelled `Request /cart`, which
+ * points the reader at the wrong thing entirely — the failing call is in the
+ * message, and `/cart` is where the person was standing.
  */
 const request = computed(() => {
   const context = current.value?.context ?? {}
+  const onClient = detail.value?.issue.side === 'client'
 
   return {
+    label: onClient ? 'Page' : 'Request',
     url: typeof context.url === 'string' ? context.url : undefined,
-    method: typeof context.method === 'string' ? context.method : undefined,
-    status: typeof context.statusCode === 'number' ? context.statusCode : undefined,
+    // A page has no method or status of its own here — those describe a server
+    // request, and showing the page's own navigation status beside a failed
+    // `$fetch` would be a third unrelated number.
+    method: onClient ? undefined : typeof context.method === 'string' ? context.method : undefined,
+    status: onClient ? undefined : typeof context.statusCode === 'number' ? context.statusCode : undefined,
   }
+})
+
+/**
+ * What was sent and what came back.
+ *
+ * Given their own section rather than left among the context rows: a body is
+ * the one thing beside the stack that tells you *why* the code broke rather
+ * than where, and as a `dd` in a two-column list a JSON payload was an
+ * unreadable wall wedged between `source` and `info`.
+ *
+ * Either half may be absent — the request half is off unless configured, and
+ * a failure with no payload has no response body — so each is rendered only
+ * when it is there.
+ */
+const bodies = computed(() => {
+  const context = current.value?.context ?? {}
+
+  const format = (value: unknown): string | undefined => {
+    if (value === undefined || value === null) {
+      return undefined
+    }
+
+    return typeof value === 'string' ? value : JSON.stringify(value, null, 2)
+  }
+
+  return [
+    { key: 'request', label: 'Request body', value: format(context.requestBody) },
+    { key: 'response', label: 'Response body', value: format(context.responseBody) },
+  ].filter(entry => entry.value !== undefined)
 })
 
 /** Everything else, minus the fields shown above and the noisy ones. */
 const contextEntries = computed(() => {
-  const skip = new Set(['url', 'method', 'statusCode', 'headers', 'userAgent'])
+  const skip = new Set([
+    'url',
+    'method',
+    'statusCode',
+    'headers',
+    'userAgent',
+    'requestBody',
+    'responseBody',
+  ])
 
   return Object.entries(current.value?.context ?? {})
     .filter(([key]) => !skip.has(key))
@@ -376,7 +425,7 @@ onMounted(loadBaseline)
 
           <div v-if="request.url">
             <dt class="text-xs text-dimmed">
-              Request
+              {{ request.label }}
             </dt>
             <dd class="font-mono text-toned">
               <span v-if="request.method" class="text-muted">{{ request.method }} </span>{{ request.url }}
@@ -531,6 +580,19 @@ onMounted(loadBaseline)
             Stack
           </h2>
           <StackTrace :frames="current.frames" :raw="current.stack" />
+        </section>
+
+        <!-- Directly under the stack, because that is the reading order: the
+             trace says where, the payload says what with. -->
+        <section v-if="bodies.length" class="grid gap-3" :class="bodies.length > 1 ? 'lg:grid-cols-2' : ''">
+          <div v-for="body in bodies" :key="body.key">
+            <h2 class="mb-2 text-xs font-medium uppercase tracking-wide text-dimmed">
+              {{ body.label }}
+            </h2>
+            <pre
+              class="max-h-72 overflow-auto rounded-lg border border-default bg-elevated/30 p-3 text-xs leading-relaxed text-toned"
+            >{{ body.value }}</pre>
+          </div>
         </section>
 
         <section v-if="current.breadcrumbs?.length">

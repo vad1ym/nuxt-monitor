@@ -2,6 +2,7 @@ import type { H3Event } from 'h3'
 import { defineNitroPlugin, getRequestHeader, getRequestHeaders, getResponseStatus } from '#imports'
 import type { MonitorEvent, MonitorFacets } from '../../types'
 import { isAssetPath, routeKind } from '../shared/route'
+import { captureBodies, snapshotRequestBody } from './bodies'
 import { scrub, scrubUrl } from '../shared/scrub'
 import { parseUserAgent } from '../shared/user-agent'
 import type { MonitorRuntimeConfig } from './context'
@@ -17,6 +18,26 @@ import { captureSync, closeMonitorStore, countRequestSync, countTrafficSync, mon
  */
 export default defineNitroPlugin((nitroApp) => {
   const config = monitorConfig()
+
+  /**
+   * Snapshots the request body while the request is still in hand.
+   *
+   * `beforeResponse` fires for a failing request too, and before the error is
+   * dispatched — which is the whole reason it is done here rather than read
+   * back inside the error hook, where the event is not reliably carrying the
+   * same `node.req` the handler parsed from. Does nothing at all unless
+   * `capture.request` is on.
+   */
+  nitroApp.hooks.hook('beforeResponse', (event: H3Event) => {
+    try {
+      if (!isMonitorRoute(event, config.route)) {
+        snapshotRequestBody(event, config.capture)
+      }
+    }
+    catch {
+      // Never let a snapshot interfere with serving a response.
+    }
+  })
 
   nitroApp.hooks.hook('error', (error: Error, context: { event?: H3Event, tags?: string[] }) => {
     try {
@@ -240,7 +261,7 @@ function toEvent(
     // is the one reliable signal for an app that does not mount its endpoints
     // under `/api`, and it is gone by the time anything reads the row back.
     kind: event ? routeKind(event.path, getRequestHeader(event, 'accept')) : undefined,
-    context: event ? requestContext(event, error, config.scrubKeys) : undefined,
+    context: event ? requestContext(event, error, config) : undefined,
     facets: serverFacets(event, config.release),
   }
 }
@@ -277,8 +298,12 @@ function serverFacets(event: H3Event | undefined, release: string): MonitorFacet
  * The H3Event rides along in the error context, so this needs no separate
  * request hook and no per-request bookkeeping.
  */
-function requestContext(event: H3Event, error: Error, scrubKeys: string[]): Record<string, unknown> {
-  const options = { extraKeys: scrubKeys }
+function requestContext(
+  event: H3Event,
+  error: Error,
+  config: MonitorRuntimeConfig,
+): Record<string, unknown> {
+  const options = { extraKeys: config.scrubKeys }
 
   const context: Record<string, unknown> = {
     url: scrubUrl(event.path ?? '', options),
@@ -294,10 +319,18 @@ function requestContext(event: H3Event, error: Error, scrubKeys: string[]): Reco
     context.statusCode = statusCode
   }
 
-  const data = (error as { data?: unknown }).data
+  // What was sent and what came back. The response half used to be stored as
+  // an unlabelled `data` key, which is what `createError` calls it — accurate
+  // to the API and useless to a reader, who has to know that the field means
+  // "the body this request was about to answer with".
+  const { requestBody, responseBody } = captureBodies(event, error, config.capture, options)
 
-  if (data !== undefined) {
-    context.data = scrub(data, options)
+  if (requestBody !== undefined) {
+    context.requestBody = requestBody
+  }
+
+  if (responseBody !== undefined) {
+    context.responseBody = responseBody
   }
 
   return context

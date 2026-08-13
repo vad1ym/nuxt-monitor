@@ -10,6 +10,17 @@ export default defineNuxtConfig({
     },
 
     /**
+     * Bodies, both halves.
+     *
+     * The request half is off by default and turned on here deliberately: a
+     * checkout posts a basket, and "Basket contains a product that is no
+     * longer in the catalogue" is a different investigation depending on which
+     * product. The card token that rides along in the headers proves the other
+     * half of the point — it is redacted before anything is stored.
+     */
+    capture: { request: true },
+
+    /**
      * Named parts of the shop.
      *
      * Written the way the files under `server/api` are named, because that is

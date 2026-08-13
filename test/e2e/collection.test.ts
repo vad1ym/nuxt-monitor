@@ -56,10 +56,10 @@ describe('server collection', () => {
     expect(issue.type).toBe('TypeError')
   })
 
-  it('captures createError with its status code and data', async () => {
+  it('captures createError with its status code and both bodies', async () => {
     await trigger('/api/checkout/quote', {
       method: 'POST',
-      body: { lines: [{ slug: 'discontinued-rug', quantity: 1 }] },
+      body: { lines: [{ slug: 'discontinued-rug', quantity: 1 }], password: 'hunter2' },
     })
 
     const issue = await waitForIssue(cookie, i => i.message.includes('no longer in the catalogue'))
@@ -73,8 +73,18 @@ describe('server collection', () => {
     expect(context?.statusCode).toBe(500)
     expect(context?.method).toBe('POST')
     expect(context?.url).toBe('/api/checkout/quote')
-    // Non-sensitive payload survives, so the report stays useful.
-    expect((context?.data as Record<string, unknown>)?.slug).toBe('discontinued-rug')
+
+    // What came back — `createError({ data })` is the body the client is about
+    // to receive, and it survives as the response half.
+    expect((context?.responseBody as Record<string, unknown>)?.slug).toBe('discontinued-rug')
+
+    // What was sent. The example turns this half on, which is what makes
+    // "which product" answerable at all — and the password that rode along
+    // with it must not have survived the trip.
+    const sent = context?.requestBody as Record<string, unknown>
+
+    expect((sent?.lines as { slug: string }[])?.[0]?.slug).toBe('discontinued-rug')
+    expect(JSON.stringify(sent)).not.toContain('hunter2')
   })
 
   it('ignores 4xx, which are client mistakes rather than application faults', async () => {
