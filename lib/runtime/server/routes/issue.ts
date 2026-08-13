@@ -112,6 +112,10 @@ export default defineEventHandler(async (event) => {
     // What the breakdown is a breakdown of — see `eventCount`.
     eventCount: await store.eventCount(fingerprint, filter),
     trend: await store.issueTrend(fingerprint, filter),
+    // Unfiltered on purpose: "introduced in 1.8.2" is a fact about the issue,
+    // and narrowing to one browser would answer "introduced in 1.8.2 *for
+    // Firefox users*" under a heading that does not say so.
+    releases: await store.issueReleases(fingerprint),
     events: resolved,
   }
 })

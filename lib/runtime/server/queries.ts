@@ -351,6 +351,62 @@ export async function eventCount(db: Database, fp: string, filter?: MonitorFacet
 }
 
 /**
+ * Which releases one issue spans.
+ *
+ * "Introduced in 1.8.2, last seen in 1.8.3" is the sentence somebody wants
+ * before reading a line of the stack: it says whether a deploy caused this,
+ * and whether the deploy after it fixed it. Neither is answerable from a
+ * timestamp — release names are what people compare, and the mapping from one
+ * to the other lives in a deploy log nobody has open.
+ *
+ * Taken from the occurrences rather than from the issue row, because the issue
+ * row has no release: an issue exists across all of them by construction.
+ *
+ * The caveat that has to travel with this number: `maxEventsPerIssue` trims
+ * the oldest occurrences, so a long-lived busy issue can lose the evidence of
+ * where it began and appear to have been introduced by whichever release the
+ * surviving rows start in. `partial` says when that is possible, and the
+ * screen says so rather than asserting a release that may be innocent.
+ */
+export async function issueReleases(
+  db: Database,
+  fp: string,
+): Promise<{ first?: string, last?: string, count: number, partial: boolean } | undefined> {
+  const rows = await db.prepare(`
+    SELECT release, MIN(ts) AS first_seen, MAX(ts) AS last_seen
+    FROM events
+    WHERE fingerprint = ? AND release IS NOT NULL
+    GROUP BY release
+    ORDER BY first_seen ASC
+  `).all(fp) as Record<string, unknown>[]
+
+  if (!rows.length) {
+    return undefined
+  }
+
+  // The issue's own first occurrence, against the oldest one still stored. If
+  // the stored rows begin later than the issue does, the earliest release here
+  // is the earliest *surviving* one and not necessarily where it started.
+  const issue = await db.prepare(
+    'SELECT first_seen FROM issues WHERE fingerprint = ?',
+  ).get(fp) as { first_seen: number } | undefined
+
+  const oldestStored = Number(rows[0]!.first_seen)
+
+  const latest = rows.reduce((newest, row) =>
+    Number(row.last_seen) > Number(newest.last_seen) ? row : newest, rows[0]!)
+
+  return {
+    first: String(rows[0]!.release),
+    last: String(latest.release),
+    count: rows.length,
+    // A minute of slack: the issue row and the event row are written in the
+    // same flush but their timestamps come from when each was captured.
+    partial: issue ? oldestStored > Number(issue.first_seen) + 60_000 : false,
+  }
+}
+
+/**
  * When one issue's stored occurrences happened, bucketed for a chart.
  *
  * Counts rows in `events`, which is *not* the same as the issue's `count`:

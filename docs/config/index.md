@@ -80,13 +80,24 @@ config file cannot open a deployed dashboard.
 `string`, default `''`
 
 Version recorded on every event, so an incident starts from *appeared in 1.4.0*
-rather than a timestamp somebody matches against a deploy log. The Releases
-screen counts how many issues **first appeared** in each one, which is what
-separates "this release is noisy" from "this release introduced something".
+rather than a timestamp somebody matches against a deploy log.
+
+Setting it is what turns three things on:
+
+- **Deploy markers** on the Overview chart — a dashed line where each release
+  first appeared, so "the errors started after the deploy" is something you can
+  see rather than reconstruct.
+- **Introduced in 1.8.1 → 1.8.2** on an issue, which says whether a deploy
+  caused it and whether the next one stopped it.
+- **Issues that first appeared** in a release, which separates "this release is
+  noisy" from "this release introduced something".
 
 ```ts
-monitor: { release: process.env.npm_package_version }
+monitor: { release: process.env.GIT_SHA }
 ```
+
+Without it every event carries the same unknown release and none of the above
+appears — correctly, since the module was never told when anything shipped.
 
 Read at **build time**, so the value describes the build it is stamped into.
 Unset, it falls back to `NUXT_MONITOR_RELEASE`, then to whatever SHA your CI

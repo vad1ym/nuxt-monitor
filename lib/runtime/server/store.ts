@@ -8,6 +8,7 @@ import type {
   MonitorIgnoreOptions,
   MonitorIssue,
   MonitorGroupOptions,
+  MonitorIssueReleases,
   MonitorIssueTrend,
   MonitorNotificationOptions,
   MonitorOverview,
@@ -1302,6 +1303,12 @@ export class MonitorStore {
   async issueTrend(fp: string, filter?: MonitorFacetFilter): Promise<MonitorIssueTrend> {
     await this.flush()
     return queries.issueTrend(this.db, fp, filter)
+  }
+
+  /** Which releases one issue was first and last seen in. */
+  async issueReleases(fp: string): Promise<MonitorIssueReleases | undefined> {
+    await this.flush()
+    return queries.issueReleases(this.db, fp)
   }
 
   async overview(windowMs = 24 * 60 * 60 * 1_000, now = Date.now()): Promise<MonitorOverview> {

@@ -30,6 +30,39 @@ Deliberately one chart, not two. Errors rising while traffic rises is a busy
 afternoon; errors rising against flat traffic is a deploy. Side by side, the
 reader has to make that comparison by eye.
 
+## Deploys are drawn on that same axis
+
+A dashed vertical line marks where each release first appeared, labelled with
+its name. It is the fastest answer to the question every incident starts with —
+did this begin after we shipped something?
+
+On the chart rather than in a list beside it, because the question is about
+*shape*: how much was happening before the line against how much after. A table
+of deploy times leaves that comparison to memory.
+
+```ts
+monitor: { release: process.env.GIT_SHA }
+```
+
+Nothing else is needed — no webhook, no CI integration. The mark sits at the
+first event carrying that release, which is as close to the deploy as this
+module can know without being told; on a busy application that is seconds
+later.
+
+What each release *introduced* is spelled out above the chart rather than
+hidden behind a hover — a one-pixel dashed line is a poor thing to ask anybody
+to find with a mouse.
+
+Without [`release`](../config/#release) set there are no markers, which is the
+honest outcome: nothing ever told the module when anything shipped.
+
+An individual issue carries the same fact as a sentence — **introduced in
+1.8.1 → 1.8.2** — which also says whether the deploy *after* it stopped the
+bleeding. When older occurrences have been trimmed away by
+[`maxEventsPerIssue`](../config/#maxeventsperissue) it reads "seen in" instead:
+the earliest surviving occurrence is not necessarily where the issue began, and
+blaming a release that was innocent is worse than saying less.
+
 ## Breakdowns
 
 One block with a tab per dimension, rather than a card each. Four cards showed

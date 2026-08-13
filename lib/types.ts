@@ -908,6 +908,59 @@ export interface MonitorDashboard {
    * than how much happened while it was out.
    */
   latestRelease?: { release: string, newIssues: number, events: number, lastSeen: number }
+  /**
+   * Where each release starts, for marking the chart.
+   *
+   * "It started after the deploy" is the first thing anybody wants to know
+   * during an incident, and it is a question about *shape*: how much was
+   * happening before a line against how much after. A filter by release cannot
+   * answer it — narrowing to one release hides the very comparison being made
+   * — so releases are drawn on the same axis as the errors instead.
+   */
+  deploys: MonitorDeploy[]
+}
+
+/**
+ * A release, and when it first showed up.
+ *
+ * `at` is the first event carrying that release, which is the closest thing to
+ * a deploy time this module can know without being told about the deploy. It
+ * is later than the deploy itself by however long it took for the first error
+ * or page view to arrive — seconds on a busy application, longer on a quiet
+ * one. Named `at` rather than `deployedAt` for exactly that reason: it is when
+ * the release was first *seen*, not when it went out.
+ */
+export interface MonitorDeploy {
+  release: string
+  at: number
+  /** Issues that appeared for the first time in this release. */
+  newIssues: number
+}
+
+/**
+ * The releases one issue spans.
+ *
+ * "Introduced in 1.8.2, last seen in 1.8.3" is the sentence somebody wants
+ * before reading a line of the stack: it says whether a deploy caused this and
+ * whether the next one fixed it.
+ */
+export interface MonitorIssueReleases {
+  /** The release its earliest surviving occurrence carried. */
+  first?: string
+  /** The release its newest occurrence carried. */
+  last?: string
+  /** How many distinct releases it has been seen in. */
+  count: number
+  /**
+   * Whether older occurrences have been trimmed away.
+   *
+   * `maxEventsPerIssue` keeps the newest occurrences per issue, so a long-lived
+   * busy issue can lose the evidence of where it began — and would then appear
+   * to have been introduced by whichever release the surviving rows start in.
+   * Blaming a deploy that was innocent is worse than saying nothing, so the
+   * screen hedges when this is set.
+   */
+  partial: boolean
 }
 
 /** One cell of the when-does-it-happen grid. */

@@ -3,8 +3,10 @@ import type {
   MonitorDashboard,
   MonitorDashboardBreakdown,
   MonitorDashboardSlice,
+  MonitorDeploy,
   MonitorFacetFilter,
   MonitorFacetName,
+  MonitorRelease,
 } from '../../types'
 import { facetClause, facetColumn } from './facets'
 import { BUCKET_MS } from './schema'
@@ -41,6 +43,15 @@ const MIN_TRAFFIC = 20
 /** Chart columns. The same grid the other time charts use. */
 const TREND_STEPS = 48
 
+/**
+ * Releases considered when looking for deploys inside the window.
+ *
+ * Ordered by `last_seen`, so this is "the most recently active releases" — far
+ * more than could sit inside any window the dashboard offers, and cheap enough
+ * that narrowing it further would be tuning for nothing.
+ */
+const RELEASES = 20
+
 export interface DashboardOptions {
   windowMs: number
   now?: number
@@ -55,7 +66,7 @@ export async function dashboard(db: Database, options: DashboardOptions): Promis
   const { windowMs, now = Date.now(), filter, facets = DEFAULT_FACETS } = options
   const since = now - windowMs
 
-  const [totals, trend, breakdowns, routes, overview] = await Promise.all([
+  const [totals, trend, breakdowns, routes, overview, released] = await Promise.all([
     totalsFor(db, since, now, filter),
     trendFor(db, since, now, windowMs, filter),
     Promise.all(facets.map(facet => breakdownFor(db, facet, since, filter))),
@@ -64,6 +75,10 @@ export async function dashboard(db: Database, options: DashboardOptions): Promis
     // what is loudest, what is newest, and whether the last deploy brought
     // anything with it. All three are already computed there.
     queries.overview(db, windowMs, now),
+    // Reused rather than re-derived: "which release introduced this issue" is
+    // a window function over every event, subtle enough that a second copy
+    // would drift from the first.
+    queries.releases(db, RELEASES),
   ])
 
   return {
@@ -75,7 +90,39 @@ export async function dashboard(db: Database, options: DashboardOptions): Promis
     topIssue: overview.topIssue,
     recent: overview.recent,
     latestRelease: overview.latestRelease,
+    deploys: deploysIn(released, since, now),
   }
+}
+
+/**
+ * The releases whose first appearance falls inside the window.
+ *
+ * A release that started before the window is not a deploy *in* it — drawing a
+ * line at the left edge for every release the application has ever run would
+ * mark the beginning of the chart rather than an event on it.
+ *
+ * `unknown` is dropped. It is what events carry when no release is configured
+ * at all, so a line for it would say "this is when you started collecting",
+ * which is not a deploy and not useful. An application with no `release` set
+ * gets no markers, which is the honest outcome: the module was never told when
+ * anything shipped.
+ */
+function deploysIn(released: MonitorRelease[], since: number, now: number): MonitorDeploy[] {
+  return released
+    .filter(entry => entry.release !== 'unknown' && entry.firstSeen >= since && entry.firstSeen <= now)
+    .map(entry => ({
+      release: entry.release,
+      at: entry.firstSeen,
+      newIssues: entry.newIssues,
+      // Kept only to break ties below, then dropped.
+      lastSeen: entry.lastSeen,
+    }))
+    // Oldest first. Two releases can share a `firstSeen` — a test writing both
+    // in one millisecond, or a real deploy whose first events arrive together
+    // — and a comparison on that alone leaves their order to however the rows
+    // came back. Which release was still running later settles it.
+    .sort((a, b) => a.at - b.at || a.lastSeen - b.lastSeen)
+    .map(({ release, at, newIssues }) => ({ release, at, newIssues }))
 }
 
 async function totalsFor(

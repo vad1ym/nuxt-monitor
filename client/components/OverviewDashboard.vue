@@ -96,6 +96,44 @@ const trend = computed(() => {
   }
 })
 
+/**
+ * Deploys, as lines on the chart above.
+ *
+ * The title carries what the line cannot: how many issues that release was the
+ * first to show. A marker saying only "1.8.2" tells you a deploy happened;
+ * hovering says whether it brought anything with it.
+ *
+ * Empty whenever `release` is not configured, and that is the right outcome —
+ * without it the module was never told when anything shipped, and a line at
+ * the moment collection started would be a deploy marker for something that
+ * was not a deploy.
+ */
+const deploys = computed(() =>
+  (data.value?.deploys ?? []).map(deploy => ({
+    at: deploy.at,
+    label: deploy.release,
+    newIssues: deploy.newIssues,
+    title: deploy.newIssues
+      ? `${deploy.release} — first seen here: ${deploy.newIssues} new ${deploy.newIssues === 1 ? 'issue' : 'issues'}`
+      : `${deploy.release} — nothing new appeared`,
+  })),
+)
+
+/**
+ * The deploys in this window other than the one the banner already names.
+ *
+ * Newest first, and the latest release is dropped because the sentence above
+ * is about exactly that one — repeating it would read as two deploys.
+ */
+const earlierDeploys = computed(() => {
+  const latest = data.value?.latestRelease?.release
+
+  return deploys.value
+    .filter(deploy => deploy.label !== latest)
+    .map(deploy => ({ release: deploy.label, newIssues: deploy.newIssues }))
+    .reverse()
+})
+
 const hasTraffic = computed(() => (totals.value?.requests ?? 0) > 0)
 
 /** Whether anything is drawn at all — an empty window needs one message, not eight. */
@@ -403,11 +441,28 @@ onMounted(load)
           · {{ formatCount(data!.latestRelease.events) }} events · last seen
           {{ relativeTime(data!.latestRelease.lastSeen) }}
         </span>
+
+        <!-- The other releases that started inside this window, each with what
+             it introduced. On the line rather than behind a hover on the
+             chart: a one-pixel dashed line is a poor thing to ask somebody to
+             find with a mouse, and this is the sentence they came for. -->
+        <span v-if="earlierDeploys.length" class="w-full text-xs text-dimmed">
+          Also in this window:
+          <template v-for="(deploy, index) in earlierDeploys" :key="deploy.release">
+            <span v-if="index">, </span><span class="font-mono">{{ deploy.release }}</span>
+            <span>{{ deploy.newIssues ? ` (${deploy.newIssues} new)` : ' (nothing new)' }}</span>
+          </template>
+        </span>
       </section>
 
       <!-- Requests and errors on one axis. Errors rising with traffic is a busy
            afternoon; errors rising against flat traffic is a deploy — and two
-           charts side by side make the reader do that comparison by eye. -->
+           charts side by side make the reader do that comparison by eye.
+
+           The deploys are drawn on the same axis for the same reason: "it
+           started after the release" is a statement about what the line does
+           either side of a moment, and no list of deploy times beside the
+           chart lets anybody see that. -->
       <section class="rounded-lg border border-default p-3">
         <div class="mb-3 flex items-center justify-between">
           <h2 class="text-xs font-medium uppercase tracking-wide text-dimmed">
@@ -416,10 +471,13 @@ onMounted(load)
           <div class="flex items-center gap-3 text-xs text-dimmed">
             <span class="flex items-center gap-1.5"><span class="size-2 rounded-sm bg-muted" />requests</span>
             <span class="flex items-center gap-1.5"><span class="size-2 rounded-sm bg-error" />errors</span>
+            <span v-if="deploys.length" class="flex items-center gap-1.5">
+              <span class="h-2.5 w-px bg-dimmed" />deploys
+            </span>
           </div>
         </div>
 
-        <TimeChart :at="trend.at" :series="trend.series" />
+        <TimeChart :at="trend.at" :series="trend.series" :markers="deploys" />
       </section>
 
       <!-- Paired: both are short lists about where the load and the

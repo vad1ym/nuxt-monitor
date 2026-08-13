@@ -93,6 +93,10 @@ export class DisabledStore implements Pick<
     return { points: [], stored: 0, step: 0 }
   }
 
+  async issueReleases(): Promise<undefined> {
+    return undefined
+  }
+
   async overview(windowMs = 24 * 60 * 60 * 1_000): Promise<MonitorOverview> {
     return {
       windowMs,
@@ -152,6 +156,7 @@ export class DisabledStore implements Pick<
       breakdowns: [],
       routes: [],
       recent: [],
+      deploys: [],
     }
   }
 

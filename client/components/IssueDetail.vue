@@ -447,6 +447,33 @@ onMounted(loadBaseline)
             </dd>
           </div>
 
+          <!-- The release, not just the timestamp. "Introduced in 1.8.2" is
+               the sentence somebody wants before reading a line of the stack:
+               it says whether a deploy caused this, and whether the one after
+               it fixed it. A timestamp only answers that for whoever has the
+               deploy log open. -->
+          <div v-if="detail.releases?.first">
+            <dt class="text-xs text-dimmed">
+              {{ detail.releases.partial ? 'Seen in' : 'Introduced in' }}
+            </dt>
+            <dd class="font-mono text-toned">
+              <span :title="detail.releases.partial
+                ? 'Older occurrences have been trimmed, so this is the earliest release still stored — not necessarily where it began'
+                : 'The release its first occurrence carried'"
+              >{{ detail.releases.first }}</span>
+              <!-- Only when it has moved on. Repeating the same name twice
+                   under two headings says nothing and reads as two facts. -->
+              <span
+                v-if="detail.releases.last && detail.releases.last !== detail.releases.first"
+                class="text-dimmed"
+              > → {{ detail.releases.last }}</span>
+              <span
+                v-if="detail.releases.count > 2"
+                class="ms-1 font-sans text-xs text-dimmed"
+              >· {{ detail.releases.count }} releases</span>
+            </dd>
+          </div>
+
           <div>
             <dt class="text-xs text-dimmed">
               Last seen

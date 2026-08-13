@@ -339,6 +339,30 @@ async function spread(dbPath) {
       update.run(now - offsetAt(index), event.id)
     })
 
+    /**
+     * Releases, assigned by when the event ended up.
+     *
+     * Done here rather than through the ingest API for the same reason the
+     * timestamps are: `release` is baked into the build at compile time, so
+     * every request in one seeding run carries the same one. A demo with a
+     * single release cannot show the thing releases are for — "the errors
+     * started after this deploy" — because there is no deploy to point at.
+     *
+     * The boundaries are placed on the same curve the events follow, so each
+     * release covers a plausible stretch rather than an equal one: older
+     * releases ran for days, the current one for hours.
+     */
+    const RELEASES = ['1.7.4', '1.8.0', '1.8.1', '1.8.2']
+    const setRelease = db.prepare('UPDATE events SET release = ? WHERE id = ?')
+
+    events.forEach((event, index) => {
+      // `offsetAt` counts backwards from now, so index 0 is the oldest.
+      const share = index / Math.max(1, events.length - 1)
+      const release = RELEASES[Math.min(RELEASES.length - 1, Math.floor(share * RELEASES.length))]
+
+      setRelease.run(release, event.id)
+    })
+
     // Issue bounds are recomputed from the events they own rather than shifted
     // by a matching offset — the events moved independently, so anything else
     // would leave an issue claiming a `last_seen` no event of its has.

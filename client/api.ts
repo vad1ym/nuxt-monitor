@@ -6,6 +6,7 @@ import type {
   MonitorFrame,
   MonitorHealth,
   MonitorIssue,
+  MonitorIssueReleases,
   MonitorIssueTrend,
   MonitorOverview,
   MonitorQuietHours,
@@ -116,6 +117,8 @@ export interface IssueDetail {
   eventCount: number
   /** When those occurrences happened, bucketed for the chart. */
   trend: MonitorIssueTrend
+  /** Which releases it spans. Absent when no release is configured. */
+  releases?: MonitorIssueReleases
 }
 
 /** Turns a facet filter into repeated query parameters. */

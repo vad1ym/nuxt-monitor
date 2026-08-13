@@ -1554,3 +1554,34 @@ describe('traffic', () => {
     expect((await store.traffic(60 * 60 * 1_000)).rate).toBeUndefined()
   })
 })
+
+describe('which releases an issue spans', () => {
+  it('names where it was introduced and where it was last seen', async () => {
+    // The sentence somebody wants before reading a line of the stack: it says
+    // whether a deploy caused this, and whether the one after it fixed it.
+    const now = Date.now()
+
+    store.capture(makeEvent({ timestamp: now - 2 * 60_000, facets: { release: '1.8.1' } }))
+    store.capture(makeEvent({ timestamp: now - 60_000, facets: { release: '1.8.2' } }))
+    store.capture(makeEvent({ timestamp: now, facets: { release: '1.8.3' } }))
+    await store.flush()
+
+    const fp = (await store.listIssues({})).issues[0]!.fingerprint
+    const releases = await store.issueReleases(fp)
+
+    expect(releases?.first).toBe('1.8.1')
+    expect(releases?.last).toBe('1.8.3')
+    expect(releases?.count).toBe(3)
+    // Nothing was trimmed, so the first release really is where it began.
+    expect(releases?.partial).toBe(false)
+  })
+
+  it('says nothing when no release was recorded', async () => {
+    store.capture(makeEvent())
+    await store.flush()
+
+    const fp = (await store.listIssues({})).issues[0]!.fingerprint
+
+    expect(await store.issueReleases(fp)).toBeUndefined()
+  })
+})

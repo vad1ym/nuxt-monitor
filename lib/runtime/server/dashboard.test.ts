@@ -202,3 +202,49 @@ describe('filtering', () => {
       .toHaveLength(1)
   })
 })
+
+describe('deploys', () => {
+  it('marks where a release first appeared', async () => {
+    // The whole point of drawing them on the chart: "it started after the
+    // deploy" is a statement about what the line does either side of a moment,
+    // and a filter by release cannot answer it — narrowing to one release
+    // hides the comparison being made.
+    // Distinct timestamps, because two releases starting in the same
+    // millisecond is not a deploy — it is a test writing two rows at once,
+    // and ordering them would be ordering noise.
+    const now = Date.now()
+
+    store.capture(event({ timestamp: now - 10 * 60_000, facets: { release: '1.8.1' } }))
+    store.capture(event({ message: 'later', timestamp: now, facets: { release: '1.8.2' } }))
+    await store.flush()
+
+    const { deploys } = await store.dashboard({ windowMs: HOUR, now })
+
+    expect(deploys.map(entry => entry.release)).toEqual(['1.8.1', '1.8.2'])
+    // Each release introduced the issue that first carried it.
+    expect(deploys.every(entry => entry.newIssues === 1)).toBe(true)
+  })
+
+  it('says nothing when no release is configured', async () => {
+    // Events carry `unknown` when `release` is unset, and a line for it would
+    // mark when collection started rather than when anything shipped.
+    store.capture(event())
+    await store.flush()
+
+    expect((await store.dashboard({ windowMs: HOUR })).deploys).toEqual([])
+  })
+
+  it('leaves out a release that started before the window', async () => {
+    // A release already running is not a deploy *in* this window; a line at
+    // the left edge would mark the beginning of the chart, not an event on it.
+    const now = Date.now()
+
+    store.capture(event({ timestamp: now - 3 * HOUR, facets: { release: 'old' } }))
+    store.capture(event({ message: 'fresh', facets: { release: 'new' } }))
+    await store.flush()
+
+    const { deploys } = await store.dashboard({ windowMs: HOUR, now })
+
+    expect(deploys.map(entry => entry.release)).toEqual(['new'])
+  })
+})
