@@ -240,7 +240,12 @@ describe('deploys', () => {
     const now = Date.now()
 
     store.capture(event({ timestamp: now - 3 * HOUR, facets: { release: 'old' } }))
-    store.capture(event({ message: 'fresh', facets: { release: 'new' } }))
+    // Timestamped from the same `now` the window is measured against, not from
+    // the helper's own `Date.now()`. A deploy is excluded when it falls after
+    // the end of the window, and the helper's clock reading is taken later than
+    // this one — so whenever a millisecond ticked between the two, the release
+    // under test landed in the future and was dropped.
+    store.capture(event({ message: 'fresh', timestamp: now, facets: { release: 'new' } }))
     await store.flush()
 
     const { deploys } = await store.dashboard({ windowMs: HOUR, now })
