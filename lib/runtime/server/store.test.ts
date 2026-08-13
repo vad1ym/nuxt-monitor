@@ -453,11 +453,17 @@ describe('request counters and overview', () => {
    * the client re-bucketed the result onto its own grid.
    */
   it('groups occurrences within a bucket into one point', async () => {
-    const now = Date.now()
+    // Anchored to the start of the current minute rather than to `Date.now()`.
+    // Counting seconds *back* from now spills into the previous minute whenever
+    // the run happens to start in the first few seconds of one — a two-bucket
+    // failure a dozen or so times out of every thousand runs, decided by the
+    // clock rather than by the code. Counting forward from the boundary puts
+    // all five in the same minute no matter when the suite runs.
+    const minute = Math.floor(Date.now() / 60_000) * 60_000
 
     // Five occurrences seconds apart — comfortably inside one minute.
     for (let i = 0; i < 5; i++) {
-      store.capture(makeEvent({ timestamp: now - i * 1_000 }))
+      store.capture(makeEvent({ timestamp: minute + i * 1_000 }))
     }
 
     const { trend } = await store.overview()
