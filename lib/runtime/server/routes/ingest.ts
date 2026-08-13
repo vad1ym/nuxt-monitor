@@ -290,7 +290,7 @@ function normalizeBreadcrumbs(raw: unknown, options: { extraKeys: string[] }): M
     out.push({
       type,
       timestamp: typeof crumb.timestamp === 'number' ? clampTimestamp(crumb.timestamp) : Date.now(),
-      message: typeof crumb.message === 'string' ? scrubUrl(crumb.message.slice(0, 500), options) : '',
+      message: crumbMessage(type, crumb.message, options),
       data: crumb.data && typeof crumb.data === 'object'
         ? scrub(crumb.data as Record<string, unknown>, options)
         : undefined,
@@ -298,6 +298,39 @@ function normalizeBreadcrumbs(raw: unknown, options: { extraKeys: string[] }): M
   }
 
   return out.length ? out : undefined
+}
+
+/**
+ * A breadcrumb's message, scrubbed according to what it actually is.
+ *
+ * Only a navigation crumb is a bare URL. The others are sentences that happen
+ * to contain one — `POST /api/checkout/quote → 500` — or no URL at all, as a
+ * click's label. Running the URL scrubber over those was a real bug and a
+ * quiet one: `new URL()` accepted the whole sentence as a relative path and
+ * percent-encoded it, so the trail rendered as
+ * `/POST%20/api/checkout/quote%20%E2%86%92%20500`. Unreadable, and it survived
+ * because it is technically a scrubbed string.
+ *
+ * Redaction for the rest is bounded length and nothing more, which is honest
+ * about what is possible: key-based scrubbing has no keys to match in a
+ * sentence. It is safe here because of where these come from — the browser
+ * drops the query string before recording a fetch crumb, and a click crumb
+ * carries an element's visible label. Neither is a place a secret arrives by
+ * accident, and free text nobody can redact is a reason to record less of it,
+ * not to pretend a scrubber saw it.
+ */
+function crumbMessage(
+  type: MonitorBreadcrumb['type'],
+  raw: unknown,
+  options: { extraKeys: string[] },
+): string {
+  if (typeof raw !== 'string') {
+    return ''
+  }
+
+  const message = raw.slice(0, 500)
+
+  return type === 'navigation' ? scrubUrl(message, options) : message
 }
 
 /**

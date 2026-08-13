@@ -38,46 +38,45 @@ const broken = computed(() => channels.value.filter(entry => entry.enabled && !e
 const deliveries = computed(() => data.value?.deliveries ?? [])
 
 /**
- * The triggers as sentences rather than a table of booleans.
+ * The rules, as one sentence.
  *
- * A row reading `newIssue  true` restates the config file. What a reader wants
- * is which events would reach them, so the ones that are off are shown struck
- * through rather than hidden — "regressions are not alerted" is information.
+ * This used to be two panels — a checklist of triggers and a table of
+ * thresholds — and between them they took up half the screen to restate the
+ * config file. `newIssue  true` tells a reader nothing they cannot read in
+ * `nuxt.config`, and a screen whose largest element is a mirror of a file is a
+ * screen that buries the one thing only it knows: what was actually sent.
+ *
+ * What survives is the part that answers the question people bring here, which
+ * is never "what are the triggers" but "why did nobody tell me". Two of these
+ * facts explain silence — the cooldown and the quiet hours — and the rest name
+ * what would have had to happen. One line, above the log it explains.
  */
-const triggers = computed(() => {
+const rules = computed(() => {
   const configured = data.value?.triggers ?? {}
   const thresholds = configured.thresholds ?? [10, 100, 1_000]
+  const causes: string[] = []
 
-  return [
-    {
-      key: 'new-issue',
-      label: 'New issue',
-      detail: 'A fingerprint seen for the first time',
-      on: configured.newIssue !== false,
-    },
-    {
-      key: 'regression',
-      label: 'Regression',
-      detail: 'An issue marked resolved happening again',
-      on: configured.regression !== false,
-    },
-    {
-      key: 'threshold',
-      label: 'Growth',
-      detail: thresholds.length
-        ? `Crossing ${thresholds.join(', ')} occurrences`
-        : 'Turned off',
-      on: thresholds.length > 0,
-    },
-    {
-      key: 'watched',
-      label: 'Watched group',
-      detail: watched.value.length
-        ? `Any failure in ${watched.value.join(', ')}`
-        : 'No group has alerts turned on',
-      on: watched.value.length > 0,
-    },
-  ]
+  if (configured.newIssue !== false) {
+    causes.push('a new issue')
+  }
+
+  if (configured.regression !== false) {
+    causes.push('a regression')
+  }
+
+  if (thresholds.length) {
+    causes.push(`${thresholds.join('/')} occurrences`)
+  }
+
+  if (watched.value.length) {
+    // Last, and with its own separator: this one is itself a list, so joining
+    // the whole sentence with commas ran the group names together with the
+    // triggers — "10/100/1000 occurrences, anything in third-party, payments"
+    // reads as four causes rather than three.
+    causes.push(`anything in ${watched.value.join(' or ')}`)
+  }
+
+  return causes
 })
 
 /** Quiet hours as one line, since that is how the config reads. */
@@ -93,6 +92,22 @@ const quiet = computed(() => {
     : ''
 
   return `${window.from}–${window.to}${window.timezone ? ` ${window.timezone}` : ''}${days}`
+})
+
+/** What stops one being sent, which is the half that explains a quiet night. */
+const limits = computed(() => {
+  const out: string[] = []
+  const cooldown = data.value?.cooldownMinutes
+
+  if (cooldown) {
+    out.push(`at most one per issue every ${cooldown} min`)
+  }
+
+  if (quiet.value) {
+    out.push(`silent ${quiet.value}`)
+  }
+
+  return out
 })
 
 const STATUS: Record<MonitorDelivery['status'], { color: 'success' | 'error' | 'neutral', label: string }> = {
@@ -329,71 +344,9 @@ onMounted(load)
 
         <p class="mt-2.5 text-xs text-dimmed">
           Configured under <code class="font-mono">monitor.groups</code>. A group with alerts on is
-          still subject to the cooldown and the quiet hours below.
+          still subject to the cooldown and the quiet hours.
         </p>
       </section>
-
-      <div class="grid gap-3 md:grid-cols-2">
-        <section class="rounded-lg border border-default p-3">
-          <h2 class="mb-2.5 text-xs font-medium uppercase tracking-wide text-dimmed">
-            What raises an alert
-          </h2>
-
-          <div class="space-y-2">
-            <div v-for="trigger in triggers" :key="trigger.key" class="flex items-start gap-2.5">
-              <UIcon
-                :name="trigger.on ? 'i-lucide-check' : 'i-lucide-minus'"
-                class="mt-0.5 size-3.5 shrink-0"
-                :class="trigger.on ? 'text-success' : 'text-dimmed'"
-              />
-              <div class="min-w-0">
-                <p class="text-sm" :class="trigger.on ? 'text-toned' : 'text-dimmed line-through'">
-                  {{ trigger.label }}
-                </p>
-                <p class="text-xs text-dimmed">
-                  {{ trigger.detail }}
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <!-- The three numbers that decide whether this feature is liveable.
-             Worth stating outright: an hour of silence per issue is the
-             difference between an alert and a pager nobody reads. -->
-        <section class="rounded-lg border border-default p-3">
-          <h2 class="mb-2.5 text-xs font-medium uppercase tracking-wide text-dimmed">
-            What keeps it quiet
-          </h2>
-
-          <dl class="space-y-2 text-sm">
-            <div class="flex items-baseline justify-between gap-3">
-              <dt class="text-dimmed">
-                Per-issue cooldown
-              </dt>
-              <dd class="tabular-nums text-toned">
-                {{ data.cooldownMinutes }} min
-              </dd>
-            </div>
-            <div class="flex items-baseline justify-between gap-3">
-              <dt class="text-dimmed">
-                Grouping window
-              </dt>
-              <dd class="tabular-nums text-toned">
-                {{ data.groupWindowSeconds }}s
-              </dd>
-            </div>
-            <div class="flex items-baseline justify-between gap-3">
-              <dt class="text-dimmed">
-                Quiet hours
-              </dt>
-              <dd class="text-end text-toned">
-                {{ quiet || '—' }}
-              </dd>
-            </div>
-          </dl>
-        </section>
-      </div>
 
       <section>
         <div class="mb-2 flex items-baseline justify-between gap-3">
@@ -404,6 +357,23 @@ onMounted(load)
             {{ failures }} of the last {{ deliveries.length }} failed
           </span>
         </div>
+
+        <!-- The rules, immediately above the log they explain. People come to
+             this screen asking why nobody told them, and the answer is either
+             "nothing qualified" or "something silenced it" — one line each,
+             rather than the two panels of restated config that used to sit
+             here and push the log itself below the fold. -->
+        <p v-if="rules.length || limits.length" class="mb-2 text-xs text-dimmed">
+          <template v-if="rules.length">
+            Alerts on {{ rules.join(', ') }}.
+          </template>
+          <template v-else>
+            Nothing raises an alert.
+          </template>
+          <template v-if="limits.length">
+            {{ limits.join('; ') }}.
+          </template>
+        </p>
 
         <div v-if="!deliveries.length" class="rounded-lg border border-dashed border-default py-10 text-center">
           <p class="text-sm text-muted">

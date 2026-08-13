@@ -251,6 +251,48 @@ describe('client intake', () => {
     expect(JSON.stringify(detail.events[0]?.context)).not.toContain('secret-in-url')
   })
 
+  it('keeps a breadcrumb trail readable', async () => {
+    // What led up to the error is most of what makes a browser error
+    // diagnosable, and it is only useful if a person can read it. Every
+    // message used to go through the URL scrubber, which accepted
+    // `POST /api/x → 500` as a relative path and percent-encoded the whole
+    // sentence — technically scrubbed, and unreadable.
+    await $fetch('/_monitor/api/ingest', {
+      method: 'POST',
+      body: {
+        events: [{
+          type: 'TypeError',
+          message: 'trail check',
+          timestamp: Date.now(),
+          context: { url: '/cart' },
+          breadcrumbs: [
+            { type: 'navigation', timestamp: Date.now(), message: '/cart?token=secret-in-crumb' },
+            { type: 'click', timestamp: Date.now(), message: 'Price the basket' },
+            { type: 'fetch', timestamp: Date.now(), message: 'POST /api/checkout/quote → 500' },
+          ],
+        }],
+      },
+    })
+
+    const issue = await waitForIssue(cookie, i => i.message === 'trail check')
+    const detail = await $fetch<{ events: { breadcrumbs?: { type: string, message: string }[] }[] }>(
+      `/_monitor/api/issues/${issue.fingerprint}`,
+      { headers: { cookie } },
+    )
+
+    const trail = detail.events[0]?.breadcrumbs ?? []
+
+    expect(trail.find(crumb => crumb.type === 'fetch')?.message)
+      .toBe('POST /api/checkout/quote → 500')
+    expect(trail.find(crumb => crumb.type === 'click')?.message).toBe('Price the basket')
+
+    // A navigation crumb *is* a URL, so it still gets the URL treatment.
+    const navigation = trail.find(crumb => crumb.type === 'navigation')?.message
+
+    expect(navigation).toContain('/cart')
+    expect(navigation).not.toContain('secret-in-crumb')
+  })
+
   it('rejects entries that are not shaped like events', async () => {
     const response = await $fetch<{ accepted: number }>('/_monitor/api/ingest', {
       method: 'POST',

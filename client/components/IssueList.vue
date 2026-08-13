@@ -187,16 +187,25 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
         <!-- The group sits at the right rather than after the message: the
              title is truncated, so a badge trailing it landed at a different
              distance on every row and the column of labels was unscannable.
-             Here it lines up, next to the numbers the eye already goes to. -->
+             Here it lines up, next to the numbers the eye already goes to.
+
+             Shown for every issue that has one, not only for manual reports.
+             A group assigned by a config rule is the same fact as one named at
+             an `exception()` call — "this failure is about payments" — and
+             showing it for one and not the other made the whole dimension look
+             like a property of manual reporting. The filter offered `catalog`
+             and `admin`; the list never said which rows were in them. -->
         <UBadge
-          v-if="issue.manual"
-          :color="levelColor(issue.level)"
+          v-if="issue.group || issue.manual"
+          :color="issue.manual ? levelColor(issue.level) : 'neutral'"
           variant="subtle"
           size="sm"
-          icon="i-lucide-flag"
+          :icon="issue.manual ? 'i-lucide-flag' : 'i-lucide-tag'"
           class="mt-0.5 shrink-0"
           :label="issue.group || 'reported'"
-          :title="`Reported by exception()${issue.level ? `, ${issue.level}` : ''}`"
+          :title="issue.manual
+            ? `Reported by exception()${issue.level ? `, ${issue.level}` : ''}`
+            : `In the ${issue.group} group`"
         />
 
         <div class="shrink-0 text-right">
