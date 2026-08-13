@@ -34,8 +34,7 @@ reader has to make that comparison by eye.
 
 One block with a tab per dimension, rather than a card each. Four cards showed
 two rows apiece and stood two-thirds empty, and comparing across them was work
-for the reader; one table at full width fits the three numbers that matter side
-by side:
+for the reader; one table fits the three numbers that matter side by side:
 
 | Column | Meaning |
 | --- | --- |
