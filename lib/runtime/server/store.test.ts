@@ -1211,6 +1211,18 @@ describe('resilience', () => {
     await small.close()
   })
 
+  /**
+   * Given room beyond the default 5s, because it is genuinely slow rather than
+   * stuck.
+   *
+   * The cap it proves is `MAX_PENDING_EVENTS`, a fixed 1_000, so the volume is
+   * not a knob the test can turn down — it has to cross that line to prove
+   * anything. Crossing it means 1_100 captures and two flush cycles whose
+   * COMMIT is rejected, and a rejected flush requeues the whole batch. On this
+   * machine that lands around 2.7s; CI is slower, and it timed out there while
+   * passing everywhere else. A timeout tuned that close to the real duration
+   * does not test the cap, it tests the runner's mood.
+   */
   it('drops the oldest events rather than growing without bound', async () => {
     breakWrites(store)
 
@@ -1240,7 +1252,7 @@ describe('resilience', () => {
     await store.flush()
 
     expect((await store.listIssues()).total).toBeGreaterThan(0)
-  })
+  }, 20_000)
 
   it('does not throw out of a read when trimming fails', async () => {
     store.capture(makeEvent())
