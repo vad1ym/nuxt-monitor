@@ -16,13 +16,27 @@ export default defineEventHandler(async (event) => {
 
   const query = getQuery(event)
   const windowMs = toWindow(query.window)
+  const store = await useMonitorStore()
+
+  // Only when asked for. The panel does not need a baseline; the one-line
+  // summary on an issue does, and fetching it for every filter change would
+  // be a second aggregate nobody reads.
+  const baseline = query.baseline === 'true' || query.baseline === '1'
 
   return {
     windowMs,
+    /**
+     * What the traffic looked like, for judging a breakdown against.
+     *
+     * Absent unless requested. Undefined and empty mean different things: no
+     * baseline was asked for, against no page views were counted — and the
+     * second is what makes a skew unjudgeable rather than absent.
+     */
+    traffic: baseline ? await store.trafficFacets(windowMs) : undefined,
     // Awaited: a pending promise in a response body serialises as `{}`
     // rather than throwing, so the dashboard receives a facet panel with no
     // dimensions and nothing anywhere reports an error.
-    facets: await (await useMonitorStore()).facetCounts({
+    facets: await store.facetCounts({
       since: Date.now() - windowMs,
       filter: parseFacetFilter(query),
       // The panel raises this to open up a long list. Clamped in the query, so

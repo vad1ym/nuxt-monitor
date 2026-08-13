@@ -171,6 +171,14 @@ function labelFor(facet: MonitorFacetName, value: string, facets: MonitorFacetCo
     return value
   }
 
+  // Already qualified. A version value is usually the bare number, but not
+  // always — some agents report "Mobile Safari 15" outright, and prefixing
+  // that gives "Mobile Safari Mobile Safari 15", which reads as a parsing bug
+  // to anybody who sees it.
+  if (value.toLowerCase().startsWith(top.value.toLowerCase())) {
+    return value
+  }
+
   // "Mobile Safari 15" rather than "15".
   return `${top.value} ${value}`
 }

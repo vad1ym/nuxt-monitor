@@ -8,6 +8,7 @@ import type {
   MonitorSamplingOptions,
   MonitorSide,
 } from '../../types'
+import type { ParsedUserAgent } from '../shared/user-agent'
 import { DisabledStore } from './disabled-store'
 import { MonitorStore } from './store'
 import type { ResolvedAuth } from './session'
@@ -183,6 +184,34 @@ export function countRequestSync(route: string, method: string, status: number):
   void useMonitorStore().then((ready) => {
     for (const [path, verb, code] of pendingCounts.splice(0)) {
       ready.countRequest(path, verb, code)
+    }
+  })
+}
+
+/** Page views counted before the database finished opening. */
+const pendingTraffic: ParsedUserAgent[] = []
+
+/**
+ * Counts one page view's browser and device, without waiting.
+ *
+ * Queued rather than dropped while the store opens, for the same reason
+ * request counts are: on a quiet application the requests served during that
+ * window are all of them, and a baseline missing its first minutes would
+ * understate exactly the audience a breakdown is compared against.
+ */
+export function countTrafficSync(agent: ParsedUserAgent): void {
+  if (store) {
+    store.countTraffic(agent)
+    return
+  }
+
+  if (pendingTraffic.length < MAX_PENDING_BEFORE_OPEN) {
+    pendingTraffic.push(agent)
+  }
+
+  void useMonitorStore().then((ready) => {
+    for (const queued of pendingTraffic.splice(0)) {
+      ready.countTraffic(queued)
     }
   })
 }

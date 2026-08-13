@@ -4,6 +4,7 @@ import type {
   MonitorEvent,
   MonitorFacetCounts,
   MonitorFacetFilter,
+  MonitorFacetName,
   MonitorIssue,
   MonitorIssueTrend,
   MonitorLevel,
@@ -848,6 +849,60 @@ export async function setIgnored(db: Database, fp: string, ignored: boolean): Pr
     .run(ignored ? 1 : 0, fp)
 
   return changesOf(result) > 0
+}
+
+/**
+ * What the traffic looked like, as facet shares.
+ *
+ * The denominator a breakdown needs. "90% of these errors are on iOS 16" is a
+ * finding when iOS 16 is a tenth of the audience and a tautology when it is
+ * nine tenths, and until this existed the comparison was against the facets of
+ * other errors* — which answers a different question and flatters whichever
+ * browser is noisiest.
+ *
+ * Shaped like `facetCounts` so the two are interchangeable at the call site.
+ */
+export async function trafficFacets(db: Database, windowMs: number, now = Date.now()): Promise<MonitorFacetCounts> {
+  const since = bucketOf(now - windowMs, BUCKET_MS)
+
+  const rows = await db.prepare(`
+    SELECT facet, value, SUM(count) AS total
+    FROM traffic_facets
+    WHERE bucket >= ?
+    GROUP BY facet, value
+    ORDER BY total DESC
+  `).all(since) as Record<string, unknown>[]
+
+  const counts = {} as MonitorFacetCounts
+
+  for (const name of FACET_NAMES) {
+    counts[name] = { values: [], more: false }
+  }
+
+  // Totals per facet, so a share is against the traffic that reported that
+  // dimension rather than against every row in the table.
+  const totals = new Map<string, number>()
+
+  for (const row of rows) {
+    const facet = String(row.facet)
+    totals.set(facet, (totals.get(facet) ?? 0) + Number(row.total))
+  }
+
+  for (const row of rows) {
+    const facet = String(row.facet) as MonitorFacetName
+    const group = counts[facet]
+
+    if (!group) {
+      continue
+    }
+
+    const total = totals.get(facet) ?? 0
+    const count = Number(row.total)
+
+    group.values.push({ value: String(row.value), count, share: total ? count / total : 0 })
+  }
+
+  return counts
 }
 
 /**

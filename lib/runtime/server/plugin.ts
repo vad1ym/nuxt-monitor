@@ -5,7 +5,7 @@ import { isAssetPath, routeKind } from '../shared/route'
 import { scrub, scrubUrl } from '../shared/scrub'
 import { parseUserAgent } from '../shared/user-agent'
 import type { MonitorRuntimeConfig } from './context'
-import { captureSync, closeMonitorStore, countRequestSync, monitorConfig } from './context'
+import { captureSync, closeMonitorStore, countRequestSync, countTrafficSync, monitorConfig } from './context'
 
 /**
  * Server-side collection.
@@ -133,6 +133,18 @@ function countOnce(event: H3Event, status: number): void {
   }
 
   countRequestSync(path, event.method ?? 'GET', status)
+
+  // The same request, counted a second way: which browser and device it came
+  // from. That is what turns "90% of these errors are on iOS" into a finding
+  // or a tautology — without a traffic baseline the sentence only restates the
+  // shape of the audience.
+  //
+  // Pages only. A page view drags a dozen `$fetch` calls behind it, and
+  // counting those would weight one visitor by how chatty the page is rather
+  // than by their being one visitor.
+  if (routeKind(path, getRequestHeader(event, 'accept')) === 'page') {
+    countTrafficSync(parseUserAgent(getRequestHeader(event, 'user-agent')))
+  }
 }
 
 /**

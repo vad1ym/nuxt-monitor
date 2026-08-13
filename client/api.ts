@@ -184,7 +184,7 @@ export const api = {
     )
   },
 
-  facets: (filter?: MonitorFacetFilter, hours = 24, facetLimit?: number) => {
+  facets: (filter?: MonitorFacetFilter, hours = 24, facetLimit?: number, baseline = false) => {
     const query = new URLSearchParams({ window: String(hours * 60 * 60 * 1_000) })
     appendFacets(query, filter)
 
@@ -192,7 +192,18 @@ export const api = {
       query.set('limit', String(facetLimit))
     }
 
-    return request<{ windowMs: number, facets: MonitorFacetCounts }>(`/facets?${query}`)
+    // The traffic baseline, for the one-line summary on an issue. Asked for
+    // explicitly because it is a second aggregate and the filter panel has no
+    // use for it.
+    if (baseline) {
+      query.set('baseline', 'true')
+    }
+
+    return request<{
+      windowMs: number
+      facets: MonitorFacetCounts
+      traffic?: MonitorFacetCounts
+    }>(`/facets?${query}`)
   },
 
   /**

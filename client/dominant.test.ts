@@ -171,3 +171,30 @@ describe('dominantSlice', () => {
     expect(dominantSlice(counts({}))).toBeUndefined()
   })
 })
+
+describe('qualifying a version', () => {
+  const counts = (browser: string, version: string): MonitorFacetCounts => ({
+    browser: { values: [{ value: browser, count: 10, share: 1 }], more: false },
+    browserVersion: { values: [{ value: version, count: 10, share: 1 }], more: false },
+    os: { values: [], more: false },
+    osVersion: { values: [], more: false },
+    deviceType: { values: [], more: false },
+    release: { values: [], more: false },
+    route: { values: [], more: false },
+  })
+
+  it('names the browser a bare version belongs to', () => {
+    // "92% on 15" names nothing.
+    const slice = dominantSlice(counts('Mobile Safari', '15'), 10)
+
+    expect(slice?.label).toContain('Mobile Safari 15')
+  })
+
+  it('does not repeat a version that already names its browser', () => {
+    // Some agents report the version already qualified, and prefixing it again
+    // gives "Mobile Safari Mobile Safari 15" — which reads as a parsing bug.
+    const slice = dominantSlice(counts('Mobile Safari', 'Mobile Safari 15'), 10)
+
+    expect(slice?.label).toBe('Mobile Safari 15')
+  })
+})

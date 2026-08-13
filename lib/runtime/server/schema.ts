@@ -69,6 +69,8 @@ const INDEXES: [name: string, table: string, columns: string][] = [
   // The log is only ever read newest-first, and it is the one table that grows
   // without a per-row cap.
   ['idx_notifications_at', 'notifications', 'at DESC'],
+  // Read by window, like the request counters beside it.
+  ['idx_traffic_bucket', 'traffic_facets', 'bucket DESC'],
 ]
 
 function tables(dialect: MonitorDialect): string[] {
@@ -131,6 +133,23 @@ function tables(dialect: MonitorDialect): string[] {
   class   ${t.key(16)} NOT NULL,
   count   ${t.int} NOT NULL DEFAULT 0,
   PRIMARY KEY (bucket, route, method, class)${indexesFor('request_stats')}
+)`,
+
+    // Who the traffic came from, so a breakdown of errors has something honest
+    // to be compared against.
+    //
+    // Separate from `request_stats` rather than more columns on it: that table
+    // is keyed by route, and multiplying route by browser by OS by device
+    // would turn a bounded table into a combinatorial one. Here the route is
+    // deliberately absent — this answers "what does our traffic look like",
+    // not "what does traffic to /checkout look like", and the first question
+    // is the one a baseline needs.
+    `CREATE TABLE IF NOT EXISTS traffic_facets (
+  bucket  ${t.int} NOT NULL,
+  facet   ${t.key(32)} NOT NULL,
+  value   ${t.key(64)} NOT NULL,
+  count   ${t.int} NOT NULL DEFAULT 0,
+  PRIMARY KEY (bucket, facet, value)${indexesFor('traffic_facets')}
 )`,
 
     // Every attempt to alert somebody, including the ones that were silenced.

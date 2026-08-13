@@ -34,6 +34,7 @@ import * as queries from './queries'
 import { BUCKET_MS, migrate } from './schema'
 import { changesOf, openDatabase, pick, upsertClause } from './db'
 import type { MonitorDatabase } from './db'
+import type { ParsedUserAgent } from '../shared/user-agent'
 
 export interface StoreOptions {
   /** Directory holding `monitor.db`. Created if missing. */
@@ -127,6 +128,8 @@ export class MonitorStore {
   private buffer: (MonitorEvent & { fingerprint: string })[] = []
   /** `bucket route method class` → count, aggregated between flushes. */
   private counters = new Map<string, number>()
+  /** `bucket facet value` → count. The traffic baseline for breakdowns. */
+  private trafficCounters = new Map<string, number>()
   private timer: ReturnType<typeof setInterval> | undefined
   private purgeTimer: ReturnType<typeof setInterval> | undefined
   private readonly flushSize: number
@@ -404,8 +407,50 @@ export class MonitorStore {
     }
   }
 
+  /**
+   * Counts one page view's browser and device.
+   *
+   * The baseline every breakdown is judged against. Aggregated in memory and
+   * written with everything else, for the same reason request counters are: a
+   * write per request is the opposite of what a monitoring tool should cost.
+   */
+  countTraffic(agent: ParsedUserAgent, at = Date.now()): void {
+    if (this.closed) {
+      return
+    }
+
+    const bucket = bucketOf(at, BUCKET_MS)
+
+    // Only the dimensions a breakdown can be taken by. `release` is absent on
+    // purpose: it describes the build serving the page, not the visitor, so a
+    // deploy would make every earlier release look like a vanished audience.
+    const dimensions: [string, string | undefined][] = [
+      ['browser', agent.browser],
+      ['browserVersion', agent.browserVersion],
+      ['os', agent.os],
+      ['osVersion', agent.osVersion],
+      ['deviceType', agent.deviceType],
+    ]
+
+    for (const [facet, value] of dimensions) {
+      if (!value) {
+        continue
+      }
+
+      const key = [bucket, facet, value].join(KEY_SEPARATOR)
+
+      this.trafficCounters.set(key, (this.trafficCounters.get(key) ?? 0) + 1)
+    }
+
+    if (this.trafficCounters.size > 5_000) {
+      void this.flushCounters()
+    }
+  }
+
   /** Writes buffered counters. */
   private async flushCounters(): Promise<void> {
+    await this.flushTrafficFacets()
+
     if (this.counters.size === 0) {
       return
     }
@@ -443,6 +488,58 @@ export class MonitorStore {
       }
 
       this.dropCountersIfHopeless()
+    }
+  }
+
+  /**
+   * Writes the traffic baseline.
+   *
+   * Its own transaction, separate from the request counters: these two are
+   * independent tallies, and a failure to write one must not roll back the
+   * other. On failure the batch is merged back, like the counters — a baseline
+   * with holes in it understates an audience and would make a slice look more
+   * concentrated than it is.
+   */
+  private async flushTrafficFacets(): Promise<void> {
+    if (this.trafficCounters.size === 0) {
+      return
+    }
+
+    const batch = this.trafficCounters
+    this.trafficCounters = new Map()
+
+    const upsert = this.statement('trafficFacets', `
+      INSERT INTO traffic_facets (bucket, facet, value, count)
+      VALUES (?, ?, ?, ?)
+      ${upsertClause(this.connection.dialect, 'traffic_facets', ['bucket', 'facet', 'value'], ['count = count + excluded.count'])}
+    `)
+
+    await this.db.exec('BEGIN')
+
+    try {
+      for (const [key, count] of batch) {
+        const [bucket, facet, value] = key.split(KEY_SEPARATOR)
+
+        await upsert.run(Number(bucket), facet!, value!, count)
+      }
+
+      await this.db.exec('COMMIT')
+    }
+    catch (error) {
+      await this.rollback()
+      console.error('[monitor] failed to flush traffic facets', error)
+
+      for (const [key, count] of batch) {
+        this.trafficCounters.set(key, (this.trafficCounters.get(key) ?? 0) + count)
+      }
+
+      if (this.trafficCounters.size > MAX_PENDING_COUNTERS) {
+        const excess = this.trafficCounters.size - MAX_PENDING_COUNTERS
+
+        for (const key of [...this.trafficCounters.keys()].slice(0, excess)) {
+          this.trafficCounters.delete(key)
+        }
+      }
     }
   }
 
@@ -1109,7 +1206,9 @@ export class MonitorStore {
     this.buffer = []
     this.counters.clear()
 
-    for (const table of ['events', 'issues', 'request_stats', 'notifications']) {
+    this.trafficCounters.clear()
+
+    for (const table of ['events', 'issues', 'request_stats', 'traffic_facets', 'notifications']) {
       await this.db.exec(`DELETE FROM ${table}`)
     }
   }
@@ -1122,8 +1221,13 @@ export class MonitorStore {
 
     // Counters are cheap and the chart is more useful with history, so they
     // are kept for longer than the events themselves.
-    await this.db.prepare('DELETE FROM request_stats WHERE bucket < ?')
-      .run(now - this.options.retentionDays * 3 * 24 * 60 * 60 * 1_000)
+    const counterCutoff = now - this.options.retentionDays * 3 * 24 * 60 * 60 * 1_000
+
+    await this.db.prepare('DELETE FROM request_stats WHERE bucket < ?').run(counterCutoff)
+    // Kept exactly as long as the request counters: both are the denominators
+    // that give the error numbers meaning, and a baseline that expired first
+    // would silently stop qualifying the breakdowns.
+    await this.db.prepare('DELETE FROM traffic_facets WHERE bucket < ?').run(counterCutoff)
     const issues = await this.db.prepare(`
       DELETE FROM issues
       WHERE fingerprint NOT IN (SELECT DISTINCT fingerprint FROM events)
@@ -1228,6 +1332,18 @@ export class MonitorStore {
    */
   exportRows(options: ExportOptions): AsyncGenerator<string> {
     return exportRows(this.db, options)
+  }
+
+  /**
+   * The traffic baseline over a window.
+   *
+   * Flushes first, like every other read: the counters buffered since the last
+   * write belong in the answer, and on a quiet application they may be most of
+   * it.
+   */
+  async trafficFacets(windowMs: number): Promise<MonitorFacetCounts> {
+    await this.flush()
+    return queries.trafficFacets(this.db, windowMs)
   }
 
   /** The alert delivery log, newest first. No flush: nothing buffers into it. */

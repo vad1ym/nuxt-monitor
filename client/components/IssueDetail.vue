@@ -194,12 +194,29 @@ async function expandFacets(): Promise<void> {
   await load({ keepSelection: true })
 }
 
-/** Failure here costs the comparison, not the page. */
+/**
+ * What the audience looks like, for judging this issue's breakdown against.
+ *
+ * Taken from counted page views, not from the facets of other errors. Those
+ * two were the same call until traffic facets existed, and the difference is
+ * the whole point of the comparison: measured against other errors, "90% of
+ * these are on Chrome" is confirmed by whichever browser is noisiest, and the
+ * one-line summary restated the shape of the error table rather than saying
+ * anything about this issue.
+ *
+ * Falls back to the error facets when no page views were counted — a fresh
+ * install, or an API-only application. A weaker baseline is still better than
+ * ranking slices by share alone, which has no notion of over-representation.
+ */
 async function loadBaseline(): Promise<void> {
   try {
-    baseline.value = (await api.facets()).facets
+    const answer = await api.facets(undefined, 24, undefined, true)
+    const counted = Object.values(answer.traffic ?? {}).some(group => group.values.length > 0)
+
+    baseline.value = counted ? answer.traffic! : answer.facets
   }
   catch {
+    // Failure here costs the comparison, not the page.
     baseline.value = null
   }
 }

@@ -31,7 +31,7 @@ import type { MonitorStore } from './store'
  */
 export class DisabledStore implements Pick<
   MonitorStore,
-  'capture' | 'countRequest' | 'flush' | 'close' | 'listIssues' | 'getIssue'
+  'capture' | 'countRequest' | 'countTraffic' | 'flush' | 'close' | 'listIssues' | 'getIssue'
   | 'getEvents' | 'facetCounts' | 'sessionCount' | 'eventCount' | 'overview'
   | 'setResolved' | 'setIgnored' | 'purge' | 'releases' | 'routes' | 'sessions' | 'health'
   | 'deliveries' | 'alerts' | 'exportRows'
@@ -44,6 +44,8 @@ export class DisabledStore implements Pick<
   }
 
   countRequest(): void {}
+
+  countTraffic(): void {}
 
   async flush(): Promise<void> {}
 
