@@ -14,10 +14,16 @@ import { formatShare } from '../chart'
  * Active values stay visible on the closed control, because a filter you
  * cannot see is a filter you cannot undo.
  */
+type Choices = Record<string, { label: string, icon: string }>
+
 const props = defineProps<{
   facets: MonitorFacetCounts | null
-  /** Open / Server / Client / Resolved / All / Ignored, keyed by id. */
-  scopes: Record<string, { label: string, icon: string }>
+  /** What we have decided about the issue: open, resolved, ignored. */
+  statuses: Choices
+  /** What sort of thing failed: an endpoint or a page. */
+  kinds: Choices
+  /** Where it ran, and how we found out. */
+  origins: Choices
   /** Order names, keyed by the value the API takes. */
   sorts: Record<string, string>
 }>()
@@ -28,13 +34,23 @@ const emit = defineEmits<{ expand: [] }>()
 const model = defineModel<MonitorFacetFilter>({ required: true })
 
 /**
- * Which slice of the list is in view.
+ * The three narrowings, each its own control.
  *
- * Lives here rather than in the sidebar: "open issues" and "issues on iOS" are
- * the same kind of question, and answering one from a menu and the other from
- * a dropdown made the sidebar look like five screens that are really one.
+ * One row of eight buttons — Open, API, Pages, Server, Client, Reported,
+ * Resolved, All, Ignored — rendered as a single enum and read as one. It was
+ * not: those are three unrelated dimensions sharing one key, so choosing "API"
+ * silently discarded "Open" and mixed resolved issues back in. Nobody asks for
+ * that; it was an artefact of the control.
+ *
+ * Three dropdowns instead, which combine: "open API failures on the server" is
+ * one sentence and three clicks that do not fight each other. They live here
+ * rather than in the sidebar because "open issues" and "issues on iOS" are the
+ * same kind of question, and answering one from a menu and the other from a
+ * dropdown made the sidebar look like five screens that are really one.
  */
-const scope = defineModel<string>('scope', { required: true })
+const status = defineModel<string>('status', { required: true })
+const type = defineModel<string>('type', { required: true })
+const origin = defineModel<string>('origin', { required: true })
 
 /**
  * Which end of the list is the top.
@@ -44,6 +60,49 @@ const scope = defineModel<string>('scope', { required: true })
  * would make the second one look like it belongs to something else.
  */
 const sort = defineModel<string>('sort', { required: true })
+
+/**
+ * The three controls, as data.
+ *
+ * Built here rather than written out three times in the template: they differ
+ * only in which options they offer and which model they set, and three
+ * near-identical popovers is where the next one quietly drifts from the other
+ * two.
+ *
+ * `active` decides whether the button is highlighted, and it is deliberately
+ * *not* "has a value" — each of these always has one. It is "has a value other
+ * than the one that narrows nothing", so the row shows at a glance which of
+ * the three are actually doing something.
+ */
+const choices = computed(() => [
+  {
+    key: 'status',
+    options: props.statuses,
+    value: status.value,
+    set: (value: string) => { status.value = value },
+    active: status.value !== 'open',
+    label: props.statuses[status.value]?.label ?? 'Status',
+    icon: props.statuses[status.value]?.icon ?? 'i-lucide-inbox',
+  },
+  {
+    key: 'type',
+    options: props.kinds,
+    value: type.value,
+    set: (value: string) => { type.value = value },
+    active: type.value !== 'any',
+    label: props.kinds[type.value]?.label ?? 'Any type',
+    icon: props.kinds[type.value]?.icon ?? 'i-lucide-shapes',
+  },
+  {
+    key: 'origin',
+    options: props.origins,
+    value: origin.value,
+    set: (value: string) => { origin.value = value },
+    active: origin.value !== 'any',
+    label: props.origins[origin.value]?.label ?? 'Anywhere',
+    icon: props.origins[origin.value]?.icon ?? 'i-lucide-globe',
+  },
+])
 
 /**
  * Kept to one line's worth.
@@ -135,24 +194,48 @@ function summary(name: MonitorFacetName, label: string): string {
 
 <template>
   <!-- Two rows, not one wrapping row.
-       These are different kinds of control — one decides which issues exist,
-       the other narrows them by dimension — and in a single flow the wrap fell
-       wherever the widths happened to land: the facets split across two lines
-       with a couple of scopes stranded beside them. -->
+       These are different kinds of control — the first decides which issues
+       exist, the second narrows them by dimension — and in a single flow the
+       wrap fell wherever the widths happened to land: the facets split across
+       two lines with a couple of scopes stranded beside them. -->
   <div class="space-y-2">
-    <!-- Separate buttons rather than a joined group: fused segments read as
-         one wide control and made the row look like an unbroken bar. -->
+    <!-- Three dropdowns rather than nine buttons. As one row they read as a
+         single enum, which they never were: status, type and origin are
+         unrelated questions, and sharing one key meant answering the second
+         threw away the first. -->
     <div class="flex flex-wrap items-center gap-1.5">
-      <UButton
-        v-for="(item, key) in scopes"
-        :key="key"
-        size="xs"
-        :color="scope === key ? 'primary' : 'neutral'"
-        :variant="scope === key ? 'subtle' : 'outline'"
-        :icon="item.icon"
-        :label="item.label"
-        @click="scope = key"
-      />
+      <UPopover v-for="choice in choices" :key="choice.key">
+        <UButton
+          size="xs"
+          :color="choice.active ? 'primary' : 'neutral'"
+          :variant="choice.active ? 'subtle' : 'outline'"
+          :icon="choice.icon"
+          :label="choice.label"
+          trailing-icon="i-lucide-chevron-down"
+        />
+
+        <template #content>
+          <ul class="w-48 p-1">
+            <li v-for="(item, key) in choice.options" :key="key">
+              <button
+                type="button"
+                class="w-full flex items-center gap-2 rounded px-2 py-1 text-left text-xs transition-colors cursor-pointer"
+                :class="choice.value === key ? 'text-highlighted bg-elevated/60' : 'text-toned hover:bg-elevated/40'"
+                :aria-pressed="choice.value === key"
+                @click="choice.set(String(key))"
+              >
+                <UIcon :name="item.icon" class="size-3.5 shrink-0 text-dimmed" />
+                {{ item.label }}
+                <UIcon
+                  name="i-lucide-check"
+                  class="ms-auto size-3 shrink-0"
+                  :class="choice.value === key ? 'text-primary' : 'opacity-0'"
+                />
+              </button>
+            </li>
+          </ul>
+        </template>
+      </UPopover>
     </div>
 
     <div class="flex flex-wrap items-center gap-1.5">

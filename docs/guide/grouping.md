@@ -70,8 +70,8 @@ a slice filters the occurrences below it.
 
 ## Endpoints, pages and assets
 
-Every issue is classified as `api`, `page` or `asset`, and the dashboard's
-filter bar has a scope for the first two.
+Every issue is classified as `api`, `page` or `asset`, and the issue list's
+**type** filter offers the first two.
 
 This exists because `side` — server or client — stops being the useful split as
 soon as an application has both. `/api/orders` returning 500 to every consumer
@@ -87,9 +87,11 @@ mounts its endpoints somewhere else: a browser navigating asks for `text/html`,
 Assets are their own kind rather than being forced into one of the other two: a
 missing image is not an endpoint failure and not a page failure.
 
-Both scopes sit alongside Server and Client rather than replacing them. They
-answer different questions, and an error thrown while rendering a page during
-SSR is genuinely both.
+Type and **origin** — server, browser, reported by hand — are separate
+filters rather than one list of choices, because they answer different
+questions and combine: an error thrown while rendering a page during SSR is
+genuinely both a page failure and a server one, and "open API failures on the
+server" is a question somebody actually asks.
 
 ## Judged against the traffic, not against other errors
 

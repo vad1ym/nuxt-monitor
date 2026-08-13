@@ -25,30 +25,67 @@ import OverviewDashboard from './components/OverviewDashboard.vue'
  * with a denominator of its own — keeps a screen under Traffic.
  */
 
+/**
+ * The three questions the list can be narrowed by, kept apart.
+ *
+ * They used to be one row of eight buttons — Open, API, Pages, Server, Client,
+ * Reported, Resolved, All, Ignored — which rendered as a single enum and read
+ * as one. It was not: those are three unrelated dimensions, and because they
+ * shared one key, choosing "API" silently threw away "Open" and showed
+ * resolved issues among the rest. Nobody would ask for that; it was an
+ * artefact of the control.
+ *
+ * Now each is its own dropdown, and they combine — "open API failures on the
+ * server" is one sentence and takes three clicks that do not fight each other.
+ *
+ *   status  what we have decided about it
+ *   kind    what sort of thing failed
+ *   origin  where it ran, and how we found out
+ */
 interface Scope { side?: string, resolved?: boolean, ignored?: boolean, manual?: boolean, kind?: string }
 
-const SCOPES: Record<string, { label: string, icon: string, value: Scope }> = {
-  'open': { label: 'Open', icon: 'i-lucide-inbox', value: { resolved: false } },
-  // Endpoints and pages rather than server and client: `side` says which
-  // machine ran the code, which stops being the useful split once an app has
-  // both. Alongside Server/Client below, not instead of them: `side` is not a facet,
-  // so dropping those scopes would remove the only way to ask the question at
-  // all. They answer different things — where the code ran, against what kind
-  // of thing it was serving — and an error in an API route rendered during SSR
-  // is genuinely both.
-  'api': { label: 'API', icon: 'i-lucide-plug', value: { kind: 'api' } },
-  'page': { label: 'Pages', icon: 'i-lucide-file-text', value: { kind: 'page' } },
-  'server': { label: 'Server', icon: 'i-lucide-server', value: { side: 'server' } },
-  'client': { label: 'Client', icon: 'i-lucide-monitor', value: { side: 'client' } },
-  // Reports raised by `exception()`. Beside the sides rather than at the end:
-  // "what did we decide to watch" is a question asked as often as "what broke
-  // on the server", and a list that mixes the two hides the smaller set.
-  'manual': { label: 'Reported', icon: 'i-lucide-flag', value: { manual: true } },
-  'resolved': { label: 'Resolved', icon: 'i-lucide-check', value: { resolved: true } },
-  'all': { label: 'All', icon: 'i-lucide-list', value: {} },
-  // Ignored issues are excluded from every other scope, so the only way back
-  // to one is a scope of its own.
-  'ignored': { label: 'Ignored', icon: 'i-lucide-bell-off', value: { ignored: true } },
+/**
+ * What we have decided about an issue: the only truly exclusive dimension
+ * here, since an issue cannot be both open and resolved.
+ *
+ * Ignored issues are excluded from every other status, so the only way back to
+ * one is to ask for it.
+ */
+const STATUSES: Record<string, { label: string, icon: string, value: Scope }> = {
+  open: { label: 'Open', icon: 'i-lucide-inbox', value: { resolved: false } },
+  resolved: { label: 'Resolved', icon: 'i-lucide-check', value: { resolved: true } },
+  ignored: { label: 'Ignored', icon: 'i-lucide-bell-off', value: { ignored: true } },
+  all: { label: 'Any status', icon: 'i-lucide-list', value: {} },
+}
+
+/**
+ * What sort of thing failed.
+ *
+ * Endpoints and pages rather than server and client: `side` says which machine
+ * ran the code, which stops being the useful split once an application has
+ * both. `/api/orders` returning 500 to every consumer and `/checkout` failing
+ * to render are both "a server error" and are not the same problem.
+ */
+const KINDS: Record<string, { label: string, icon: string, value: Scope }> = {
+  any: { label: 'Any type', icon: 'i-lucide-shapes', value: {} },
+  api: { label: 'API', icon: 'i-lucide-plug', value: { kind: 'api' } },
+  page: { label: 'Pages', icon: 'i-lucide-file-text', value: { kind: 'page' } },
+}
+
+/**
+ * Where the code ran, and how we found out.
+ *
+ * `Reported` belongs here rather than among the statuses, which is where it
+ * used to sit and where it made no sense: it is not something anybody decided
+ * about the issue, it is how the issue arrived — somebody called `exception()`
+ * instead of the code throwing. That is the same kind of fact as "this ran on
+ * the server", and it is asked as often.
+ */
+const ORIGINS: Record<string, { label: string, icon: string, value: Scope }> = {
+  any: { label: 'Anywhere', icon: 'i-lucide-globe', value: {} },
+  server: { label: 'Server', icon: 'i-lucide-server', value: { side: 'server' } },
+  client: { label: 'Browser', icon: 'i-lucide-monitor', value: { side: 'client' } },
+  manual: { label: 'Reported by hand', icon: 'i-lucide-flag', value: { manual: true } },
 }
 
 /**
@@ -123,7 +160,9 @@ const route = readRoute()
 
 const view = ref<View>(route.view)
 const selected = ref<string | null>(route.issue)
-const scope = ref(route.scope)
+const status = ref(route.status)
+const type = ref(route.type)
+const origin = ref(route.origin)
 const search = ref(route.search)
 const filter = ref<MonitorFacetFilter>(route.filter)
 const hours = ref(route.hours)
@@ -134,7 +173,11 @@ const PAGE = 50
 const shown = ref(PAGE)
 
 const query = computed(() => ({
-  ...(SCOPES[scope.value]?.value ?? {}),
+  // Merged, so the three combine into one question rather than replacing each
+  // other — which is what a single `scope` key forced them to do.
+  ...(STATUSES[status.value]?.value ?? {}),
+  ...(KINDS[type.value]?.value ?? {}),
+  ...(ORIGINS[origin.value]?.value ?? {}),
   sort: sort.value,
   search: search.value.trim() || undefined,
   limit: shown.value,
@@ -164,7 +207,9 @@ const hasMore = computed(() => issues.value.length < total.value)
 const narrowed = computed(() =>
   Boolean(search.value.trim())
   || Object.keys(filter.value).length > 0
-  || scope.value !== 'open',
+  || status.value !== 'open'
+  || type.value !== 'any'
+  || origin.value !== 'any',
 )
 
 /**
@@ -251,7 +296,9 @@ function show(next: View): void {
 function clearNarrowing(): void {
   search.value = ''
   filter.value = {}
-  scope.value = 'open'
+  status.value = 'open'
+  type.value = 'any'
+  origin.value = 'any'
 }
 
 /** Typing should not fire a request per keystroke. */
@@ -264,7 +311,7 @@ watch([query, filter], () => {
 
 // A narrower list starts from the top: keeping page four of the previous
 // question would show an empty screen that looks like "no results".
-watch([scope, search, filter, sort], () => {
+watch([status, type, origin, search, filter, sort], () => {
   shown.value = PAGE
 }, { deep: true })
 
@@ -277,7 +324,7 @@ watch([scope, search, filter, sort], () => {
  */
 let applyingRoute = false
 
-watch([view, selected, scope, search, filter, hours, sort], ([, , , next], [, , , previous]) => {
+watch([view, selected, status, type, origin, search, filter, hours, sort], ([, , , , , next], [, , , , , previous]) => {
   if (applyingRoute) {
     return
   }
@@ -285,7 +332,9 @@ watch([view, selected, scope, search, filter, hours, sort], ([, , , next], [, , 
   const hash = writeRoute({
     view: view.value,
     issue: selected.value,
-    scope: scope.value,
+    status: status.value,
+    type: type.value,
+    origin: origin.value,
     search: search.value,
     filter: filter.value,
     hours: hours.value,
@@ -309,7 +358,9 @@ function applyRoute(): void {
 
   view.value = next.view
   selected.value = next.issue
-  scope.value = next.scope
+  status.value = next.status
+  type.value = next.type
+  origin.value = next.origin
   search.value = next.search
   filter.value = next.filter
   hours.value = next.hours
@@ -488,10 +539,14 @@ onMounted(async () => {
                    beside the things that change the screen. -->
               <IssueFilters
                 v-model="filter"
-                v-model:scope="scope"
+                v-model:status="status"
+                v-model:type="type"
+                v-model:origin="origin"
                 v-model:sort="sort"
                 :facets="facets"
-                :scopes="SCOPES"
+                :statuses="STATUSES"
+                :kinds="KINDS"
+                :origins="ORIGINS"
                 :sorts="SORTS"
                 class="mb-4"
                 @expand="expandFacets"

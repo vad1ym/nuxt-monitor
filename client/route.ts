@@ -33,7 +33,22 @@ export interface RouteState {
   view: View
   /** Fingerprint of the open issue, when one is. */
   issue: string | null
-  scope: string
+  /**
+   * The three independent narrowings of the issue list.
+   *
+   * One key each rather than a single `scope`, because they are three
+   * different questions and combining them is the point — a single key made
+   * "open API failures" unaskable, since choosing one silently dropped the
+   * other.
+   */
+  status: string
+  /**
+   * Endpoint or page. Named `type` in the URL rather than `kind`, which is
+   * already a facet: two different narrowings writing one parameter would
+   * silently overwrite each other.
+   */
+  type: string
+  origin: string
   search: string
   filter: MonitorFacetFilter
   hours: number
@@ -44,7 +59,9 @@ export interface RouteState {
 const DEFAULTS: RouteState = {
   view: 'overview',
   issue: null,
-  scope: 'open',
+  status: 'open',
+  type: 'any',
+  origin: 'any',
   search: '',
   filter: {},
   hours: 24,
@@ -81,7 +98,9 @@ export function readRoute(hash = window.location.hash): RouteState {
     view,
     // `#/issues/<fingerprint>` opens one; `#/issues` is the list.
     issue: view === 'issues' && tail ? decodeURIComponent(tail) : null,
-    scope: params.get('scope') ?? DEFAULTS.scope,
+    status: params.get('status') ?? DEFAULTS.status,
+    type: params.get('type') ?? DEFAULTS.type,
+    origin: params.get('origin') ?? DEFAULTS.origin,
     search: params.get('q') ?? DEFAULTS.search,
     filter,
     hours: Number.isFinite(hours) && hours > 0 ? hours : DEFAULTS.hours,
@@ -102,9 +121,15 @@ export function writeRoute(state: RouteState): string {
 
   const params = new URLSearchParams()
 
-  // Scope only qualifies the issue list, and only when it is not the default.
-  if (state.view === 'issues' && !state.issue && state.scope !== DEFAULTS.scope) {
-    params.set('scope', state.scope)
+  // These only qualify the issue list, and only when not at their default —
+  // so the common address stays `#/issues` rather than carrying three
+  // redundant parameters.
+  if (state.view === 'issues' && !state.issue) {
+    for (const key of ['status', 'type', 'origin'] as const) {
+      if (state[key] !== DEFAULTS[key]) {
+        params.set(key, state[key])
+      }
+    }
   }
 
   if (state.search) {
