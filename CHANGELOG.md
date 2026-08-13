@@ -1,6 +1,42 @@
 # Changelog
 
 
+## v0.1.4
+
+[compare changes](https://github.com/vad1ym/nuxt-monitor/compare/v0.1.3...v0.1.4)
+
+### 🚀 Enhancements
+
+- **notify:** Alerts to Telegram and webhooks, with the rules that keep them wanted ([90f8ad7](https://github.com/vad1ym/nuxt-monitor/commit/90f8ad7))
+- **dashboard:** A notifications screen, and credentials that stay out of the build ([907cde9](https://github.com/vad1ym/nuxt-monitor/commit/907cde9))
+- **exception:** Report what does not throw, and route it by group ([ea857c6](https://github.com/vad1ym/nuxt-monitor/commit/ea857c6))
+- **sampling:** Stop writing the fiftieth copy, keep the count exact ([6654783](https://github.com/vad1ym/nuxt-monitor/commit/6654783))
+- Export and CLI, and endpoints told apart from pages ([1bb19ad](https://github.com/vad1ym/nuxt-monitor/commit/1bb19ad))
+- **groups:** Name parts of the app by rule, and watch the ones that matter ([6e9138e](https://github.com/vad1ym/nuxt-monitor/commit/6e9138e))
+- **traffic:** Judge a breakdown against the audience, not against other errors ([a4a16e3](https://github.com/vad1ym/nuxt-monitor/commit/a4a16e3))
+- **uptime:** Tell a quiet night from a dead process ([1f23a58](https://github.com/vad1ym/nuxt-monitor/commit/1f23a58))
+- **stats:** A statistics screen, with uptime as a row of calm days inside it ([8564097](https://github.com/vad1ym/nuxt-monitor/commit/8564097))
+- **overview:** One dashboard, where every count carries its denominator ([f4e0dd3](https://github.com/vad1ym/nuxt-monitor/commit/f4e0dd3))
+- **overview:** One tabbed table where traffic and errors sit in the same row ([ac30c4d](https://github.com/vad1ym/nuxt-monitor/commit/ac30c4d))
+- **issues:** Filter by group ([6d979f6](https://github.com/vad1ym/nuxt-monitor/commit/6d979f6))
+
+### 🩹 Fixes
+
+- **proxy:** Stop dropping every browser error behind a reverse proxy ([4f0b087](https://github.com/vad1ym/nuxt-monitor/commit/4f0b087))
+- **overview:** Rings that say what they are, and the incident above the fold ([05aab13](https://github.com/vad1ym/nuxt-monitor/commit/05aab13))
+
+### 🎨 Styles
+
+- **overview:** Pair the two short lists into one row ([2bdc1ba](https://github.com/vad1ym/nuxt-monitor/commit/2bdc1ba))
+- **filters:** Scopes on one row, facets on the next ([252ff46](https://github.com/vad1ym/nuxt-monitor/commit/252ff46))
+- **shell:** Pin the sidebar, scroll only the content ([1067c0e](https://github.com/vad1ym/nuxt-monitor/commit/1067c0e))
+- **issues:** Kind and status in one badge, labels aligned right ([b9411c4](https://github.com/vad1ym/nuxt-monitor/commit/b9411c4))
+- **issues:** The request as one badge, method to status ([bd70c92](https://github.com/vad1ym/nuxt-monitor/commit/bd70c92))
+
+### ❤️ Contributors
+
+- Vadym Bulakh ([@vad1ym](https://github.com/vad1ym))
+
 ## v0.1.3
 
 [compare changes](https://github.com/vad1ym/nuxt-monitor/compare/v0.1.2...v0.1.3)
