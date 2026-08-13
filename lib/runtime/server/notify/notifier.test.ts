@@ -329,6 +329,117 @@ describe('the delivery log', () => {
   })
 })
 
+describe('slack', () => {
+  it('posts blocks to an incoming webhook', async () => {
+    store = await open({
+      channels: [{ type: 'slack', webhookUrl: 'https://hooks.slack.com/services/T/B/x' }],
+    })
+    store.capture(makeEvent())
+    await store.flush()
+    await store.alerts!.settled()
+
+    expect(sent[0]!.url).toBe('https://hooks.slack.com/services/T/B/x')
+    expect(sent[0]!.body.blocks).toBeInstanceOf(Array)
+    // The preview text travels with the blocks; without it the phone
+    // notification is blank.
+    expect(sent[0]!.body.text).toContain('New issue')
+  })
+
+  it('posts through the API when given a token and a channel', async () => {
+    vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+      sent.push({ url, body: JSON.parse(String(init.body)) })
+
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+
+    store = await open({
+      channels: [{ type: 'slack', token: 'xoxb-test', channel: '#alerts' }],
+    })
+    store.capture(makeEvent())
+    await store.flush()
+    await store.alerts!.settled()
+
+    expect(sent[0]!.url).toBe('https://slack.com/api/chat.postMessage')
+    expect(sent[0]!.body.channel).toBe('#alerts')
+    expect((await store.deliveries())[0]?.status).toBe('sent')
+  })
+
+  /**
+   * The one failure this feature cannot afford to hide.
+   *
+   * `chat.postMessage` answers 200 with `ok: false` for everything that
+   * actually goes wrong — a revoked token, a bot that was removed from the
+   * channel. Trusting the status alone would write "sent" to the log for a
+   * message nobody received, and the log is what people consult when asking
+   * why they were never told.
+   */
+  it('treats a 200 carrying ok:false as a failure', async () => {
+    vi.stubGlobal('fetch', async () =>
+      new Response(JSON.stringify({ ok: false, error: 'not_in_channel' }), { status: 200 }))
+
+    store = await open({
+      channels: [{ type: 'slack', token: 'xoxb-test', channel: '#alerts' }],
+    })
+    store.capture(makeEvent())
+    await store.flush()
+    await store.alerts!.settled()
+
+    const [delivery] = await store.deliveries()
+
+    expect(delivery?.status).toBe('failed')
+    // Slack's own word for it: the fix is to invite the bot, and no paraphrase
+    // of ours would say that as precisely.
+    expect(delivery?.detail).toContain('not_in_channel')
+  })
+
+  it('sends once when a channel carries both a hook and a token', async () => {
+    store = await open({
+      channels: [{
+        type: 'slack',
+        webhookUrl: 'https://hooks.slack.com/services/T/B/x',
+        token: 'xoxb-test',
+        channel: '#alerts',
+      }],
+    })
+    store.capture(makeEvent())
+    await store.flush()
+    await store.alerts!.settled()
+
+    expect(sent).toHaveLength(1)
+    expect(sent[0]!.url).toContain('hooks.slack.com')
+  })
+
+  it('skips a token with no channel to post to', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    store = await open({ channels: [{ type: 'slack', token: 'xoxb-test' }] })
+    store.capture(makeEvent())
+    await store.flush()
+
+    // No `settled()` here: an unusable channel leaves the notifier unbuilt
+    // altogether, which is the assertion.
+    expect(store.alerts).toBeUndefined()
+    expect(sent).toHaveLength(0)
+    expect(warn.mock.calls.flat().join(' ')).toContain('channel')
+    warn.mockRestore()
+  })
+
+  it('takes its credentials from the runtime when the channel leaves them off', async () => {
+    // The reason these exist: a channel is an array entry, and `NUXT_MONITOR_*`
+    // cannot reach into a list — so a hook URL would otherwise have to be
+    // written in the config file and baked into the build.
+    store = await open({
+      channels: [{ type: 'slack' }],
+      slackWebhookUrl: 'https://hooks.slack.com/services/from/env',
+    })
+    store.capture(makeEvent())
+    await store.flush()
+    await store.alerts!.settled()
+
+    expect(sent[0]!.url).toBe('https://hooks.slack.com/services/from/env')
+  })
+})
+
 describe('the test alert', () => {
   it('goes out immediately, without a trigger or a group window', async () => {
     store = await open({ groupWindowSeconds: 30 })

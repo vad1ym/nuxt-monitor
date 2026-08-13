@@ -309,14 +309,18 @@ export interface MonitorNotificationOptions {
    *
    * `databaseUrl` is read at runtime for exactly this reason, and a bot token
    * deserves the same treatment. Set `NUXT_MONITOR_TELEGRAM_TOKEN`,
-   * `NUXT_MONITOR_TELEGRAM_CHAT_ID` or `NUXT_MONITOR_WEBHOOK_URL` when the
-   * server starts and leave the corresponding field off the channel.
+   * `NUXT_MONITOR_TELEGRAM_CHAT_ID`, `NUXT_MONITOR_SLACK_WEBHOOK_URL`,
+   * `NUXT_MONITOR_SLACK_TOKEN` or `NUXT_MONITOR_WEBHOOK_URL` when the server
+   * starts and leave the corresponding field off the channel.
    *
    * A value here fills in only where the channel left one blank, so a config
    * that does spell out a token keeps working.
    */
   telegramToken?: string
   telegramChatId?: string
+  /** A Slack incoming webhook URL is a credential: holding it is posting rights. */
+  slackWebhookUrl?: string
+  slackToken?: string
   webhookUrl?: string
 }
 
@@ -329,6 +333,7 @@ export interface MonitorNotificationOptions {
  */
 export type MonitorChannelOptions =
   | MonitorTelegramChannel
+  | MonitorSlackChannel
   | MonitorWebhookChannel
 
 interface MonitorChannelBase {
@@ -384,6 +389,49 @@ export interface MonitorWebhookChannel extends MonitorChannelBase {
   url?: string
   /** Extra headers, for a signature or a bearer token. */
   headers?: Record<string, string>
+}
+
+/**
+ * Slack, by either of the two ways it accepts a message.
+ *
+ * An incoming webhook is a URL with the destination channel baked into it, set
+ * up in about a minute and needing no app, no scopes and no token. A bot token
+ * needs all three, and buys the one thing the webhook cannot do: send to
+ * several channels from one credential — the payments alerts to `#payments`
+ * and everything else to `#alerts` without creating a second hook.
+ *
+ * Both are the same channel type rather than two, because they differ only in
+ * where the message is posted. The message itself, what qualifies for it and
+ * everything above delivery is identical, and splitting the type would have
+ * duplicated all of that to express the choice of endpoint.
+ */
+export interface MonitorSlackChannel extends MonitorChannelBase {
+  type: 'slack'
+  /**
+   * Incoming webhook URL, `https://hooks.slack.com/services/…`.
+   *
+   * Prefer leaving this unset and supplying `NUXT_MONITOR_NOTIFICATIONS_SLACK_WEBHOOK_URL`
+   * at runtime: the URL is a credential — anyone holding it can post to the
+   * channel — and a value written here is baked into the build artefact.
+   */
+  webhookUrl?: string
+  /**
+   * Bot token, `xoxb-…`, for `chat.postMessage`.
+   *
+   * Needs the `chat:write` scope, and the bot has to be a member of the target
+   * channel — Slack answers `not_in_channel` otherwise, which the delivery log
+   * reports verbatim. Ignored when `webhookUrl` is set: a hook already names
+   * its destination, so honouring both would mean sending twice.
+   */
+  token?: string
+  /**
+   * Where the bot posts: `#alerts`, or a channel id like `C0123456789`.
+   *
+   * Required alongside `token` and meaningless without it. An id survives the
+   * channel being renamed; a name is what people can actually read in a config
+   * file, so both are accepted.
+   */
+  channel?: string
 }
 
 export interface MonitorTriggerOptions {

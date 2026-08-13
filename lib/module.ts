@@ -96,11 +96,13 @@ export default defineNuxtModule<MonitorOptions>({
           // Spelled out with `?? ''` for the same reason `databaseUrl` is: Nuxt
           // only applies a `NUXT_*` override to a key already present in
           // `runtimeConfig`, and `defu` drops `undefined` outright. Without
-          // these three keys existing, `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN`
+          // these keys existing, `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN`
           // is silently ignored and the only place left for a bot token is the
           // config file — where it is baked into the build artefact.
           telegramToken: options.notifications?.telegramToken ?? '',
           telegramChatId: options.notifications?.telegramChatId ?? '',
+          slackWebhookUrl: options.notifications?.slackWebhookUrl ?? '',
+          slackToken: options.notifications?.slackToken ?? '',
           webhookUrl: options.notifications?.webhookUrl ?? '',
           dashboardUrl: options.notifications?.dashboardUrl ?? '',
         },

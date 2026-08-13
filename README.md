@@ -55,7 +55,7 @@ Requires Node 22.13+ (`node:sqlite`) and Nuxt 4.
   first frame in your own code — so a message carrying an id does not become a
   thousand issues.
 - **Breakdown** by browser, OS, device, release, route and session.
-- **Alerts to Telegram or a webhook** on a new issue, a regression or an issue
+- **Alerts to Slack, Telegram or a webhook** on a new issue, a regression or an issue
   growing — with a per-issue cooldown, grouping and quiet hours, because the
   version without those is the version people mute on the first day.
 - **`exception()` for what does not throw.** A payment that does not reconcile

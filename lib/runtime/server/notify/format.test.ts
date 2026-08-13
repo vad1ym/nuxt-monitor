@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MonitorAlert, MonitorIssue } from '../../../types'
-import { formatMarkdown, formatText } from './format'
+import type { SlackBlock } from './format'
+import { formatMarkdown, formatSlack, formatText } from './format'
 
 const NOW = 1_700_000_000_000
 const DASHBOARD = 'https://app.example.com/_monitor'
@@ -114,6 +115,90 @@ describe('formatMarkdown', () => {
   it('escapes a backslash in the message body', () => {
     expect(formatMarkdown([alert({ message: 'C:\\path' })], DASHBOARD))
       .toContain('C:\\\\path')
+  })
+})
+
+describe('formatSlack', () => {
+  /** Every block of a kind, flattened to text — the assertions read better than a path. */
+  function texts(blocks: SlackBlock[]): string[] {
+    return blocks.flatMap((block) => {
+      const own = (block.text as { text?: string } | undefined)?.text
+      const elements = (block.elements as { text?: string | { text?: string }, url?: string }[] | undefined) ?? []
+
+      return [
+        ...(own ? [own] : []),
+        ...elements.map(element =>
+          typeof element.text === 'string' ? element.text : element.text?.text ?? ''),
+      ]
+    })
+  }
+
+  it('leads with a header naming what happened', () => {
+    const { blocks } = formatSlack([alert({ culprit: 'cart.ts:12' })], DASHBOARD)
+
+    expect(blocks[0]!.type).toBe('header')
+    expect(texts(blocks)[0]).toContain('New issue')
+    expect(texts(blocks).join('\n')).toContain('cart.total is not a function')
+    expect(texts(blocks).join('\n')).toContain('`cart.ts:12`')
+  })
+
+  it('carries a text summary for the notification preview', () => {
+    // What Slack shows on a phone and in the sidebar. Blocks are not rendered
+    // there, so a message with only blocks arrives as a blank line.
+    const { text } = formatSlack([alert()], DASHBOARD)
+
+    expect(text).toContain('New issue')
+    expect(text).toContain('cart.total is not a function')
+  })
+
+  it('offers the issue as a button rather than a bare URL', () => {
+    const { blocks } = formatSlack([alert()], DASHBOARD)
+    const actions = blocks.find(block => block.type === 'actions')
+    const [button] = actions!.elements as { url: string, text: { text: string } }[]
+
+    expect(button!.url).toBe(`${DASHBOARD}/issues/abc123`)
+    expect(button!.text.text).toBe('Open issue')
+  })
+
+  it('points a test alert at the dashboard, which exists', () => {
+    const { blocks } = formatSlack([alert({}, 'test')], DASHBOARD)
+    const actions = blocks.find(block => block.type === 'actions')
+    const [button] = actions!.elements as { url: string, text: { text: string } }[]
+
+    expect(button!.url).toBe(DASHBOARD)
+    expect(button!.text.text).toBe('Open dashboard')
+  })
+
+  it('qualifies the error on a context line', () => {
+    const { blocks } = formatSlack(
+      [alert({ side: 'client', group: 'payments', method: 'POST', route: '/api/checkout/pay' })],
+      DASHBOARD,
+    )
+    const context = blocks.find(block => block.type === 'context')
+
+    expect(texts([context!]).join('')).toBe('client · payments · POST /api/checkout/pay')
+  })
+
+  it('summarises the tail rather than listing every alert', () => {
+    const many = Array.from({ length: 8 }, (_, index) => alert({ fingerprint: `fp${index}` }))
+    const rendered = texts(formatSlack(many, DASHBOARD).blocks).join('\n')
+
+    expect(rendered).toContain('8 × New issue')
+    expect(rendered).toContain('…and 3 more.')
+  })
+
+  it('escapes the three characters Slack consumes, and no others', () => {
+    const { blocks } = formatSlack([alert({ message: 'Cannot read <anonymous> & co.' })], DASHBOARD)
+    const rendered = texts(blocks).join('\n')
+
+    expect(rendered).toContain('Cannot read &lt;anonymous&gt; &amp; co.')
+    // Over-escaping is the real hazard: Slack renders a backslash before a dot
+    // literally, so Telegram's rule applied here would litter every message.
+    expect(rendered).not.toContain('\\.')
+  })
+
+  it('renders nothing to send when the batch is empty', () => {
+    expect(formatSlack([], DASHBOARD).blocks).toEqual([])
   })
 })
 

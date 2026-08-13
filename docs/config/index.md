@@ -224,9 +224,18 @@ Where alerts go, and what is worth one. Off until a channel is configured. See
 | `notifications.triggers.thresholds` | `number[]` | `[10, 100, 1000]` |
 | `notifications.quietHours` | `{ from, to, timezone?, days? }` | — |
 
-A channel is `{ type: 'telegram', token?, chatId? }` or
-`{ type: 'webhook', url?, headers? }`, each with an optional `name` for the
-delivery log and `enabled: false` to keep it configured but silent. Leave the
+A channel is one of:
+
+| Type | Fields |
+| --- | --- |
+| `telegram` | `token?`, `chatId?` |
+| `slack` | `webhookUrl?`, or `token?` with `channel?` |
+| `webhook` | `url?`, `headers?` |
+
+Each also takes an optional `name` for the delivery log and `enabled: false` to
+keep it configured but silent. A Slack channel given both a `webhookUrl` and a
+`token` uses the hook — it already names its destination, so honouring both
+would post the same alert twice. Leave the
 credentials off and supply them through the environment — see
 [Secrets](../guide/notifications#secrets) for why that is not just a preference.
 
@@ -321,6 +330,8 @@ start-up by the matching `NUXT_MONITOR_*` variable, with nesting spelled as `_`.
 | `NUXT_MONITOR_NOTIFICATIONS_DASHBOARD_URL` | Where alert links point |
 | `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN` | Telegram bot token |
 | `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_CHAT_ID` | Telegram chat id |
+| `NUXT_MONITOR_NOTIFICATIONS_SLACK_WEBHOOK_URL` | Slack incoming webhook URL |
+| `NUXT_MONITOR_NOTIFICATIONS_SLACK_TOKEN` | Slack bot token |
 | `NUXT_MONITOR_NOTIFICATIONS_WEBHOOK_URL` | Webhook URL |
 
 These are read when the server starts, which is what makes one build deployable

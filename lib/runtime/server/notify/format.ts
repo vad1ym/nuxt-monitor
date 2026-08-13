@@ -52,6 +52,162 @@ export function formatMarkdown(alerts: MonitorAlert[], dashboardUrl: string): st
   })
 }
 
+/** Loose on purpose: Block Kit has many block types and we emit four. */
+export type SlackBlock = Record<string, unknown>
+
+/**
+ * The header's emoji, by reason.
+ *
+ * A channel is read by scanning, and colour is the fastest thing to scan. The
+ * distinction that matters is regression against the rest: everything else is
+ * news, that one is a claim somebody made turning out to be false.
+ */
+const ICON: Record<MonitorAlertReason, string> = {
+  'new-issue': '🔴',
+  'regression': '🔁',
+  'threshold': '📈',
+  'watched': '👀',
+  'test': '✅',
+}
+
+/**
+ * Slack Block Kit.
+ *
+ * Structure rather than a string, which is why this is its own function and not
+ * another `Markup`: the others differ in how they decorate one rendered line,
+ * and Slack's difference is that there are no lines — there are blocks, and the
+ * link is a button rather than text.
+ *
+ * Worth the extra shape because of where these are read. A Slack alert lands in
+ * a channel among other people's messages, and a paragraph of plain text scrolls
+ * past as one more of them; a header and a button read as an alert at a glance.
+ *
+ * The `text` alongside is not a fallback nobody sees — it is what Slack puts in
+ * the phone notification and the sidebar preview, which for most readers is the
+ * only part they read before deciding whether to open it.
+ */
+export function formatSlack(alerts: MonitorAlert[], dashboardUrl: string): {
+  text: string
+  blocks: SlackBlock[]
+} {
+  const text = formatText(alerts, dashboardUrl)
+
+  if (alerts.length === 0) {
+    return { text, blocks: [] }
+  }
+
+  const blocks: SlackBlock[] = [{
+    type: 'header',
+    // `plain_text` is literal — no escaping, and no markup either, so the
+    // emoji has to carry the severity on its own.
+    text: { type: 'plain_text', text: `${ICON[alerts[0]!.reason]} ${summary(alerts)}`, emoji: true },
+  }]
+
+  for (const alert of alerts.slice(0, MAX_LISTED)) {
+    blocks.push({
+      type: 'section',
+      text: { type: 'mrkdwn', text: slackLine(alert) },
+    })
+
+    const context = slackContext(alert)
+
+    if (context) {
+      // A context block is smaller and greyer than a section, which is exactly
+      // the weight this deserves: it qualifies the error rather than stating it.
+      blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: context }] })
+    }
+  }
+
+  if (alerts.length > MAX_LISTED) {
+    blocks.push({
+      type: 'context',
+      elements: [{ type: 'mrkdwn', text: `…and ${alerts.length - MAX_LISTED} more.` }],
+    })
+  }
+
+  const link = issueLink(alerts, dashboardUrl)
+
+  if (link) {
+    const toIssue = link.includes('/issues/')
+
+    blocks.push({
+      type: 'actions',
+      elements: [{
+        type: 'button',
+        text: { type: 'plain_text', text: toIssue ? 'Open issue' : 'Open dashboard' },
+        url: link,
+      }],
+    })
+  }
+
+  return { text, blocks }
+}
+
+/** The error itself: what broke, and where. */
+function slackLine(alert: MonitorAlert): string {
+  const { issue } = alert
+  const where = issue.culprit || issue.route
+
+  const label = issue.manual
+    ? [issue.group, issue.level].filter(Boolean).join('/') || 'exception'
+    : issue.type
+
+  const parts = [
+    `*${escapeSlack(label)}*`,
+    escapeSlack(truncate(issue.message, MAX_MESSAGE)),
+  ]
+
+  if (where) {
+    // Escaped inside the backticks, not around them: the markup is ours and
+    // must survive, the value is not and must not.
+    parts.push(`\`${escapeSlack(where)}\``)
+  }
+
+  return parts.join(' ')
+}
+
+/**
+ * The qualifiers, on their own quieter line.
+ *
+ * Deliberately not the release: an issue does not carry one, and a context line
+ * that invents a version is worse than one that omits it.
+ */
+function slackContext(alert: MonitorAlert): string {
+  const { issue } = alert
+
+  const parts: string[] = [issue.side]
+
+  if (issue.group) {
+    parts.push(issue.group)
+  }
+
+  if (issue.method && issue.route) {
+    parts.push(`${issue.method} ${issue.route}`)
+  }
+
+  if (alert.reason === 'threshold') {
+    parts.push(`${issue.count} occurrences`)
+  }
+
+  return parts.map(escapeSlack).join(' · ')
+}
+
+/**
+ * Slack's three, and only those three.
+ *
+ * `mrkdwn` is not Markdown: it reserves almost nothing, and over-escaping is
+ * the real hazard — a backslash before a dot is rendered as a backslash and a
+ * dot, so applying Telegram's rule here would litter every message. What Slack
+ * does consume is the HTML-ish trio, and an unescaped `<` in `Cannot read
+ * <anonymous>` swallows everything to the next `>`.
+ */
+function escapeSlack(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 interface Markup {
   bold: (value: string) => string
   code: (value: string) => string

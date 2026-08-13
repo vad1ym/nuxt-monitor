@@ -36,6 +36,58 @@ Then open the dashboard's Notifications section and send a test. A token and a
 chat id copied by hand are wrong often enough that finding out during the first
 real incident is not a risk worth taking.
 
+## Slack in two minutes
+
+An incoming webhook is the short way, and the one to use unless you need the
+other. It needs no bot token and no scopes, and the channel is chosen when you
+create the hook.
+
+1. Open [your Slack apps](https://api.slack.com/apps), create an app in the
+   workspace, and turn on **Incoming Webhooks**.
+2. **Add New Webhook to Workspace**, pick the channel, and copy the URL.
+3. Put it in the environment and restart.
+
+```ts
+notifications: {
+  channels: [{ type: 'slack' }],
+  dashboardUrl: 'https://app.example.com/_monitor',
+}
+```
+
+```bash
+NUXT_MONITOR_NOTIFICATIONS_SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T…/B…/…
+```
+
+The URL is a credential: anyone holding it can post to that channel. Treat it
+like the bot token it replaces, and keep it out of the config file — a value
+written there is resolved at build time and ends up inside the build artefact.
+
+### A bot token instead
+
+Worth the extra setup for one thing: several channels from one credential —
+payments alerts to `#payments` and the rest to `#alerts`, without creating a
+second hook for each.
+
+Give the app the `chat:write` scope, install it, and **invite the bot to every
+channel it posts to** — Slack answers `not_in_channel` otherwise, which the
+delivery log shows verbatim.
+
+```ts
+channels: [
+  { type: 'slack', name: 'payments', channel: '#payments', groups: ['payments'] },
+  { type: 'slack', name: 'engineering', channel: '#alerts' },
+]
+```
+
+```bash
+NUXT_MONITOR_NOTIFICATIONS_SLACK_TOKEN=xoxb-…
+```
+
+A channel carrying both a webhook URL and a token uses the webhook: a hook
+already names its destination, so honouring both would post the alert twice.
+
+Then open the dashboard's Notifications section and send a test.
+
 ## What raises an alert
 
 Three triggers, all on by default:
@@ -103,7 +155,9 @@ silently.
 
 ## Webhooks
 
-For anything Telegram is not — Slack via a workflow, a pager, your own router.
+For anything the built-in channels are not — a pager, an incident tool, your
+own router. Slack has [a channel of its own](#slack-in-two-minutes); it does not
+need one of these.
 
 ```ts
 // The URL comes from NUXT_MONITOR_NOTIFICATIONS_WEBHOOK_URL at runtime.
@@ -182,12 +236,14 @@ the app is **built** and ends up inside the build output: a secret in an image,
 copied wherever that image goes. It is the same reason `databaseUrl` is read at
 runtime.
 
-These three are flat keys for exactly that reason, read when the server starts:
+These are flat keys for exactly that reason, read when the server starts:
 
 | Variable | Fills in |
 | --- | --- |
 | `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN` | The Telegram channel's `token` |
 | `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_CHAT_ID` | Its `chatId` |
+| `NUXT_MONITOR_NOTIFICATIONS_SLACK_WEBHOOK_URL` | The Slack channel's `webhookUrl` |
+| `NUXT_MONITOR_NOTIFICATIONS_SLACK_TOKEN` | Its `token`, when posting via the API |
 | `NUXT_MONITOR_NOTIFICATIONS_WEBHOOK_URL` | The webhook channel's `url` |
 
 They fill in only what a channel left blank, so a config that does spell out a

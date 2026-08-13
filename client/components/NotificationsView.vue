@@ -21,6 +21,17 @@ import { absoluteTime, relativeTime } from '../format'
  * the thing worth checking against what you think you configured.
  */
 
+/**
+ * A map rather than a ternary, which is what this was until Slack made it wrong.
+ * The fallback covers the webhook and whatever is added next: an unfamiliar type
+ * showing a generic icon is fine, a blank space where an icon belongs is not.
+ */
+const CHANNEL_ICON: Record<string, string> = {
+  telegram: 'i-lucide-send',
+  slack: 'i-lucide-message-square',
+  webhook: 'i-lucide-webhook',
+}
+
 const data = ref<NotificationSettings | null>(null)
 const loading = ref(true)
 const error = ref('')
@@ -223,7 +234,7 @@ onMounted(load)
         No notification channel is configured, so nothing is alerted.
       </p>
       <p class="mx-auto mt-1 max-w-md text-xs text-dimmed">
-        Add a Telegram bot or a webhook under
+        Add a Slack channel, a Telegram bot or a webhook under
         <code class="font-mono">monitor.notifications.channels</code> and restart the server.
       </p>
     </div>
@@ -256,7 +267,7 @@ onMounted(load)
             class="flex items-center gap-3 rounded bg-elevated/40 px-2.5 py-2 text-sm"
           >
             <UIcon
-              :name="channel.type === 'telegram' ? 'i-lucide-send' : 'i-lucide-webhook'"
+              :name="CHANNEL_ICON[channel.type] ?? 'i-lucide-webhook'"
               class="size-4 shrink-0 text-dimmed"
             />
             <span class="min-w-0 flex-1 truncate text-toned">{{ channel.name }}</span>

@@ -92,6 +92,28 @@ export function resolveChannels(options: MonitorNotificationOptions): MonitorCha
       continue
     }
 
+    if (channel.type === 'slack') {
+      const webhookUrl = channel.webhookUrl || options.slackWebhookUrl
+      const token = channel.token || options.slackToken
+
+      // Either route is enough on its own, and the webhook is preferred when
+      // both are present — see `sendSlack`.
+      if (webhookUrl || (token && channel.channel)) {
+        usable.push({ ...channel, webhookUrl, token })
+        continue
+      }
+
+      console.warn(
+        `[monitor] the Slack channel ${channelName(channel)} has no `
+        + `${token ? 'channel to post to' : 'credentials'}, so it is skipped. Set `
+        + `${token
+          ? '`channel` on it, e.g. #alerts'
+          : 'an incoming webhook URL as NUXT_MONITOR_NOTIFICATIONS_SLACK_WEBHOOK_URL, '
+            + 'or a bot token as NUXT_MONITOR_NOTIFICATIONS_SLACK_TOKEN with `channel` on the channel'}.`,
+      )
+      continue
+    }
+
     const url = channel.url || options.webhookUrl
 
     if (url) {
@@ -179,6 +201,20 @@ export class MonitorNotifier {
    * overlapping drains would each take a slice of the queue and send two
    * messages where the grouping exists to send one.
    */
+  /**
+   * Resolves once nothing is in flight and nothing is left queued.
+   *
+   * `enqueue` deliberately does not await delivery — it is called from the
+   * write path, which has events to finish writing and must not wait on a chat
+   * API. That leaves no way to observe the send from outside, so anything
+   * checking the delivery log right after a flush is reading it before the row
+   * is written, and passes or fails on how many microtasks the channel happened
+   * to take. Awaiting this first makes that check deterministic.
+   */
+  async settled(): Promise<void> {
+    await this.deliver()
+  }
+
   private deliver(): Promise<void> {
     this.sending = this.sending
       ? this.sending.then(() => this.drain())

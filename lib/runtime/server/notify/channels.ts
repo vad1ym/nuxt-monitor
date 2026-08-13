@@ -1,5 +1,5 @@
-import type { MonitorAlert, MonitorChannelOptions } from '../../../types'
-import { formatMarkdown, formatText } from './format'
+import type { MonitorAlert, MonitorChannelOptions, MonitorSlackChannel } from '../../../types'
+import { formatMarkdown, formatSlack, formatText } from './format'
 
 /**
  * Delivery.
@@ -37,6 +37,10 @@ export async function send(
   // missing its credentials — a channel reaching here is one that can be used.
   if (channel.type === 'telegram') {
     return sendTelegram(channel.token!, channel.chatId!, alerts, context)
+  }
+
+  if (channel.type === 'slack') {
+    return sendSlack(channel, alerts, context)
   }
 
   return sendWebhook(channel.url!, channel.headers, alerts, context)
@@ -88,6 +92,71 @@ async function sendTelegram(
     // blocked by the user" — and the status alone is 400 for all of them.
     // Without the body the log says a channel failed and nothing about why.
     throw new Error(`Telegram answered ${response.status}: ${(await safeText(response)).slice(0, 200)}`)
+  }
+}
+
+/**
+ * Slack, by whichever route the channel was given.
+ *
+ * The webhook wins when both are set. It has to: a hook URL already names its
+ * destination channel, so honouring the token as well would post the same alert
+ * twice, and `resolveChannels` cannot decide it either — a config with both is
+ * a config that meant one of them.
+ */
+async function sendSlack(
+  channel: MonitorSlackChannel,
+  alerts: MonitorAlert[],
+  context: ChannelContext,
+): Promise<void> {
+  const message = formatSlack(alerts, context.dashboardUrl)
+
+  if (channel.webhookUrl) {
+    const response = await post(
+      channel.webhookUrl,
+      { headers: { 'content-type': 'application/json' }, body: JSON.stringify(message) },
+      context.timeoutMs,
+    )
+
+    if (!response.ok) {
+      // An incoming hook answers in plain text — `no_service`, `channel_not_found`,
+      // `invalid_payload` — and those words are the whole diagnosis.
+      throw new Error(`Slack answered ${response.status}: ${(await safeText(response)).slice(0, 200)}`)
+    }
+
+    return
+  }
+
+  const response = await post(
+    'https://slack.com/api/chat.postMessage',
+    {
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'authorization': `Bearer ${channel.token!}`,
+      },
+      body: JSON.stringify({
+        channel: channel.channel!,
+        ...message,
+        // The message links to the dashboard; an unfurled card of its login
+        // page underneath every alert is noise.
+        unfurl_links: false,
+        unfurl_media: false,
+      }),
+    },
+    context.timeoutMs,
+  )
+
+  if (!response.ok) {
+    throw new Error(`Slack answered ${response.status}`)
+  }
+
+  // The Web API answers 200 with `ok: false` for everything that actually goes
+  // wrong — `invalid_auth`, `not_in_channel`, `channel_not_found`. Checking the
+  // status alone would log a successful delivery for a message nobody received,
+  // which is the one failure this whole feature cannot afford to hide.
+  const body = await response.json().catch(() => null) as { ok?: boolean, error?: string } | null
+
+  if (!body?.ok) {
+    throw new Error(`Slack rejected the message: ${body?.error ?? 'unknown error'}`)
   }
 }
 
