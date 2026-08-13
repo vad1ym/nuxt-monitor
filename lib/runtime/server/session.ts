@@ -2,7 +2,6 @@ import type { H3Event } from 'h3'
 import {
   deleteCookie,
   getCookie,
-  getRequestHeader,
   setCookie,
 } from 'h3'
 import { LoginThrottle, deriveSecret, hashPassword, verifySession } from './auth'
@@ -107,14 +106,6 @@ export function clearSessionCookie(event: H3Event, routeBase: string): void {
  * Proxy headers are attacker-controlled, so this is a rate-limiting hint and
  * nothing more — it must never be used for an authorization decision.
  */
-export function clientAddress(event: H3Event): string {
-  const forwarded = getRequestHeader(event, 'x-forwarded-for')
-
-  if (forwarded) {
-    return forwarded.split(',')[0]!.trim()
-  }
-
-  return getRequestHeader(event, 'x-real-ip')
-    ?? event.node?.req?.socket?.remoteAddress
-    ?? 'unknown'
-}
+// `clientAddress` lives in `proxy.ts` now, beside the other headers a reverse
+// proxy rewrites. Not re-exported from here: this file is compiled by `tsc`
+// and that one is not, because it reaches `#imports`.

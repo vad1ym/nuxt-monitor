@@ -582,19 +582,13 @@ describe('SourcemapResolver and untrusted stacks', () => {
 })
 
 /**
- * Resolution against a release that is no longer deployed.
+ * Resolution against builds that are no longer deployed.
  *
  * The archive exists for the minutes after a deploy, when errors arrive from
  * the version being replaced and from the one replacing it at once. The two
  * builds name the same asset, so the test gives each a map pointing at a
  * different source line — resolving to the wrong one is the failure this
  * guards against, and it is invisible unless the lines differ.
- */
-/**
- * Resolution against builds that are no longer deployed.
- *
- * The archive exists for the minutes after a deploy, when errors arrive from
- * the version being replaced and from the one replacing it at once.
  */
 describe('SourcemapResolver across builds', () => {
   let dir: string

@@ -1,7 +1,8 @@
 import { createError, defineEventHandler, readBody } from '#imports'
 import { createSession, verifyPassword } from '../auth'
 import { monitorConfig, useMonitorAuth } from '../context'
-import { clientAddress, loginThrottle, setSessionCookie } from '../session'
+import { loginThrottle, setSessionCookie } from '../session'
+import { clientAddress } from '../proxy'
 
 export default defineEventHandler(async (event) => {
   const config = monitorConfig()

@@ -44,13 +44,29 @@ With an external database it works, since nothing is kept on local disk.
 
 ## Behind a proxy
 
-Requests count and rate-limiting use the client address, taken from
-`x-forwarded-for` when present. Make sure your proxy sets it, and that only the
-proxy can — an address a client can spoof makes rate-limiting decorative.
+Works without configuration, and the headers it reads are the ones nginx,
+Traefik and Caddy set by default.
 
-If your app is mounted under a sub-path, `app.baseURL` is picked up
-automatically for sourcemap resolution. A CDN in front of your assets is
-handled through `app.cdnURL`.
+**The client address** — used for the ingest rate limit and for login
+throttling — comes from `x-forwarded-for`, then `x-real-ip`, then the socket.
+Make sure your proxy sets it, and that only the proxy can: an address a client
+can spoof makes rate limiting decorative.
+
+**The host** comes from `x-forwarded-host`, falling back to `Host`. This one
+matters more than it looks. The ingest route accepts a report only from its own
+origin, and behind a proxy the browser addresses `app.example.com` while the
+application receives `Host: localhost:3000`. Comparing those directly makes
+every genuine browser error look cross-origin — and the route answers `204` and
+records nothing, so the install would collect server errors perfectly and
+quietly lose every client one. The comparison is on host alone, ignoring the
+scheme, because TLS terminating at the proxy means the application always sees
+`http` on the inside.
+
+**A sub-path** is picked up from `app.baseURL` for sourcemap resolution, and
+the dashboard derives its own API base from the URL it was loaded at — so it
+works under a prefix and on a subdomain without being told which.
+
+**A CDN** in front of your assets is handled through `app.cdnURL`.
 
 ## Containers
 

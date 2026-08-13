@@ -7,7 +7,7 @@ import { scrub, scrubUrl } from '../../shared/scrub'
 import type { ParsedUserAgent } from '../../shared/user-agent'
 import { parseUserAgent } from '../../shared/user-agent'
 import { monitorConfig, useMonitorStore } from '../context'
-import { clientAddress } from '../session'
+import { clientAddress, isSameOrigin } from '../proxy'
 
 /**
  * Client error intake.
@@ -309,29 +309,6 @@ function clampTimestamp(value: number): number {
   const dayAgo = now - 24 * 60 * 60 * 1_000
 
   return Math.min(Math.max(value, dayAgo), now)
-}
-
-function isSameOrigin(event: Parameters<typeof getRequestHeader>[0]): boolean {
-  const origin = getRequestHeader(event, 'origin')
-
-  // Same-origin requests from some browsers omit Origin entirely; absence is
-  // not evidence of a cross-origin post.
-  if (!origin) {
-    return true
-  }
-
-  const host = getRequestHeader(event, 'host')
-
-  if (!host) {
-    return false
-  }
-
-  try {
-    return new URL(origin).host === host
-  }
-  catch {
-    return false
-  }
 }
 
 function isRateLimited(ip: string): boolean {
