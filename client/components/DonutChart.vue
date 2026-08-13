@@ -4,26 +4,26 @@ import { PieChart } from 'echarts/charts'
 import { TooltipComponent } from 'echarts/components'
 import { init, use } from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { cssColor } from '../chart'
 
 /**
- * A composition, in one glance.
+ * A composition, with the names beside it.
  *
- * Used where the question is "what is this made of" and the answer has a
- * handful of parts — API against pages, one device class against another. A
- * bar list answers "which is biggest" better; a ring answers "is this split
- * even or lopsided" better, and that is the question these are asked.
+ * A ring on its own is decoration: it shows that something is split without
+ * saying what into. So the legend is not optional here — it carries the value,
+ * the share and the count, and the ring is only the part that makes the
+ * proportion readable at a glance.
  *
- * The middle is not decoration: the total goes there, so the chart carries the
- * number it is a breakdown of rather than making the reader look elsewhere.
+ * The hole is small and empty on purpose. It used to hold a total, which
+ * repeated a number already on the card above and spent most of the widget's
+ * area saying it twice.
  */
 const props = defineProps<{
-  slices: { value: string, count: number, color?: string }[]
-  /** Shown in the hole. Usually the total, already formatted. */
-  total?: string
-  label?: string
-  height?: number
+  slices: { value: string, count: number }[]
+  /** Rendered beside a row when it adds something — usually a lift. */
+  hint?: (value: string) => string | undefined
+  size?: number
 }>()
 
 const emit = defineEmits<{ select: [value: string] }>()
@@ -36,12 +36,9 @@ let chart: EChartsType | undefined
 /**
  * A fixed sequence rather than ECharts' default.
  *
- * The dashboard's palette is one accent plus greys, and a ring in six unrelated
- * hues reads as a different application.
- *
- * Resolved to real colours before they are handed over: this renders to canvas,
- * where a `var(--ui-primary)` is not a colour but a string the browser cannot
- * paint — the ring drew as six invisible segments, which reads as a broken
+ * Resolved to real colours before they are handed over: this renders to
+ * canvas, where `var(--ui-primary)` is not a colour but a string the browser
+ * cannot paint — the ring drew as invisible segments, which reads as a broken
  * chart rather than as a styling slip.
  */
 const VARIABLES = [
@@ -53,16 +50,23 @@ const VARIABLES = [
   '--ui-text-dimmed',
 ]
 
-function palette(): string[] {
-  return VARIABLES.map(name => cssColor(name, '#888'))
-}
+const colors = ref<string[]>([])
+
+const total = computed(() => props.slices.reduce((sum, slice) => sum + slice.count, 0))
+
+/** The legend rows, each carrying the colour of its arc. */
+const legend = computed(() => props.slices.map((slice, index) => ({
+  ...slice,
+  color: colors.value[index % Math.max(1, colors.value.length)] ?? '#888',
+  share: total.value ? slice.count / total.value : 0,
+})))
 
 function render(): void {
   if (!chart) {
     return
   }
 
-  const colors = palette()
+  colors.value = VARIABLES.map(name => cssColor(name, '#888'))
 
   chart.setOption({
     animation: false,
@@ -75,9 +79,10 @@ function render(): void {
     },
     series: [{
       type: 'pie',
-      // A ring rather than a full circle: the hole holds the total, and a
-      // filled pie invites comparing angles, which people do badly.
-      radius: ['62%', '88%'],
+      // Thin, and close to the edge: the ring states a proportion, it is not a
+      // container for a number. A fat ring around a hole full of text is two
+      // widgets fighting over one square.
+      radius: ['68%', '96%'],
       center: ['50%', '50%'],
       avoidLabelOverlap: false,
       // The gap between segments is the page behind them, not a grey line.
@@ -87,7 +92,7 @@ function render(): void {
       data: props.slices.map((slice, index) => ({
         name: slice.value,
         value: slice.count,
-        itemStyle: { color: slice.color ?? colors[index % colors.length] },
+        itemStyle: { color: colors.value[index % colors.value.length] },
       })),
     }],
   }, true)
@@ -106,7 +111,6 @@ onMounted(() => {
   })
 
   render()
-
   window.addEventListener('resize', resize)
 })
 
@@ -123,16 +127,35 @@ watch(() => props.slices, render, { deep: true })
 </script>
 
 <template>
-  <div class="relative">
-    <div ref="element" :style="{ height: `${height ?? 160}px` }" />
-
-    <!-- The total in the hole, so the ring carries the number it divides. -->
+  <div class="flex items-center gap-3">
     <div
-      v-if="total"
-      class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center"
-    >
-      <span class="text-lg font-semibold tabular-nums text-highlighted">{{ total }}</span>
-      <span v-if="label" class="text-xs text-dimmed">{{ label }}</span>
-    </div>
+      ref="element"
+      class="shrink-0"
+      :style="{ width: `${size ?? 92}px`, height: `${size ?? 92}px` }"
+    />
+
+    <!-- The informative half. Rows are clickable for the same reason the arcs
+         are: seeing a slice and wanting only that slice is one thought. -->
+    <ul class="min-w-0 flex-1 space-y-0.5">
+      <li v-for="row in legend" :key="row.value">
+        <button
+          type="button"
+          class="flex w-full cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-left hover:bg-elevated/40"
+          @click="emit('select', row.value)"
+        >
+          <span class="size-2 shrink-0 rounded-sm" :style="{ backgroundColor: row.color }" />
+          <span class="min-w-0 flex-1 truncate text-sm text-toned">{{ row.value }}</span>
+          <span v-if="hint?.(row.value)" class="shrink-0 text-xs tabular-nums text-warning">
+            {{ hint(row.value) }}
+          </span>
+          <span class="w-8 shrink-0 text-end text-xs tabular-nums text-dimmed">
+            {{ Math.round(row.share * 100) }}%
+          </span>
+          <span class="w-8 shrink-0 text-end text-sm tabular-nums text-highlighted">
+            {{ row.count }}
+          </span>
+        </button>
+      </li>
+    </ul>
   </div>
 </template>

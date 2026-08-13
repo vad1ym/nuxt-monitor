@@ -106,7 +106,30 @@ const hasAnything = computed(() =>
 )
 
 const shown = computed(() =>
-  (data.value?.breakdowns ?? []).filter(breakdown => breakdown.slices.length > 0),
+  (data.value?.breakdowns ?? [])
+    .map(breakdown => ({
+      ...breakdown,
+      // `unknown` means the event carried no such dimension — a server error
+      // has no browser. It is a real answer and never an actionable one, and
+      // leaving it in the rows lets it outrank every slice somebody could do
+      // something about. The count is not lost: it goes to the tail.
+      slices: (() => {
+        const real = breakdown.slices.filter(slice => slice.value !== 'unknown')
+        const total = real.reduce((sum, slice) => sum + slice.errors, 0)
+
+        // Re-based on what is drawn. Left as shares of the whole, the widest
+        // bar would sit at a third of the row and the column would read as
+        // three-quarters empty — the chart understating its own data.
+        return real.map(slice => ({
+          ...slice,
+          errorShare: total ? slice.errors / total : 0,
+        }))
+      })(),
+      otherErrors: breakdown.otherErrors
+        + breakdown.slices.filter(slice => slice.value === 'unknown')
+          .reduce((sum, slice) => sum + slice.errors, 0),
+    }))
+    .filter(breakdown => breakdown.slices.length > 0),
 )
 
 /** A dimension worth a ring rather than a list: few values, and a composition. */
@@ -325,84 +348,6 @@ onMounted(load)
         </div>
       </div>
 
-      <!-- Requests and errors on one axis. Errors rising with traffic is a busy
-           afternoon; errors rising against flat traffic is a deploy — and two
-           charts side by side make the reader do that comparison by eye. -->
-      <section class="rounded-lg border border-default p-3">
-        <div class="mb-3 flex items-center justify-between">
-          <h2 class="text-xs font-medium uppercase tracking-wide text-dimmed">
-            Requests and errors
-          </h2>
-          <div class="flex items-center gap-3 text-xs text-dimmed">
-            <span class="flex items-center gap-1.5"><span class="size-2 rounded-sm bg-muted" />requests</span>
-            <span class="flex items-center gap-1.5"><span class="size-2 rounded-sm bg-error" />errors</span>
-          </div>
-        </div>
-
-        <TimeChart :at="trend.at" :series="trend.series" />
-      </section>
-
-      <div class="grid gap-3 lg:grid-cols-3">
-        <!-- Rings for compositions with a handful of parts, lists for
-             everything else: a ring answers "even or lopsided", a bar list
-             answers "which is biggest", and they are different questions. -->
-        <section
-          v-for="breakdown in shown"
-          :key="breakdown.facet"
-          class="rounded-lg border border-default p-3"
-          :class="isDonut(breakdown) ? '' : 'lg:col-span-2'"
-        >
-          <div class="mb-2 flex items-center justify-between gap-2">
-            <h2 class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-dimmed">
-              <UIcon :name="iconFor(breakdown.facet)" class="size-3.5" />
-              {{ labelFor(breakdown.facet) }}
-            </h2>
-            <span v-if="breakdown.otherErrors" class="text-xs text-dimmed">
-              +{{ formatCount(breakdown.otherErrors) }} more
-            </span>
-          </div>
-
-          <DonutChart
-            v-if="isDonut(breakdown)"
-            :slices="breakdown.slices.map(slice => ({ value: slice.value, count: slice.errors }))"
-            :total="formatCount(breakdown.slices.reduce((sum, slice) => sum + slice.errors, 0))"
-            label="errors"
-            @select="value => narrow(breakdown.facet, value)"
-          />
-
-          <div v-else class="space-y-0.5">
-            <button
-              v-for="slice in breakdown.slices"
-              :key="slice.value"
-              type="button"
-              class="block w-full cursor-pointer text-left"
-              :title="slice.trafficShare !== undefined
-                ? `${formatShare(slice.errorShare)} of errors, ${formatShare(slice.trafficShare)} of traffic`
-                : `${formatShare(slice.errorShare)} of errors`"
-              @click="narrow(breakdown.facet, slice.value)"
-            >
-              <StatBar
-                :share="slice.errorShare"
-                :label="slice.value"
-                :value="formatCount(slice.errors)"
-                :hint="slice.lift !== undefined && slice.lift >= 1.3 ? `${slice.lift.toFixed(1)}×` : undefined"
-                :tone="slice.lift !== undefined && slice.lift >= 2 ? 'warning' : 'neutral'"
-                :mono="breakdown.facet === 'route' || breakdown.facet === 'release'"
-              />
-            </button>
-
-            <p
-              v-if="breakdown.slices.every(slice => slice.lift === undefined)"
-              class="pt-1 text-xs text-dimmed"
-            >
-              {{ ['route', 'release', 'kind', 'group'].includes(breakdown.facet)
-                ? 'Shares of errors — traffic is not counted by this dimension.'
-                : 'Shares of errors only: no page views counted yet.' }}
-            </p>
-          </div>
-        </section>
-      </div>
-
       <!-- The one fault behind most of the noise. In most incidents there is
            one, and finding it by scrolling a list ranked by count is work the
            screen can do instead. -->
@@ -454,6 +399,23 @@ onMounted(load)
         </span>
       </section>
 
+      <!-- Requests and errors on one axis. Errors rising with traffic is a busy
+           afternoon; errors rising against flat traffic is a deploy — and two
+           charts side by side make the reader do that comparison by eye. -->
+      <section class="rounded-lg border border-default p-3">
+        <div class="mb-3 flex items-center justify-between">
+          <h2 class="text-xs font-medium uppercase tracking-wide text-dimmed">
+            Requests and errors
+          </h2>
+          <div class="flex items-center gap-3 text-xs text-dimmed">
+            <span class="flex items-center gap-1.5"><span class="size-2 rounded-sm bg-muted" />requests</span>
+            <span class="flex items-center gap-1.5"><span class="size-2 rounded-sm bg-error" />errors</span>
+          </div>
+        </div>
+
+        <TimeChart :at="trend.at" :series="trend.series" />
+      </section>
+
       <!-- The endpoints themselves, which have their own denominator and so
            carry a real rate rather than a share. -->
       <section v-if="data!.routes.length" class="rounded-lg border border-default p-3">
@@ -480,6 +442,69 @@ onMounted(load)
           </button>
         </div>
       </section>
+
+      <div class="grid gap-3 lg:grid-cols-2">
+        <!-- Rings for compositions with a handful of parts, lists for
+             everything else: a ring answers "even or lopsided", a bar list
+             answers "which is biggest", and they are different questions. -->
+        <section
+          v-for="breakdown in shown"
+          :key="breakdown.facet"
+          class="rounded-lg border border-default p-3"
+        >
+          <div class="mb-2 flex items-center justify-between gap-2">
+            <h2 class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-dimmed">
+              <UIcon :name="iconFor(breakdown.facet)" class="size-3.5" />
+              {{ labelFor(breakdown.facet) }}
+            </h2>
+            <span v-if="breakdown.otherErrors" class="text-xs text-dimmed">
+              +{{ formatCount(breakdown.otherErrors) }} more
+            </span>
+          </div>
+
+          <DonutChart
+            v-if="isDonut(breakdown)"
+            :slices="breakdown.slices.map(slice => ({ value: slice.value, count: slice.errors }))"
+            :hint="value => {
+              const slice = breakdown.slices.find(entry => entry.value === value)
+
+              return slice?.lift !== undefined && slice.lift >= 1.3 ? `${slice.lift.toFixed(1)}×` : undefined
+            }"
+            @select="value => narrow(breakdown.facet, value)"
+          />
+
+          <div v-else class="space-y-0.5">
+            <button
+              v-for="slice in breakdown.slices"
+              :key="slice.value"
+              type="button"
+              class="block w-full cursor-pointer text-left"
+              :title="slice.trafficShare !== undefined
+                ? `${formatShare(slice.errorShare)} of errors, ${formatShare(slice.trafficShare)} of traffic`
+                : `${formatShare(slice.errorShare)} of errors`"
+              @click="narrow(breakdown.facet, slice.value)"
+            >
+              <StatBar
+                :share="slice.errorShare"
+                :label="slice.value"
+                :value="formatCount(slice.errors)"
+                :hint="slice.lift !== undefined && slice.lift >= 1.3 ? `${slice.lift.toFixed(1)}×` : undefined"
+                :tone="slice.lift !== undefined && slice.lift >= 2 ? 'warning' : 'neutral'"
+                :mono="breakdown.facet === 'route' || breakdown.facet === 'release'"
+              />
+            </button>
+
+            <p
+              v-if="breakdown.slices.every(slice => slice.lift === undefined)"
+              class="pt-1 text-xs text-dimmed"
+            >
+              {{ ['route', 'release', 'kind', 'group'].includes(breakdown.facet)
+                ? 'Shares of errors — traffic is not counted by this dimension.'
+                : 'Shares of errors only: no page views counted yet.' }}
+            </p>
+          </div>
+        </section>
+      </div>
 
       <!-- What just happened, for the glance that does not start from a
            number. -->
