@@ -19,7 +19,7 @@ export interface CompiledIgnore {
   types: Set<string>
 }
 
-type Matcher = (value: string) => boolean
+export type Matcher = (value: string) => boolean
 
 /** Prepares the rules once, so matching stays cheap on the request path. */
 export function compileIgnore(options: MonitorIgnoreOptions | undefined): CompiledIgnore {
@@ -55,11 +55,15 @@ export function shouldIgnore(event: MonitorEvent, rules: CompiledIgnore): boolea
 /**
  * Builds a matcher from a config string.
  *
+ * Exported because group rules (#17) match message text by exactly the same
+ * rule, and a second implementation of "substring or `/regex/`" would be a
+ * second set of edge cases for the same sentence in the documentation.
+ *
  * `/pattern/flags` is treated as a regular expression; anything else is a
  * case-insensitive substring, which is what most people mean when they write a
  * rule by hand.
  */
-function toMatcher(pattern: string): Matcher {
+export function toMatcher(pattern: string): Matcher {
   const asRegex = /^\/(.+)\/([gimsuy]*)$/.exec(pattern)
   let literal = pattern
 

@@ -14,6 +14,8 @@ const HEADLINE: Record<MonitorAlertReason, string> = {
   // interesting part is that something believed fixed is not.
   'regression': 'Regression',
   'threshold': 'Issue growing',
+  // A group somebody asked to hear about, failing again.
+  'watched': 'Watched group',
   'test': 'Test alert',
 }
 

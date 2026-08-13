@@ -36,6 +36,8 @@ export function evaluate(
   state: IssueState,
   options: MonitorTriggerOptions | undefined,
   at: number,
+  /** True when the issue's group is configured with `notify: true`. */
+  watched = false,
 ): MonitorAlert | undefined {
   // Explicitly put aside as not worth acting on. Alerting on it anyway would
   // make the ignore button a lie in the one place it is most needed: an issue
@@ -56,7 +58,19 @@ export function evaluate(
 
   const crossed = crossedThreshold(issue.count, state, options)
 
-  return crossed === undefined ? undefined : { reason: 'threshold', issue, threshold: crossed, at }
+  if (crossed !== undefined) {
+    return { reason: 'threshold', issue, threshold: crossed, at }
+  }
+
+  // A watched group is the last word: `notify: true` says this part of the
+  // application is worth hearing about whenever it fails, not only the first
+  // time or on the way past ten. Checked after the others so a regression in a
+  // watched group is still reported as a regression — the more specific fact
+  // wins, and this is the fallback for everything else.
+  //
+  // Still subject to the per-issue cooldown applied by the store, which is
+  // what keeps "every failure" from meaning "every occurrence".
+  return watched ? { reason: 'watched', issue, at } : undefined
 }
 
 /**

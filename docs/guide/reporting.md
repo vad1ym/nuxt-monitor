@@ -68,9 +68,10 @@ application, not to this module.
 
 Groups do three things:
 
-- **Separate issues.** The group is part of the fingerprint, so the same
-  sentence reported under `payments` and under `data-integrity` is two issues.
-  Naming a group is exactly the claim that they are different concerns.
+- **Separate issues.** A group named at the call site is part of the
+  fingerprint, so the same sentence reported under `payments` and under
+  `data-integrity` is two issues. Naming one is exactly the claim that they are
+  different concerns. (A group assigned by a rule is not — see below.)
 - **Filter the list.** `?group=payments`, and the Reported scope in the sidebar.
 - **Route alerts.** This is the one that pays for the other two.
 
@@ -93,6 +94,51 @@ should see everything.
 
 `minLevel` treats a caught error as `error`, so raising the floor to `warning`
 does not silently drop genuine exceptions.
+
+### Groups without touching the code
+
+Most errors are not raised by hand, and they deserve a group too: a failure in
+`/api/checkout` belongs to payments whether or not anybody called
+`exception()`. Rules in the config assign one.
+
+```ts
+monitor: {
+  groups: {
+    payments: { routes: ['/api/checkout/**', '/api/refunds/**'], notify: true },
+    // Pages as readily as endpoints — a rule matches any path, and a
+    // client-side error carries the page it happened on.
+    checkout: { routes: ['/checkout/**', '/cart'] },
+    // For the faults a path cannot find: a provider breaks inside your route,
+    // not on its own.
+    'third-party': { messages: ['stripe', '/timeout of \\d+ms/'] },
+  },
+}
+```
+
+`routes` takes globs — `**` spans separators, `*` does not, `:param` is one
+segment — and a trailing `/**` covers the section's own root, so
+`/api/checkout/**` includes `/api/checkout`. `messages` takes substrings or
+`/regex/`, the same spelling `ignore` uses.
+
+`notify: true` makes the group worth an alert whenever it fails, not only the
+first time or on the way past a threshold. It is a trigger like any other and
+obeys the same cooldown, grouping window and quiet hours — a watched group is
+not a way around the rules that keep alerting bearable.
+
+Two things worth knowing:
+
+- **A group from a rule is not part of the fingerprint.** A group named at the
+  call site is — it is the author's claim that two reports are different
+  concerns. A rule infers one from a path, so folding it into the identity
+  would re-key every existing issue the moment the option is turned on.
+- **An explicit group wins.** `exception(…, { group })` is a statement by
+  whoever wrote the code; a rule is an inference from a coincidence of path.
+
+Rules are read-only from the dashboard. They describe the architecture of the
+application rather than an observation about it, so they belong beside the code
+and in review — unlike resolving or ignoring an issue, which is what somebody
+concluded this afternoon. The Notifications screen lists them.
+
 
 ## What is stored
 

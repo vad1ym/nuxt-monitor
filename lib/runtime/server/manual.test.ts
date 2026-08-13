@@ -262,3 +262,133 @@ describe('endpoints against pages', () => {
     expect((await store.listIssues()).issues[0]?.kind).toBeUndefined()
   })
 })
+
+describe('groups from config rules', () => {
+  async function withRules(): Promise<MonitorStore> {
+    return MonitorStore.open({
+      dir,
+      retentionDays: 14,
+      maxEventsPerIssue: 5,
+      flushSize: 1_000,
+      flushInterval: 60_000,
+      groups: {
+        payments: { routes: ['/api/checkout/**'], notify: true },
+        'third-party': { messages: ['stripe'] },
+      },
+      notifications: {
+        channels: [{ type: 'webhook', url: 'https://hooks.test/a' }],
+        groupWindowSeconds: 0,
+        dashboardUrl: 'https://app.test/_monitor',
+      },
+    })
+  }
+
+  it('labels a caught error nobody annotated', async () => {
+    store = await withRules()
+    store.capture({ ...caught('checkout blew up'), context: { url: '/api/checkout/confirm' } })
+    await store.flush()
+
+    expect((await store.listIssues()).issues[0]?.group).toBe('payments')
+  })
+
+  it('labels by message when the path says nothing', async () => {
+    store = await withRules()
+    store.capture({ ...caught('Stripe refused the charge'), context: { url: '/api/orders' } })
+    await store.flush()
+
+    expect((await store.listIssues()).issues[0]?.group).toBe('third-party')
+  })
+
+  it('does not change the fingerprint of an error a rule labels', async () => {
+    // The asymmetry with `exception()`, and the reason for it: turning the
+    // option on must not re-key every existing issue, or work in progress
+    // reads as freshly discovered.
+    const unlabelled = await MonitorStore.open({
+      dir: mkdtempSync(join(tmpdir(), 'monitor-nogroups-')),
+      retentionDays: 14,
+      maxEventsPerIssue: 5,
+      flushSize: 1_000,
+      flushInterval: 60_000,
+    })
+
+    const event = { ...caught('checkout blew up'), context: { url: '/api/checkout' } }
+
+    unlabelled.capture(event)
+    await unlabelled.flush()
+    const before = (await unlabelled.listIssues()).issues[0]!.fingerprint
+    await unlabelled.close()
+
+    store = await withRules()
+    store.capture(event)
+    await store.flush()
+
+    const [issue] = (await store.listIssues()).issues
+
+    expect(issue?.fingerprint).toBe(before)
+    expect(issue?.group).toBe('payments')
+  })
+
+  it('lets an explicit group win over a rule', async () => {
+    // `exception(…, { group })` is a statement by whoever wrote the code; a
+    // rule is an inference from a coincidence of path.
+    store = await withRules()
+    store.capture(manual('totals disagree', {
+      group: 'data-integrity',
+      context: { url: '/api/checkout' },
+    }))
+    await store.flush()
+
+    expect((await store.listIssues()).issues[0]?.group).toBe('data-integrity')
+  })
+
+  it('alerts on a watched group when no other trigger would', async () => {
+    // The second occurrence of a known issue is normally silent: not new, not
+    // a regression, no threshold crossed. `notify: true` is what makes the
+    // group worth hearing about anyway.
+    store = await withRules()
+
+    store.capture({ ...caught('checkout blew up'), context: { url: '/api/checkout' } })
+    await store.flush()
+
+    // `cooldownMinutes` defaults to 60, and the first alert started it — so
+    // the second occurrence is held back by the cooldown rather than by the
+    // trigger. Reopen with no cooldown to see the trigger itself.
+    await store.close()
+    sent.length = 0
+
+    store = await MonitorStore.open({
+      dir,
+      retentionDays: 14,
+      maxEventsPerIssue: 5,
+      flushSize: 1_000,
+      flushInterval: 60_000,
+      groups: { payments: { routes: ['/api/checkout/**'], notify: true } },
+      notifications: {
+        channels: [{ type: 'webhook', url: 'https://hooks.test/a' }],
+        groupWindowSeconds: 0,
+        cooldownMinutes: 0,
+      },
+    })
+
+    store.capture({ ...caught('checkout blew up'), context: { url: '/api/checkout' } })
+    await store.flush()
+
+    expect(sent).toHaveLength(1)
+    expect(String(sent[0]!.body.text)).toContain('Watched group')
+  })
+
+  it('stays quiet for a group without notify', async () => {
+    store = await withRules()
+
+    store.capture({ ...caught('Stripe refused the charge'), context: { url: '/api/orders' } })
+    await store.flush()
+    sent.length = 0
+
+    // Second occurrence: labelled `third-party`, which did not ask to be
+    // watched, so nothing is sent.
+    store.capture({ ...caught('Stripe refused the charge'), context: { url: '/api/orders' } })
+    await store.flush()
+
+    expect(sent).toHaveLength(0)
+  })
+})

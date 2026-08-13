@@ -95,6 +95,8 @@ export interface NotificationSettings {
   enabled: boolean
   /** `usable` is false when no token or URL resolved for a declared channel. */
   channels: { name: string, type: string, enabled: boolean, usable: boolean }[]
+  /** The rules from the config, read-only. */
+  groups: { name: string, routes: string[], messages: string[], notify: boolean }[]
   triggers: MonitorTriggerOptions
   cooldownMinutes: number
   groupWindowSeconds: number

@@ -7,6 +7,7 @@ import type {
   MonitorHealth,
   MonitorIgnoreOptions,
   MonitorIssue,
+  MonitorGroupOptions,
   MonitorIssueTrend,
   MonitorNotificationOptions,
   MonitorOverview,
@@ -24,6 +25,8 @@ import type { ExportOptions } from './export'
 import { exportRows } from './export'
 import type { CompiledIgnore } from '../shared/ignore'
 import { compileIgnore, shouldIgnore } from '../shared/ignore'
+import type { CompiledGroup } from '../shared/groups'
+import { compileGroups, findGroup, groupFor } from '../shared/groups'
 import { fingerprint } from '../shared/fingerprint'
 import { bucketOf, normalizeRoute, statusClass } from '../shared/route'
 import { culpritOf, toIssue } from './rows'
@@ -49,6 +52,8 @@ export interface StoreOptions {
   notifications?: MonitorNotificationOptions
   /** Admission control per issue. Off unless a burst is set. */
   sampling?: SamplingOptions
+  /** Rules that name parts of the application. */
+  groups?: MonitorGroupOptions
   /** Events buffered before an early flush. */
   flushSize?: number
   /** Milliseconds between periodic flushes. */
@@ -147,6 +152,8 @@ export class MonitorStore {
   private readonly sampler: Sampler
   /** Occurrences counted but not stored, for health. */
   private sampled = 0
+  /** Compiled once at startup, like the ignore rules. */
+  private readonly groups: CompiledGroup[]
 
   /**
    * Opens a store, ready to use.
@@ -174,6 +181,7 @@ export class MonitorStore {
     this.maxBytes = options.maxBytes ?? 0
     this.ignore = compileIgnore(options.ignore)
     this.sampler = new Sampler(options.sampling)
+    this.groups = compileGroups(options.groups)
 
     if (options.notifications) {
       const notifier = new MonitorNotifier(options.notifications, this.db)
@@ -294,7 +302,17 @@ export class MonitorStore {
       return ''
     }
 
+    // The hash is taken from the event as it arrived, before a rule can put a
+    // group on it. That ordering is the whole guarantee: a group assigned by a
+    // rule is derived from a path, so folding it into the identity would
+    // re-key every existing issue the moment somebody turns the option on, and
+    // their open work would read as freshly discovered.
+    //
+    // A group set by `exception()` is already on the event here, and does
+    // belong in the hash — there it is a statement by the author that two
+    // reports are different concerns.
     const fp = fingerprint(event)
+    const labelled = this.label(event)
 
     // Admission control, before the event is copied into the buffer. A route
     // failing on every request would otherwise pay the full cost of recording
@@ -306,7 +324,7 @@ export class MonitorStore {
       return fp
     }
 
-    this.buffer.push({ ...event, fingerprint: fp })
+    this.buffer.push({ ...labelled, fingerprint: fp })
 
     // Size-triggered flushes are suppressed while writes are failing. A failed
     // batch stays in the buffer, so the buffer is still over the threshold on
@@ -323,6 +341,33 @@ export class MonitorStore {
     }
 
     return fp
+  }
+
+  /**
+   * Assigns a group from the configured rules, when one matches.
+   *
+   * The group goes on the event but **not** into the fingerprint, which is the
+   * opposite of how `exception()` works — and the asymmetry is deliberate.
+   * There the group is part of the identity because the author said so; here
+   * it is derived from a path, so folding it into the hash would re-key every
+   * existing issue the first time somebody turns the option on, and their open
+   * work would read as freshly discovered.
+   *
+   * An explicit group always wins. `exception(…, { group })` is a statement by
+   * whoever wrote the code; a rule is an inference from a coincidence of path.
+   */
+  private label(event: MonitorEvent): MonitorEvent {
+    if (this.groups.length === 0 || event.group) {
+      return event
+    }
+
+    const context = event.context ?? {}
+    const match = groupFor(this.groups, {
+      route: typeof context.url === 'string' ? context.url : undefined,
+      message: event.message,
+    })
+
+    return match ? { ...event, group: match.name } : event
   }
 
   /** True while the last write failed and the backoff has not yet elapsed. */
@@ -746,7 +791,9 @@ export class MonitorStore {
         continue
       }
 
-      const alert = evaluate(toIssue(row), state, this.options.notifications?.triggers, now)
+      const issue = toIssue(row)
+      const watched = Boolean(issue.group && findGroup(this.groups, issue.group)?.notify)
+      const alert = evaluate(issue, state, this.options.notifications?.triggers, now, watched)
 
       if (!alert) {
         continue
@@ -755,7 +802,7 @@ export class MonitorStore {
       // A new issue and a regression are each announced once and are therefore
       // not the noise the cooldown exists to stop — but they still start it, so
       // that the thousand occurrences behind them stay quiet.
-      if (alert.reason === 'threshold' && now - state.alertedAt < cooldown) {
+      if ((alert.reason === 'threshold' || alert.reason === 'watched') && now - state.alertedAt < cooldown) {
         continue
       }
 

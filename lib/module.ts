@@ -42,6 +42,7 @@ export default defineNuxtModule<MonitorOptions>({
     ignore: {},
     notifications: {},
     sampling: {},
+    groups: {},
     auth: {
       username: 'admin',
       sessionTtl: 60 * 60 * 24 * 7,
@@ -85,6 +86,7 @@ export default defineNuxtModule<MonitorOptions>({
         scrubKeys: options.scrubKeys,
         ignore: options.ignore,
         sampling: options.sampling,
+        groups: options.groups,
         // Private half, like `auth`: a channel carries a bot token, and the
         // public half of `runtimeConfig` is serialized into the page.
         notifications: {

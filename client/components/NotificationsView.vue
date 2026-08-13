@@ -28,6 +28,10 @@ const testing = ref(false)
 const testResult = ref<{ ok: boolean, message: string } | null>(null)
 
 const channels = computed(() => data.value?.channels ?? [])
+const groups = computed(() => data.value?.groups ?? [])
+
+/** Groups that asked to be alerted on — a trigger like any other. */
+const watched = computed(() => groups.value.filter(group => group.notify).map(group => group.name))
 
 /** Declared, wanted, and unable to send — the state worth naming outright. */
 const broken = computed(() => channels.value.filter(entry => entry.enabled && !entry.usable))
@@ -65,6 +69,14 @@ const triggers = computed(() => {
         : 'Turned off',
       on: thresholds.length > 0,
     },
+    {
+      key: 'watched',
+      label: 'Watched group',
+      detail: watched.value.length
+        ? `Any failure in ${watched.value.join(', ')}`
+        : 'No group has alerts turned on',
+      on: watched.value.length > 0,
+    },
   ]
 })
 
@@ -95,6 +107,7 @@ const REASON: Record<MonitorDelivery['reason'], string> = {
   'new-issue': 'New issue',
   'regression': 'Regression',
   'threshold': 'Growth',
+  'watched': 'Watched',
   'test': 'Test',
 }
 
@@ -271,6 +284,53 @@ onMounted(load)
           :icon="testResult.ok ? 'i-lucide-check' : 'i-lucide-triangle-alert'"
           :title="testResult.message"
         />
+      </section>
+
+      <!-- What the application is divided into, and which parts asked to be
+           heard about. On this screen rather than a section of its own: both
+           answer "what are we watching and what comes of it", and splitting
+           them would split the answer. -->
+      <section v-if="groups.length" class="rounded-lg border border-default p-3">
+        <h2 class="mb-2.5 text-xs font-medium uppercase tracking-wide text-dimmed">
+          Groups
+        </h2>
+
+        <div class="space-y-1.5">
+          <div
+            v-for="group in groups"
+            :key="group.name"
+            class="flex items-start gap-3 rounded bg-elevated/40 px-2.5 py-2 text-sm"
+          >
+            <UIcon
+              :name="group.notify ? 'i-lucide-bell' : 'i-lucide-tag'"
+              class="mt-0.5 size-4 shrink-0"
+              :class="group.notify ? 'text-primary' : 'text-dimmed'"
+            />
+
+            <div class="min-w-0 flex-1">
+              <p class="text-toned">
+                {{ group.name }}
+              </p>
+              <p class="truncate font-mono text-xs text-dimmed">
+                {{ [...group.routes, ...group.messages].join('  ') }}
+              </p>
+            </div>
+
+            <UBadge
+              v-if="group.notify"
+              size="sm"
+              color="primary"
+              variant="subtle"
+              label="Alerts"
+              title="Errors in this group raise an alert whenever they happen"
+            />
+          </div>
+        </div>
+
+        <p class="mt-2.5 text-xs text-dimmed">
+          Configured under <code class="font-mono">monitor.groups</code>. A group with alerts on is
+          still subject to the cooldown and the quiet hours below.
+        </p>
       </section>
 
       <div class="grid gap-3 md:grid-cols-2">

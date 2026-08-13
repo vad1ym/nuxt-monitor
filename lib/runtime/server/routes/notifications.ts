@@ -70,6 +70,20 @@ export default defineEventHandler(async (event) => {
       /** False when the channel has no token or URL from any source. */
       usable: usable.has(channelName(channel)),
     })),
+    // The rules, so this screen answers "what are we watching" as well as
+    // "what got sent". They are read-only here by design: a rule describes the
+    // architecture of the application and belongs in the config, in review,
+    // and identical across environments.
+    groups: Object.entries(monitorConfig().groups ?? {}).map(([name, rule]) => {
+      const normalized = Array.isArray(rule) ? { routes: rule } : rule
+
+      return {
+        name,
+        routes: normalized.routes ?? [],
+        messages: normalized.messages ?? [],
+        notify: normalized.notify === true,
+      }
+    }),
     triggers: config.triggers ?? {},
     cooldownMinutes: config.cooldownMinutes ?? 60,
     groupWindowSeconds: config.groupWindowSeconds ?? 30,

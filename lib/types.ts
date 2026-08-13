@@ -126,6 +126,27 @@ export interface MonitorOptions {
   /** Where alerts go, and what is worth one. */
   notifications?: MonitorNotificationOptions
   /**
+   * Named parts of the application, and which of them are worth an alert.
+   *
+   * A group labels errors nobody annotated by hand: a failure in
+   * `/api/checkout` belongs to payments whether or not somebody remembered to
+   * call `exception()` with a group. The name is then what a notification
+   * channel subscribes to and what the issue list filters by.
+   *
+   * ```ts
+   * groups: {
+   *   payments: { routes: ['/api/checkout/**'], notify: true },
+   *   'third-party': { messages: ['stripe', '/timeout of \\d+ms/'] },
+   * }
+   * ```
+   *
+   * Read-only from the dashboard's point of view. These describe the
+   * architecture of the application rather than an observation about it, so
+   * they belong beside the code and in review — unlike resolving or ignoring an
+   * issue, which is what somebody concluded this afternoon.
+   */
+  groups?: MonitorGroupOptions
+  /**
    * What to store when one issue is happening constantly.
    *
    * Off by default: on an ordinary application every occurrence fits, and
@@ -139,6 +160,35 @@ export interface MonitorOptions {
    * bodies — stack, context, breadcrumbs — are thinned.
    */
   sampling?: MonitorSamplingOptions
+}
+
+/** Group name → the rule that assigns it. */
+export type MonitorGroupOptions = Record<string, MonitorGroupRule | string[]>
+
+export interface MonitorGroupRule {
+  /**
+   * Path patterns: `**` spans separators, `*` does not, `:param` is one
+   * segment. Matched against the raw path, so a rule is written the way the
+   * files in `server/api` are named.
+   */
+  routes?: string[]
+  /**
+   * Message patterns, as substrings or `/regex/` strings — the same spelling
+   * `ignore` uses.
+   *
+   * For the faults a path cannot find: a third-party provider rarely breaks on
+   * its own route, it breaks inside yours.
+   */
+  messages?: string[]
+  /**
+   * Alert on errors in this group. Default: `false`.
+   *
+   * Everything that already governs alerting still applies — the per-issue
+   * cooldown, the grouping window, quiet hours, and any channel that names
+   * this group. This flag decides whether the group is worth an alert at all,
+   * not whether it bypasses the rules that keep alerting bearable.
+   */
+  notify?: boolean
 }
 
 export interface MonitorSamplingOptions {
@@ -335,7 +385,7 @@ export interface MonitorQuietHours {
 }
 
 /** Why an alert was raised. */
-export type MonitorAlertReason = 'new-issue' | 'regression' | 'threshold' | 'test'
+export type MonitorAlertReason = 'new-issue' | 'regression' | 'threshold' | 'watched' | 'test'
 
 /** One thing worth telling somebody about. */
 export interface MonitorAlert {

@@ -3,6 +3,7 @@ import { createError, useRuntimeConfig } from '#imports'
 import type {
   MonitorEvent,
   MonitorIgnoreOptions,
+  MonitorGroupOptions,
   MonitorNotificationOptions,
   MonitorSamplingOptions,
   MonitorSide,
@@ -27,6 +28,7 @@ export interface MonitorRuntimeConfig {
   ignore: MonitorIgnoreOptions
   notifications: MonitorNotificationOptions
   sampling: MonitorSamplingOptions
+  groups: MonitorGroupOptions
   baseURL: string
   cdnURL: string
   mapsDir: string
@@ -102,6 +104,7 @@ async function openStore(): Promise<MonitorCollector> {
       ignore: config.ignore,
       notifications: config.notifications,
       sampling: config.sampling,
+      groups: config.groups,
     })
   }
   catch (error) {

@@ -244,6 +244,28 @@ This is a different bound from [`maxEventsPerIssue`](#maxeventsperissue), which
 trims *after* the write. Both are useful: this one saves the work, that one
 bounds the result.
 
+## groups
+
+Named parts of the application, assigned by rule. See
+[Reporting by hand](../guide/reporting#groups-without-touching-the-code).
+
+| Option | Type | Meaning |
+| --- | --- | --- |
+| `groups.<name>.routes` | `string[]` | Path globs. `**` spans separators, `*` does not, `:param` is one segment |
+| `groups.<name>.messages` | `string[]` | Substrings or `/regex/`, as in `ignore` |
+| `groups.<name>.notify` | `boolean` | Alert whenever this group fails. Default `false` |
+
+```ts
+groups: {
+  payments: { routes: ['/api/checkout/**'], notify: true },
+  checkout: ['/checkout/**'],
+  'third-party': { messages: ['stripe'] },
+}
+```
+
+A bare array is shorthand for `{ routes: [...] }`. Rules match pages as readily
+as endpoints, and the first rule declared wins when two would match.
+
 ## Environment variables
 
 Options live under `runtimeConfig.monitor`, so any of them can be overridden at
