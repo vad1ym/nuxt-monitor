@@ -2,7 +2,6 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import type {
   MonitorDashboard,
-  MonitorDashboardBreakdown,
   MonitorFacetFilter,
   MonitorFacetName,
   MonitorUptimeSummary,
@@ -105,6 +104,9 @@ const hasAnything = computed(() =>
   Boolean(totals.value && (totals.value.events > 0 || totals.value.requests > 0)),
 )
 
+/** Which dimension the table is showing. */
+const tab = ref<MonitorFacetName>('browser')
+
 const shown = computed(() =>
   (data.value?.breakdowns ?? [])
     .map(breakdown => ({
@@ -132,11 +134,16 @@ const shown = computed(() =>
     .filter(breakdown => breakdown.slices.length > 0),
 )
 
-/** A dimension worth a ring rather than a list: few values, and a composition. */
-function isDonut(breakdown: MonitorDashboardBreakdown): boolean {
-  return breakdown.slices.length <= 4
-    && (breakdown.facet === 'kind' || breakdown.facet === 'deviceType')
-}
+/**
+ * The breakdown on screen.
+ *
+ * Falls back to the first available rather than showing nothing: the chosen
+ * dimension can vanish when a filter empties it, and an empty block below a
+ * row of tabs reads as broken.
+ */
+const current = computed(() =>
+  shown.value.find(breakdown => breakdown.facet === tab.value) ?? shown.value[0],
+)
 
 function labelFor(facet: MonitorFacetName): string {
   return DIMENSIONS.find(entry => entry.facet === facet)?.label ?? facet
@@ -443,68 +450,108 @@ onMounted(load)
         </div>
       </section>
 
-      <div class="grid gap-3 lg:grid-cols-2">
-        <!-- Rings for compositions with a handful of parts, lists for
-             everything else: a ring answers "even or lopsided", a bar list
-             answers "which is biggest", and they are different questions. -->
-        <section
-          v-for="breakdown in shown"
-          :key="breakdown.facet"
-          class="rounded-lg border border-default p-3"
-        >
-          <div class="mb-2 flex items-center justify-between gap-2">
-            <h2 class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-dimmed">
-              <UIcon :name="iconFor(breakdown.facet)" class="size-3.5" />
-              {{ labelFor(breakdown.facet) }}
-            </h2>
-            <span v-if="breakdown.otherErrors" class="text-xs text-dimmed">
-              +{{ formatCount(breakdown.otherErrors) }} more
-            </span>
-          </div>
-
-          <DonutChart
-            v-if="isDonut(breakdown)"
-            :slices="breakdown.slices.map(slice => ({ value: slice.value, count: slice.errors }))"
-            :hint="value => {
-              const slice = breakdown.slices.find(entry => entry.value === value)
-
-              return slice?.lift !== undefined && slice.lift >= 1.3 ? `${slice.lift.toFixed(1)}×` : undefined
-            }"
-            @select="value => narrow(breakdown.facet, value)"
+      <!-- One block with tabs rather than a card per dimension.
+           Four cards each showed two rows and stood two-thirds empty, and the
+           reader had to compare across them by eye. One table, switched by a
+           tab, gives every dimension the full width — enough for the traffic
+           it produced, the errors it caused and the rate between them, side by
+           side, which is the comparison the screen exists for. -->
+      <section class="rounded-lg border border-default p-3">
+        <div class="mb-3 flex flex-wrap items-center gap-1">
+          <UButton
+            v-for="breakdown in shown"
+            :key="breakdown.facet"
+            size="xs"
+            :color="tab === breakdown.facet ? 'primary' : 'neutral'"
+            :variant="tab === breakdown.facet ? 'subtle' : 'ghost'"
+            :icon="iconFor(breakdown.facet)"
+            :label="labelFor(breakdown.facet)"
+            @click="tab = breakdown.facet"
           />
+        </div>
 
-          <div v-else class="space-y-0.5">
-            <button
-              v-for="slice in breakdown.slices"
-              :key="slice.value"
-              type="button"
-              class="block w-full cursor-pointer text-left"
-              :title="slice.trafficShare !== undefined
-                ? `${formatShare(slice.errorShare)} of errors, ${formatShare(slice.trafficShare)} of traffic`
-                : `${formatShare(slice.errorShare)} of errors`"
-              @click="narrow(breakdown.facet, slice.value)"
-            >
-              <StatBar
-                :share="slice.errorShare"
-                :label="slice.value"
-                :value="formatCount(slice.errors)"
-                :hint="slice.lift !== undefined && slice.lift >= 1.3 ? `${slice.lift.toFixed(1)}×` : undefined"
-                :tone="slice.lift !== undefined && slice.lift >= 2 ? 'warning' : 'neutral'"
-                :mono="breakdown.facet === 'route' || breakdown.facet === 'release'"
-              />
-            </button>
+        <template v-if="current">
+          <div class="flex flex-col gap-4 lg:flex-row lg:items-start">
+            <!-- The ring is the proportion at a glance; the table beside it is
+                 what the numbers actually are. Only where there are few enough
+                 slices for a ring to be readable. -->
+            <DonutChart
+              v-if="current.slices.length <= 5"
+              class="lg:w-64 lg:shrink-0"
+              :slices="current.slices.map(slice => ({ value: slice.value, count: slice.errors }))"
+              :size="80"
+              @select="value => narrow(current!.facet, value)"
+            />
 
-            <p
-              v-if="breakdown.slices.every(slice => slice.lift === undefined)"
-              class="pt-1 text-xs text-dimmed"
-            >
-              {{ ['route', 'release', 'kind', 'group'].includes(breakdown.facet)
-                ? 'Shares of errors — traffic is not counted by this dimension.'
-                : 'Shares of errors only: no page views counted yet.' }}
-            </p>
+            <div class="min-w-0 flex-1">
+              <div class="flex items-center gap-3 px-2 pb-1 text-[11px] uppercase tracking-wide text-dimmed">
+                <span class="min-w-0 flex-1">{{ labelFor(current.facet) }}</span>
+                <span class="w-16 text-end">Requests</span>
+                <span class="w-16 text-end">Errors</span>
+                <span class="w-20 text-end">Per view</span>
+              </div>
+
+              <div class="space-y-0.5">
+                <button
+                  v-for="slice in current.slices"
+                  :key="slice.value"
+                  type="button"
+                  class="relative flex w-full cursor-pointer items-center gap-3 overflow-hidden rounded px-2 py-1.5 text-left text-sm hover:bg-elevated/40"
+                  @click="narrow(current!.facet, slice.value)"
+                >
+                  <!-- Width is the share of errors, colour is whether the rate
+                       is unusual: a wide grey row is a big slice behaving
+                       normally, a narrow amber one is a small slice that is not. -->
+                  <span
+                    class="absolute inset-y-0 start-0 -z-10 rounded"
+                    :class="slice.lift !== undefined && slice.lift >= 2
+                      ? 'bg-warning/20'
+                      : 'bg-elevated/60'"
+                    :style="{ width: `${Math.max(slice.errorShare * 100, 1.5)}%` }"
+                  />
+
+                  <span
+                    class="min-w-0 flex-1 truncate text-toned"
+                    :class="['route', 'release', 'browserVersion', 'osVersion'].includes(current!.facet) ? 'font-mono' : ''"
+                  >{{ slice.value }}</span>
+
+                  <span class="w-16 shrink-0 text-end tabular-nums text-dimmed">
+                    {{ slice.traffic ? formatCount(slice.traffic) : '—' }}
+                  </span>
+
+                  <span class="w-16 shrink-0 text-end tabular-nums text-highlighted">
+                    {{ formatCount(slice.errors) }}
+                  </span>
+
+                  <span
+                    class="w-20 shrink-0 text-end text-xs tabular-nums"
+                    :class="slice.lift !== undefined && slice.lift >= 2 ? 'text-warning' : 'text-dimmed'"
+                  >
+                    <template v-if="slice.errorsPerView !== undefined">
+                      {{ slice.errorsPerView.toFixed(2) }}
+                      <span v-if="slice.lift !== undefined && slice.lift >= 1.3" class="text-warning">
+                        {{ slice.lift.toFixed(1) }}×
+                      </span>
+                    </template>
+                    <template v-else>—</template>
+                  </span>
+                </button>
+              </div>
+
+              <p class="mt-2 px-2 text-xs text-dimmed">
+                <template v-if="current.otherErrors">
+                  {{ formatCount(current.otherErrors) }} more in values not listed.
+                </template>
+                {{ ['route', 'release', 'kind', 'group'].includes(current.facet)
+                  ? 'Traffic is not counted by this dimension, so there is no rate to compare against.'
+                  : current.slices.every(slice => slice.errorsPerView === undefined)
+                    ? 'Not enough page views counted to give these a rate.'
+                    : 'Per view is errors per page view; the multiplier is against the application average.' }}
+              </p>
+            </div>
           </div>
-        </section>
-      </div>
+        </template>
+      </section>
 
       <!-- What just happened, for the glance that does not start from a
            number. -->

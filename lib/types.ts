@@ -808,6 +808,14 @@ export interface MonitorDashboardSlice {
    * there is no traffic to compare against.
    */
   lift?: number
+  /**
+   * Errors per page view for this slice, as a plain rate.
+   *
+   * `lift` says how unusual the slice is; this says how bad it is. A browser
+   * at 3× the average is worth investigating either way, but 3× of one error
+   * in ten thousand and 3× of one in five are different afternoons.
+   */
+  errorsPerView?: number
 }
 
 /** One dimension of the dashboard, with its rows. */

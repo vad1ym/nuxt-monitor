@@ -240,6 +240,9 @@ async function breakdownFor(
       // MIN_TRAFFIC. A slice with three page views and one error would
       // otherwise report a lift of two hundred and top every list.
       lift: trafficShare && traffic >= MIN_TRAFFIC ? errorShare / trafficShare : undefined,
+      // The absolute rate beside the relative one: `lift` says how unusual,
+      // this says how bad.
+      errorsPerView: traffic >= MIN_TRAFFIC ? errors / traffic : undefined,
     }
   })
 

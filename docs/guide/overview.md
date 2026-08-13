@@ -32,18 +32,28 @@ reader has to make that comparison by eye.
 
 ## Breakdowns
 
-Four are on by default — kind, browser, OS and device — and the rest are one
-click away in the breakdowns menu: group, release, browser version, OS version,
-route. A screen that shows everything shows nothing, so the others are opt-in
-rather than shipped as clutter.
+One block with a tab per dimension, rather than a card each. Four cards showed
+two rows apiece and stood two-thirds empty, and comparing across them was work
+for the reader; one table at full width fits the three numbers that matter side
+by side:
 
-Dimensions with few values are drawn as rings, because the question there is
-"is this split even or lopsided". Everything else is a ranked bar list, because
-the question there is "which is biggest".
+| Column | Meaning |
+| --- | --- |
+| **Requests** | Page views counted for this value |
+| **Errors** | Errors attributed to it |
+| **Per view** | Errors per page view, with the multiplier against the application average |
 
-Some dimensions have no audience to compare against: route, release, kind and
-group describe the request or the code, not the visitor. Those are ranked on
-error share alone and say so rather than inventing a baseline.
+The multiplier is the finding, the rate is the severity. A browser at `3×` is
+unusual either way, but `3×` of one error in ten thousand and `3×` of one in
+five are different afternoons.
+
+Kind, browser, OS and device are on by default; group, release, versions and
+route are one click away in the breakdowns menu. A screen that shows everything
+shows nothing.
+
+Route, release, kind and group have no audience to compare against — they
+describe the request or the code, not the visitor — so those columns read `—`
+rather than inventing a baseline.
 
 ## Filtering
 
