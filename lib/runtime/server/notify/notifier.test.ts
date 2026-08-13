@@ -135,6 +135,59 @@ describe('what raises an alert', () => {
   })
 })
 
+describe('credentials supplied at runtime', () => {
+  it('fills in a webhook URL the channel left blank', async () => {
+    // A channel is an array entry, which `NUXT_MONITOR_*` cannot reach into —
+    // so without the flat option the only place for a secret is the config
+    // file, which is baked into the build artefact.
+    store = await open({
+      channels: [{ type: 'webhook' }],
+      webhookUrl: 'https://hooks.test/from-env',
+    })
+
+    store.capture(makeEvent())
+    await store.flush()
+
+    expect(sent[0]?.url).toBe('https://hooks.test/from-env')
+  })
+
+  it('lets a value on the channel win over the runtime one', async () => {
+    store = await open({
+      channels: [{ type: 'webhook', url: 'https://hooks.test/explicit' }],
+      webhookUrl: 'https://hooks.test/from-env',
+    })
+
+    store.capture(makeEvent())
+    await store.flush()
+
+    expect(sent[0]?.url).toBe('https://hooks.test/explicit')
+  })
+
+  it('skips a channel that has no credentials from either source', async () => {
+    // Dropped rather than kept and failed on every alert: half a configuration
+    // is a mistake to report once at startup, not one to rediscover at 3am.
+    store = await open({ channels: [{ type: 'telegram' }] })
+
+    store.capture(makeEvent())
+    await store.flush()
+
+    expect(sent).toHaveLength(0)
+    expect(store.alerts).toBeUndefined()
+  })
+
+  it('skips a Telegram channel that has a token but no chat', async () => {
+    store = await open({
+      channels: [{ type: 'telegram', token: 'abc' }],
+      // No chat id anywhere: half a channel cannot deliver.
+    })
+
+    store.capture(makeEvent())
+    await store.flush()
+
+    expect(sent).toHaveLength(0)
+  })
+})
+
 describe('the cooldown', () => {
   it('holds back a threshold alert raised inside the window', async () => {
     store = await open({ triggers: { thresholds: [2, 3] }, cooldownMinutes: 60 })
@@ -233,6 +286,19 @@ describe('the delivery log', () => {
 
     expect(delivery).toMatchObject({ channel: 'ops-chat', reason: 'new-issue', status: 'sent', alerts: 1 })
     expect(delivery?.fingerprint).toBeTruthy()
+  })
+
+  it('names the issue a sent alert was about', async () => {
+    store = await open()
+    store.capture(makeEvent({ message: 'cart total exploded' }))
+    await store.flush()
+
+    // "New issue, sent, 10m ago" cannot be matched against a message somebody
+    // remembers receiving, which is the comparison the log is opened to make.
+    expect((await store.deliveries())[0]?.issue).toMatchObject({
+      type: 'TypeError',
+      message: 'cart total exploded',
+    })
   })
 
   it('records a failure with the reason it failed', async () => {

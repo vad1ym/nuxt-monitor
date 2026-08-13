@@ -10,6 +10,7 @@ import IssueFilters from './components/IssueFilters.vue'
 import IssueList from './components/IssueList.vue'
 import LoginView from './components/LoginView.vue'
 import MonitorLogo from './components/MonitorLogo.vue'
+import NotificationsView from './components/NotificationsView.vue'
 import OverviewView from './components/OverviewView.vue'
 import RoutesView from './components/RoutesView.vue'
 
@@ -55,6 +56,10 @@ const NAV: { view: View, label: string, icon: string }[] = [
   { view: 'overview', label: 'Overview', icon: 'i-lucide-layout-dashboard' },
   { view: 'issues', label: 'Issues', icon: 'i-lucide-inbox' },
   { view: 'traffic', label: 'Traffic', icon: 'i-lucide-route' },
+  // Last, and deliberately not beside the screens that answer "what broke":
+  // this one answers "who was told", which is a question asked once at setup
+  // and then only when something did not arrive.
+  { view: 'notifications', label: 'Notifications', icon: 'i-lucide-bell' },
 ]
 
 /**
@@ -412,7 +417,10 @@ onMounted(async () => {
             <!-- Spaced rather than a UButtonGroup: the group exists to weld
                  buttons into one control, and the seam made the selected one
                  read as part of its neighbour instead of standing apart. -->
-            <div class="ms-auto flex items-center gap-1.5">
+            <!-- Hidden on Notifications: nothing there is windowed, and a
+                 control that changes nothing is worse than no control — it
+                 invites the reader to conclude the log respects it. -->
+            <div v-if="view !== 'notifications'" class="ms-auto flex items-center gap-1.5">
               <UButton
                 v-for="option in WINDOWS"
                 :key="option.hours"
@@ -451,6 +459,8 @@ onMounted(async () => {
             />
 
             <RoutesView v-else-if="view === 'traffic'" :hours="hours" />
+
+            <NotificationsView v-else-if="view === 'notifications'" />
 
             <IssueDetail
               v-else-if="selected"

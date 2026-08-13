@@ -1,4 +1,5 @@
 import type {
+  MonitorDelivery,
   MonitorEvent,
   MonitorFacetCounts,
   MonitorFacetFilter,
@@ -7,10 +8,12 @@ import type {
   MonitorIssue,
   MonitorIssueTrend,
   MonitorOverview,
+  MonitorQuietHours,
   MonitorRelease,
   MonitorRouteStat,
   MonitorSessionStats,
   MonitorTrafficStats,
+  MonitorTriggerOptions,
 } from '../lib/types'
 
 /**
@@ -78,6 +81,25 @@ async function errorMessage(response: Response): Promise<string> {
   catch {
     return response.statusText
   }
+}
+
+/**
+ * What the notifications screen renders.
+ *
+ * Channels arrive as names and types only — the server never sends a token, and
+ * this type is the reminder of why: anything here is in a browser's memory and
+ * in whatever later reads it.
+ */
+export interface NotificationSettings {
+  /** False when nothing is configured, which is the default. */
+  enabled: boolean
+  /** `usable` is false when no token or URL resolved for a declared channel. */
+  channels: { name: string, type: string, enabled: boolean, usable: boolean }[]
+  triggers: MonitorTriggerOptions
+  cooldownMinutes: number
+  groupWindowSeconds: number
+  quietHours?: MonitorQuietHours
+  deliveries: MonitorDelivery[]
 }
 
 export interface IssueDetail {
@@ -190,6 +212,22 @@ export const api = {
 
   /** The collector's own state — see `HealthBanner`. */
   health: () => request<MonitorHealth & { release?: string, storageDir: string }>('/health'),
+
+  notifications: (limit = 100) =>
+    request<NotificationSettings>(`/notifications?limit=${limit}`),
+
+  /**
+   * Sends a test alert to every configured channel.
+   *
+   * The one write on this screen, and the reason the screen justifies itself: a
+   * token and a chat id are copied by hand, and the alternative way to find out
+   * they are wrong is the first real incident going unreported.
+   */
+  testNotification: () =>
+    request<{ sent: boolean, reason?: string, deliveries?: MonitorDelivery[] }>(
+      '/notifications',
+      { method: 'POST' },
+    ),
 
   setResolved: (fingerprint: string, resolved: boolean) =>
     request<MonitorIssue>(`/issues/${encodeURIComponent(fingerprint)}`, {

@@ -50,6 +50,63 @@ export interface NotifierOptions extends MonitorNotificationOptions {
   now?: () => number
 }
 
+/**
+ * The channels that can actually be used, with runtime credentials filled in.
+ *
+ * A channel is an array entry, and `NUXT_MONITOR_*` can only override a plain
+ * key — so a bot token written in `nuxt.config` is baked into the build output
+ * with no way to supply it later. The flat options exist to give the secrets
+ * the same runtime path `databaseUrl` already has, and they fill in only what a
+ * channel left blank.
+ *
+ * A channel still missing its credentials afterwards is dropped rather than
+ * kept and failed on every alert: half a configuration is a mistake to report
+ * once at startup, not a delivery failure to rediscover at 3am.
+ */
+export function resolveChannels(options: MonitorNotificationOptions): MonitorChannelOptions[] {
+  const usable: MonitorChannelOptions[] = []
+
+  for (const channel of options.channels ?? []) {
+    if (channel.enabled === false) {
+      continue
+    }
+
+    if (channel.type === 'telegram') {
+      const token = channel.token || options.telegramToken
+      const chatId = channel.chatId || options.telegramChatId
+
+      if (token && chatId) {
+        usable.push({ ...channel, token, chatId })
+        continue
+      }
+
+      // The variable is named in full. A message that names the wrong one is
+      // worse than one that names none: it sends somebody to set a variable
+      // that will go on being ignored.
+      console.warn(
+        `[monitor] the Telegram channel ${channelName(channel)} has no `
+        + `${token ? 'chat id' : 'bot token'}, so it is skipped. Set it on the channel or as `
+        + `${token ? 'NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_CHAT_ID' : 'NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN'}.`,
+      )
+      continue
+    }
+
+    const url = channel.url || options.webhookUrl
+
+    if (url) {
+      usable.push({ ...channel, url })
+      continue
+    }
+
+    console.warn(
+      `[monitor] the webhook channel ${channelName(channel)} has no URL, so it is skipped. `
+      + 'Set it on the channel or as NUXT_MONITOR_NOTIFICATIONS_WEBHOOK_URL.',
+    )
+  }
+
+  return usable
+}
+
 export class MonitorNotifier {
   private queue: MonitorAlert[] = []
   private timer: ReturnType<typeof setTimeout> | undefined
@@ -60,7 +117,7 @@ export class MonitorNotifier {
   private sending: Promise<void> | undefined
 
   constructor(private options: NotifierOptions, private db: Database) {
-    this.channels = (options.channels ?? []).filter(channel => channel.enabled !== false)
+    this.channels = resolveChannels(options)
     this.now = options.now ?? Date.now
   }
 

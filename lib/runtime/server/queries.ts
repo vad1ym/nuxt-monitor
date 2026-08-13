@@ -824,8 +824,17 @@ export async function setIgnored(db: Database, fp: string, ignored: boolean): Pr
  * answers is "why was I not told", and the answer is never in the successes.
  */
 export async function deliveries(db: Database, limit = 100): Promise<MonitorDelivery[]> {
+  // Joined to the issue for its message: a log row saying "New issue, sent" and
+  // nothing else cannot be matched against what a reader remembers receiving,
+  // which is exactly the comparison this screen is opened to make. `LEFT`, so a
+  // row whose issue has since been evicted still lists what was sent.
   const rows = await db
-    .prepare('SELECT * FROM notifications ORDER BY at DESC LIMIT ?')
+    .prepare(`
+      SELECT n.*, i.message AS issue_message, i.type AS issue_type
+      FROM notifications n
+      LEFT JOIN issues i ON i.fingerprint = n.fingerprint
+      ORDER BY n.at DESC LIMIT ?
+    `)
     .all(limit) as Record<string, unknown>[]
 
   return rows.map(row => ({
@@ -837,5 +846,8 @@ export async function deliveries(db: Database, limit = 100): Promise<MonitorDeli
     alerts: Number(row.alerts),
     status: row.status as MonitorDelivery['status'],
     detail: (row.detail as string | null) ?? undefined,
+    issue: row.issue_message
+      ? { type: String(row.issue_type), message: String(row.issue_message) }
+      : undefined,
   }))
 }

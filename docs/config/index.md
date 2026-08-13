@@ -185,17 +185,17 @@ Where alerts go, and what is worth one. Off until a channel is configured. See
 | `notifications.triggers.thresholds` | `number[]` | `[10, 100, 1000]` |
 | `notifications.quietHours` | `{ from, to, timezone?, days? }` | — |
 
-A channel is `{ type: 'telegram', token, chatId }` or
-`{ type: 'webhook', url, headers? }`, each with an optional `name` for the
-delivery log and `enabled: false` to keep it configured but silent.
+A channel is `{ type: 'telegram', token?, chatId? }` or
+`{ type: 'webhook', url?, headers? }`, each with an optional `name` for the
+delivery log and `enabled: false` to keep it configured but silent. Leave the
+credentials off and supply them through the environment — see
+[Secrets](../guide/notifications#secrets) for why that is not just a preference.
 
 ```ts
 notifications: {
-  channels: [{
-    type: 'telegram',
-    token: process.env.MONITOR_TELEGRAM_TOKEN!,
-    chatId: process.env.MONITOR_TELEGRAM_CHAT!,
-  }],
+  // Credentials come from the environment at runtime — a token written here is
+  // resolved at build time and ends up in the build output.
+  channels: [{ type: 'telegram' }],
   dashboardUrl: 'https://app.example.com/_monitor',
   quietHours: { from: '22:00', to: '07:00', timezone: 'Europe/Kyiv' },
 }
@@ -220,6 +220,9 @@ start-up by the matching `NUXT_MONITOR_*` variable, with nesting spelled as `_`.
 | `NUXT_MONITOR_DATABASE_URL` | External database |
 | `NUXT_MONITOR_RETENTION_DAYS` | Retention window |
 | `NUXT_MONITOR_NOTIFICATIONS_DASHBOARD_URL` | Where alert links point |
+| `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN` | Telegram bot token |
+| `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_CHAT_ID` | Telegram chat id |
+| `NUXT_MONITOR_NOTIFICATIONS_WEBHOOK_URL` | Webhook URL |
 
 These are read when the server starts, which is what makes one build deployable
 to several environments.

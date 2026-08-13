@@ -10,15 +10,17 @@ It is off until you configure a channel.
 export default defineNuxtConfig({
   monitor: {
     notifications: {
-      channels: [{
-        type: 'telegram',
-        token: process.env.MONITOR_TELEGRAM_TOKEN!,
-        chatId: process.env.MONITOR_TELEGRAM_CHAT!,
-      }],
+      // No token here — it comes from the environment at runtime. See Secrets.
+      channels: [{ type: 'telegram' }],
       dashboardUrl: 'https://app.example.com/_monitor',
     },
   },
 })
+```
+
+```bash
+NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN=123456:AA…
+NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_CHAT_ID=-1001234567890
 ```
 
 ## Telegram in two minutes
@@ -104,11 +106,8 @@ silently.
 For anything Telegram is not — Slack via a workflow, a pager, your own router.
 
 ```ts
-channels: [{
-  type: 'webhook',
-  url: process.env.MONITOR_WEBHOOK!,
-  headers: { authorization: `Bearer ${process.env.MONITOR_WEBHOOK_TOKEN}` },
-}]
+// The URL comes from NUXT_MONITOR_NOTIFICATIONS_WEBHOOK_URL at runtime.
+channels: [{ type: 'webhook' }]
 ```
 
 It receives a `POST` with the rendered text and the alerts themselves, so a
@@ -136,8 +135,8 @@ click that saves the navigation.
 
 ## When it does not arrive
 
-The Notifications section lists every attempt, including the ones that were
-never sent. That is deliberate: the question people actually ask of an alerting
+The dashboard's Notifications section lists every attempt, including the ones
+that were never sent. That is deliberate: the question people actually ask of an alerting
 system is "why did nobody tell me?", and the answer is never among the
 successes. A row is `sent`, `failed` with the reason the channel gave, or
 `suppressed` with the rule that silenced it.
@@ -152,7 +151,29 @@ throws is recorded and stepped over — the events are written either way.
 
 ## Secrets
 
-Channels are configured in `nuxt.config`, not in the dashboard, and the tokens
-belong in the environment rather than in the file. They live under the private
-half of `runtimeConfig`, so they never reach the browser, and the dashboard's
-own API returns channel names and types only.
+Channels are configured in `nuxt.config`, not in the dashboard. The credentials
+should not be, and there is a specific reason why.
+
+A channel is an entry in an array, and Nuxt can only override a `runtimeConfig`
+value that is a plain key — `NUXT_MONITOR_*` cannot reach into a list. So a
+token written into the config file, even as `process.env.X`, is resolved when
+the app is **built** and ends up inside the build output: a secret in an image,
+copied wherever that image goes. It is the same reason `databaseUrl` is read at
+runtime.
+
+These three are flat keys for exactly that reason, read when the server starts:
+
+| Variable | Fills in |
+| --- | --- |
+| `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN` | The Telegram channel's `token` |
+| `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_CHAT_ID` | Its `chatId` |
+| `NUXT_MONITOR_NOTIFICATIONS_WEBHOOK_URL` | The webhook channel's `url` |
+
+They fill in only what a channel left blank, so a config that does spell out a
+value keeps working. A channel still missing its credentials when the server
+starts is skipped with a line in the log — half a configuration is a mistake
+worth reporting once at boot, not a delivery failure to rediscover at 3am.
+
+Whatever the source, credentials live under the private half of `runtimeConfig`
+and never reach the browser; the dashboard's own API returns channel names and
+types only.

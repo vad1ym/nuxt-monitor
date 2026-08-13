@@ -33,11 +33,13 @@ export async function send(
   alerts: MonitorAlert[],
   context: ChannelContext,
 ): Promise<void> {
+  // Non-null because `resolveChannels` dropped every channel that was still
+  // missing its credentials — a channel reaching here is one that can be used.
   if (channel.type === 'telegram') {
-    return sendTelegram(channel.token, channel.chatId, alerts, context)
+    return sendTelegram(channel.token!, channel.chatId!, alerts, context)
   }
 
-  return sendWebhook(channel.url, channel.headers, alerts, context)
+  return sendWebhook(channel.url!, channel.headers, alerts, context)
 }
 
 /**

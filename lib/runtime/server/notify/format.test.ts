@@ -63,6 +63,15 @@ describe('formatText', () => {
       .toContain('100 occurrences')
   })
 
+  it('points a test alert at the dashboard, not at an issue that does not exist', () => {
+    // The message somebody sends to confirm the setup works is the worst
+    // possible place to hand them a 404.
+    const message = formatText([alert({}, 'test')], DASHBOARD)
+
+    expect(message).not.toContain('/issues/')
+    expect(message).toContain(`Open dashboard: ${DASHBOARD}`)
+  })
+
   it('omits the link when no dashboard URL is configured', () => {
     const message = formatText([alert()], '')
 

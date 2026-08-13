@@ -83,7 +83,19 @@ export default defineNuxtModule<MonitorOptions>({
         ignore: options.ignore,
         // Private half, like `auth`: a channel carries a bot token, and the
         // public half of `runtimeConfig` is serialized into the page.
-        notifications: options.notifications ?? {},
+        notifications: {
+          ...options.notifications,
+          // Spelled out with `?? ''` for the same reason `databaseUrl` is: Nuxt
+          // only applies a `NUXT_*` override to a key already present in
+          // `runtimeConfig`, and `defu` drops `undefined` outright. Without
+          // these three keys existing, `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN`
+          // is silently ignored and the only place left for a bot token is the
+          // config file — where it is baked into the build artefact.
+          telegramToken: options.notifications?.telegramToken ?? '',
+          telegramChatId: options.notifications?.telegramChatId ?? '',
+          webhookUrl: options.notifications?.webhookUrl ?? '',
+          dashboardUrl: options.notifications?.dashboardUrl ?? '',
+        },
         // Secrets live under the private half of runtimeConfig, so they are
         // never serialized into the client payload.
         auth: {

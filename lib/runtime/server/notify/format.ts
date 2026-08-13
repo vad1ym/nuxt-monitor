@@ -85,7 +85,11 @@ function render(
   const link = issueLink(alerts, dashboardUrl)
 
   if (link) {
-    lines.push('', markup.link(escape(alerts.length === 1 ? 'Open issue' : 'Open dashboard'), link))
+    // The label follows the target rather than the count, or a test alert
+    // would say "Open issue" about a link to the dashboard.
+    const toIssue = link.includes('/issues/')
+
+    lines.push('', markup.link(escape(toIssue ? 'Open issue' : 'Open dashboard'), link))
   }
 
   return lines.join('\n')
@@ -148,7 +152,10 @@ function issueLink(alerts: MonitorAlert[], dashboardUrl: string): string {
 
   const base = dashboardUrl.replace(/\/+$/, '')
 
-  return alerts.length === 1
+  // A test alert describes no stored issue, so linking at one lands on a 404 —
+  // from the very message somebody sent to confirm the setup works, which is
+  // the worst possible moment to show them a broken link.
+  return alerts.length === 1 && alerts[0]!.reason !== 'test'
     ? `${base}/issues/${alerts[0]!.issue.fingerprint}`
     : base
 }

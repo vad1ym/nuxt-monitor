@@ -173,6 +173,26 @@ export interface MonitorNotificationOptions {
   groupWindowSeconds?: number
   /** When not to send at all. */
   quietHours?: MonitorQuietHours
+  /**
+   * Credentials for the first channel of each kind, supplied at **runtime**.
+   *
+   * These exist because a channel is an array entry, and Nuxt can only override
+   * a `runtimeConfig` value that is a plain key — `NUXT_MONITOR_*` cannot reach
+   * into a list. Without them the only place to put a bot token is the config
+   * file, where it is resolved at build time and ends up inside the build
+   * artefact: a secret in an image, copied to wherever that image goes.
+   *
+   * `databaseUrl` is read at runtime for exactly this reason, and a bot token
+   * deserves the same treatment. Set `NUXT_MONITOR_TELEGRAM_TOKEN`,
+   * `NUXT_MONITOR_TELEGRAM_CHAT_ID` or `NUXT_MONITOR_WEBHOOK_URL` when the
+   * server starts and leave the corresponding field off the channel.
+   *
+   * A value here fills in only where the channel left one blank, so a config
+   * that does spell out a token keeps working.
+   */
+  telegramToken?: string
+  telegramChatId?: string
+  webhookUrl?: string
 }
 
 /**
@@ -200,16 +220,22 @@ interface MonitorChannelBase {
 
 export interface MonitorTelegramChannel extends MonitorChannelBase {
   type: 'telegram'
-  /** Bot token from `@BotFather`. Read at runtime; keep it in the environment. */
-  token: string
+  /**
+   * Bot token from `@BotFather`.
+   *
+   * Prefer leaving this unset and supplying `NUXT_MONITOR_TELEGRAM_TOKEN` when
+   * the server starts — see the note on secrets below. A value written here is
+   * resolved at build time and ends up inside the build artefact.
+   */
+  token?: string
   /** Target chat. A user id, a group id (negative) or `@channelname`. */
-  chatId: string
+  chatId?: string
 }
 
 export interface MonitorWebhookChannel extends MonitorChannelBase {
   type: 'webhook'
   /** Receives a POST with the alert as JSON. */
-  url: string
+  url?: string
   /** Extra headers, for a signature or a bearer token. */
   headers?: Record<string, string>
 }
@@ -283,6 +309,14 @@ export interface MonitorDelivery {
   status: 'sent' | 'failed' | 'suppressed'
   /** Error text for `failed`, or which rule silenced it for `suppressed`. */
   detail?: string
+  /**
+   * What the alert was about, when a single issue behind it still exists.
+   *
+   * Carried so a log row can be matched against a message somebody remembers
+   * receiving — "New issue, sent, 10m ago" names nothing, and naming nothing is
+   * no use to the one question this log is opened to answer.
+   */
+  issue?: { type: string, message: string }
 }
 
 export interface MonitorIgnoreOptions {

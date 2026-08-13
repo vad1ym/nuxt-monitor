@@ -1,5 +1,7 @@
 import { defineEventHandler, getQuery, readBody } from '#imports'
 import { monitorConfig, requireDashboardAccess, useMonitorStore } from '../context'
+import { channelName } from '../notify/channels'
+import { resolveChannels } from '../notify/notifier'
 
 /**
  * The alerting section's data, and its one action.
@@ -51,14 +53,22 @@ export default defineEventHandler(async (event) => {
   const config = monitorConfig().notifications ?? {}
   const limit = Math.min(200, Math.max(1, Number(getQuery(event).limit) || 100))
 
+  // Which of the configured channels the server could actually resolve
+  // credentials for. Compared by name below so a channel declared but skipped
+  // reads as broken rather than as absent — those are different problems and
+  // "nothing is configured" is the wrong advice for the second one.
+  const usable = new Set(resolveChannels(config).map(channelName))
+
   return {
     enabled: Boolean(store.alerts),
     // Names and types only. A token in a dashboard response is a token in a
     // browser's memory, its devtools and anything that later reads either.
     channels: (config.channels ?? []).map(channel => ({
-      name: channel.name || channel.type,
+      name: channelName(channel),
       type: channel.type,
       enabled: channel.enabled !== false,
+      /** False when the channel has no token or URL from any source. */
+      usable: usable.has(channelName(channel)),
     })),
     triggers: config.triggers ?? {},
     cooldownMinutes: config.cooldownMinutes ?? 60,
