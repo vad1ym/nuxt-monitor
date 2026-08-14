@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref, watch } from 'vue'
 import type { MonitorFacetCounts, MonitorFacetFilter, MonitorFacetName } from '../../lib/types'
 import { formatShare } from '../chart'
 
@@ -11,6 +11,14 @@ import { formatShare } from '../chart'
  * the column, not by reading seven numbers. Selected values stay visible even
  * when a sibling filter pushes their count to zero — a filter you cannot see
  * is a filter you cannot undo.
+ *
+ * Tabs rather than a row of dropdowns. Every value was one click away and
+ * therefore invisible: the panel rendered as four closed buttons above an
+ * empty box, occupying a card's worth of screen to show nothing at all, and
+ * answering "which browsers is this happening on" needed a click and a
+ * dismissal per dimension. With the first dimension open by default the panel
+ * is showing an answer the moment the page loads, and the space it was already
+ * taking is the space the values go in.
  */
 const props = defineProps<{
   facets: MonitorFacetCounts | null
@@ -66,28 +74,41 @@ function selectedCount(name: MonitorFacetName): number {
 }
 
 /**
- * What the closed control says.
+ * Which dimension is open.
  *
- * The value itself when one is chosen, because a dropdown labelled "Browser"
- * hides the fact that it is filtering — and a filter you cannot see is a
- * filter you cannot undo.
+ * Held by name rather than by index so it survives `groups` changing under it:
+ * filtering can drop a dimension to a single value, which hides it, and an
+ * index would then silently point at a different facet than the one the reader
+ * chose.
  */
-function summary(name: MonitorFacetName, label: string): string {
-  const active = model.value[name] ?? []
+const active = ref<MonitorFacetName | undefined>()
 
-  if (!active.length) {
-    return label
+/**
+ * The open dimension, falling back to the first one there is.
+ *
+ * A tab strip with nothing selected is the dropdown problem again — a control
+ * that shows no data until it is clicked. The fallback is computed rather than
+ * assigned so it also covers the first render, when the counts have not
+ * arrived and there is no group to select yet.
+ */
+const current = computed(() =>
+  groups.value.find(group => group.name === active.value) ?? groups.value[0],
+)
+
+// A dimension that disappears takes the selection with it, rather than leaving
+// `active` pointing at a facet the panel no longer shows.
+watch(groups, (list) => {
+  if (active.value && !list.some(group => group.name === active.value)) {
+    active.value = undefined
   }
-
-  return active.length === 1 ? active[0]! : `${label}: ${active.length}`
-}
+})
 
 /** Selecting is a toggle: the same click that adds a value removes it. */
 function toggle(name: MonitorFacetName, value: string): void {
-  const current = model.value[name] ?? []
-  const next = current.includes(value)
-    ? current.filter(item => item !== value)
-    : [...current, value]
+  const selected = model.value[name] ?? []
+  const next = selected.includes(value)
+    ? selected.filter(item => item !== value)
+    : [...selected, value]
 
   const updated = { ...model.value }
 
@@ -110,7 +131,9 @@ function clear(): void {
 </script>
 
 <template>
-  <div class="flex flex-wrap items-center gap-1.5">
+  <!-- A flex column, so a caller can fix the height and have the values scroll
+       inside rather than overflow the card they are in. -->
+  <div class="flex min-h-0 flex-col gap-2">
     <div v-if="loading && !facets" class="flex gap-1.5">
       <USkeleton v-for="n in 4" :key="n" class="h-6 w-24" />
     </div>
@@ -119,82 +142,102 @@ function clear(): void {
       Not enough variety to filter by yet.
     </p>
 
-    <UPopover v-for="group in groups" v-else :key="group.name">
-      <UButton
-        size="xs"
-        :color="selectedCount(group.name) ? 'primary' : 'neutral'"
-        :variant="selectedCount(group.name) ? 'subtle' : 'outline'"
-        :icon="group.icon"
-        :label="summary(group.name, group.label)"
-        trailing-icon="i-lucide-chevron-down"
-        class="max-w-56"
-      />
+    <template v-else>
+      <div class="flex shrink-0 flex-wrap items-center gap-1">
+        <button
+          v-for="group in groups"
+          :key="group.name"
+          type="button"
+          class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors cursor-pointer"
+          :class="group.name === current?.name
+            ? 'bg-elevated text-highlighted'
+            : 'text-dimmed hover:bg-elevated/50 hover:text-toned'"
+          :aria-pressed="group.name === current?.name"
+          @click="active = group.name"
+        >
+          <UIcon :name="group.icon" class="size-3.5 shrink-0" />
+          {{ group.label }}
+          <!-- The count of what is filtering, on the tab it belongs to. A
+               selection made on one dimension is invisible from another, and
+               a filter you cannot see is a filter you cannot undo — which was
+               the one thing the dropdown labels did well. -->
+          <UBadge
+            v-if="selectedCount(group.name)"
+            color="primary"
+            variant="subtle"
+            size="sm"
+            :label="String(selectedCount(group.name))"
+          />
+        </button>
 
-      <template #content>
-        <ul class="w-64 max-h-72 overflow-y-auto p-1">
-          <li v-for="row in group.values" :key="row.value">
-            <button
-              type="button"
-              class="relative w-full flex items-center gap-2 overflow-hidden rounded px-1.5 py-1 text-left text-xs transition-colors cursor-pointer"
-              :class="isSelected(group.name, row.value)
-                ? 'text-highlighted'
-                : 'text-toned hover:bg-elevated/40'"
-              :aria-pressed="isSelected(group.name, row.value)"
-              @click="toggle(group.name, row.value)"
-            >
-              <!-- The bar is the comparison; it sits behind the text so the row
-                   stays one line and reads as a label, not a chart.
+        <UButton
+          v-if="activeCount"
+          size="xs"
+          color="neutral"
+          variant="ghost"
+          icon="i-lucide-x"
+          :label="`Clear ${activeCount}`"
+          class="ms-auto"
+          @click="clear"
+        />
+      </div>
 
-                   Layered by source order inside the row rather than with a
-                   negative z-index: the button paints no stacking context of
-                   its own, so `-z-10` sent the bar behind the popover panel
-                   and it showed only during the open transition, while the
-                   panel still had one. -->
-              <span
-                class="absolute inset-y-0 start-0 rounded"
-                :class="isSelected(group.name, row.value) ? 'bg-primary/25' : 'bg-elevated/60'"
-                :style="{ width: `${Math.max(row.share * 100, 1.5)}%` }"
-              />
+      <!-- `min-h-0` is what makes the scroll happen: a flex item's default
+           minimum size is its content, so without it the list grows the column
+           instead of scrolling inside it. No `max-h` — the height belongs to
+           whichever card this is placed in, and a cap here would leave a strip
+           of empty card below a list that is still scrolling. -->
+      <ul v-if="current" class="min-h-0 flex-1 space-y-px overflow-y-auto pe-1">
+        <li v-for="row in current.values" :key="row.value">
+          <button
+            type="button"
+            class="relative w-full flex items-center gap-2 overflow-hidden rounded px-1.5 py-1 text-left text-xs transition-colors cursor-pointer"
+            :class="isSelected(current.name, row.value)
+              ? 'text-highlighted'
+              : 'text-toned hover:bg-elevated/40'"
+            :aria-pressed="isSelected(current.name, row.value)"
+            @click="toggle(current.name, row.value)"
+          >
+            <!-- The bar is the comparison; it sits behind the text so the row
+                 stays one line and reads as a label, not a chart.
 
-              <UIcon
-                v-if="isSelected(group.name, row.value)"
-                name="i-lucide-check"
-                class="relative size-3 shrink-0 text-primary"
-              />
-
-              <span class="relative min-w-0 flex-1 truncate font-mono">{{ row.value }}</span>
-
-              <span class="relative shrink-0 tabular-nums text-dimmed">{{ formatShare(row.share) }}</span>
-              <span class="relative w-8 shrink-0 text-end tabular-nums text-muted">{{ row.count }}</span>
-            </button>
-          </li>
-
-          <!-- Said out loud rather than left to a scrollbar that stops: a list
-               silently cut at twenty reads as the whole set, and the values
-               below the cut are the rare ones worth finding. -->
-          <li v-if="group.more" class="border-t border-default mt-1 pt-1">
-            <UButton
-              size="xs"
-              color="neutral"
-              variant="ghost"
-              block
-              :loading="loading"
-              label="Show more"
-              @click="emit('expand')"
+                 Layered by source order inside the row rather than with a
+                 negative z-index: the button paints no stacking context of its
+                 own, so `-z-10` would send the bar behind its own container. -->
+            <span
+              class="absolute inset-y-0 start-0 rounded"
+              :class="isSelected(current.name, row.value) ? 'bg-primary/25' : 'bg-elevated/60'"
+              :style="{ width: `${Math.max(row.share * 100, 1.5)}%` }"
             />
-          </li>
-        </ul>
-      </template>
-    </UPopover>
 
-    <UButton
-      v-if="activeCount"
-      size="xs"
-      color="neutral"
-      variant="ghost"
-      icon="i-lucide-x"
-      :label="`Clear ${activeCount}`"
-      @click="clear"
-    />
+            <UIcon
+              v-if="isSelected(current.name, row.value)"
+              name="i-lucide-check"
+              class="relative size-3 shrink-0 text-primary"
+            />
+
+            <span class="relative min-w-0 flex-1 truncate font-mono">{{ row.value }}</span>
+
+            <span class="relative shrink-0 tabular-nums text-dimmed">{{ formatShare(row.share) }}</span>
+            <span class="relative w-8 shrink-0 text-end tabular-nums text-muted">{{ row.count }}</span>
+          </button>
+        </li>
+
+        <!-- Said out loud rather than left to a scrollbar that stops: a list
+             silently cut at twenty reads as the whole set, and the values
+             below the cut are the rare ones worth finding. -->
+        <li v-if="current.more" class="border-t border-default mt-1 pt-1">
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            block
+            :loading="loading"
+            label="Show more"
+            @click="emit('expand')"
+          />
+        </li>
+      </ul>
+    </template>
   </div>
 </template>

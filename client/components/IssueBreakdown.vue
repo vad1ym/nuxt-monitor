@@ -81,7 +81,10 @@ const finding = computed(() => {
 </script>
 
 <template>
-  <div class="space-y-4">
+  <!-- A flex column so the panel can be told to fill a fixed-height card and
+       scroll inside it. As a plain block the list simply overflowed the card
+       it was placed in. -->
+  <div class="flex min-h-0 flex-col gap-4">
     <!-- The conclusion, in a sentence. Only shown when there is one. -->
     <div
       v-if="!panelOnly && finding === 'dominant' && dominant"
@@ -126,6 +129,7 @@ const finding = computed(() => {
       v-model="filter"
       :facets="facets"
       :loading="loading"
+      class="min-h-0 flex-1"
       @expand="emit('expand')"
     />
   </div>
