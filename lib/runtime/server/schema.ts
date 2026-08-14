@@ -73,6 +73,26 @@ const INDEXES: [name: string, table: string, columns: string][] = [
   ['idx_traffic_bucket', 'traffic_facets', 'bucket DESC'],
 ]
 
+/**
+ * Indexes on columns that were added after the first release.
+ *
+ * Kept apart from `INDEXES` because of how MySQL is handled there: it has no
+ * `CREATE INDEX IF NOT EXISTS`, so those are declared inside `CREATE TABLE` —
+ * and a column added by `addColumns` does not appear in that statement. An
+ * index named there would reference a column the table definition never
+ * mentions, which is a syntax error on every fresh MySQL install rather than
+ * anything subtle.
+ *
+ * So these are created after the columns exist, on every engine. MySQL still
+ * cannot say `IF NOT EXISTS`, so a duplicate error is swallowed — the only
+ * thing it can mean is that the index is already there.
+ */
+const LATE_INDEXES: [name: string, table: string, columns: string][] = [
+  // Looked up by exact value, which is the only way a correlation id is ever
+  // read: "show me everything from this request".
+  ['idx_events_request', 'events', 'request_id'],
+]
+
 function tables(dialect: MonitorDialect): string[] {
   const t = TYPES[dialect]
   const inline = dialect === 'mysql'
@@ -250,7 +270,40 @@ export async function migrate(db: Database, dialect: MonitorDialect = 'sqlite'):
     ['level', TYPES[dialect].key(16)],
     ['group_name', TYPES[dialect].key(64)],
     ['kind', TYPES[dialect].key(16)],
+    // The correlation id, promoted out of the context JSON.
+    //
+    // It was always captured, and it was useless where it sat: a value inside
+    // a serialised blob cannot be searched for and cannot be joined on, so the
+    // one thing it exists for — putting this error next to the other error
+    // from the same request — was the one thing it could not do. As a column
+    // it answers both, and it is the join that turns a server 500 and the
+    // browser's "Cannot read properties of undefined" into one incident
+    // instead of two unrelated rows on two different screens.
+    ['request_id', TYPES[dialect].key(200)],
   ])
+
+  await addLateIndexes(db, dialect)
+}
+
+/**
+ * Indexes over columns that `addColumns` has just guaranteed to exist.
+ *
+ * Separate pass rather than part of the list above, because those are applied
+ * before the added columns are — and on MySQL they are baked into the
+ * `CREATE TABLE` that never mentioned them.
+ */
+async function addLateIndexes(db: Database, dialect: MonitorDialect): Promise<void> {
+  for (const [name, table, columns] of LATE_INDEXES) {
+    if (dialect === 'mysql') {
+      // No `IF NOT EXISTS` on MySQL, and a duplicate index is the only error
+      // this can raise on a database that is otherwise fine — so it is safe to
+      // ignore, and unsafe to let it stop the migration.
+      await db.exec(`CREATE INDEX ${name} ON ${table}(${columns})`).catch(() => {})
+      continue
+    }
+
+    await db.exec(`CREATE INDEX IF NOT EXISTS ${name} ON ${table}(${columns})`)
+  }
 }
 
 /**

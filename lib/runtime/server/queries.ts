@@ -141,13 +141,23 @@ export async function listIssues(db: Database, filter: {
     // error it was, which file, which route.
     where.push(
       '(message LIKE ? ESCAPE \'\\\' OR type LIKE ? ESCAPE \'\\\' '
-      + 'OR culprit LIKE ? ESCAPE \'\\\' OR route LIKE ? ESCAPE \'\\\')',
+      + 'OR culprit LIKE ? ESCAPE \'\\\' OR route LIKE ? ESCAPE \'\\\' '
+      // A correlation id, matched exactly rather than by substring.
+      //
+      // This is what somebody pastes when a user has given them a request id —
+      // from a support ticket, a proxy log, a page that displayed one. The id
+      // lives on the occurrence rather than the issue, so it needs the
+      // subquery; it is an equality test because an id is either the one or it
+      // is not, and a `LIKE` over an indexed column would also give up the
+      // index for a search that runs on every keystroke.
+      + 'OR EXISTS (SELECT 1 FROM events WHERE events.fingerprint = issues.fingerprint '
+      + 'AND events.request_id = ?))',
     )
 
     // `escapeLike` keeps a literal `%` in a search term from matching
     // everything.
     const pattern = `%${escapeLike(filter.search)}%`
-    params.push(pattern, pattern, pattern, pattern)
+    params.push(pattern, pattern, pattern, pattern, filter.search)
   }
 
   // Facets live on events, so an issue qualifies when any one of its
@@ -1221,6 +1231,49 @@ export async function trafficFacets(db: Database, windowMs: number, now = Date.n
   }
 
   return counts
+}
+
+/**
+ * The other errors from the same request.
+ *
+ * The join the correlation id was captured for and could never do while it sat
+ * inside a JSON blob. One request that fails usually produces two rows on two
+ * different screens: the endpoint's 500 under server errors, and the browser's
+ * `Cannot read properties of undefined` under client errors, thrown by the
+ * component that received the failure. They are one incident, and reading them
+ * as two is how somebody spends an afternoon debugging the symptom.
+ *
+ * Returns the *other* occurrences only — an issue is not related to itself,
+ * and listing it would put the row somebody is already looking at inside its
+ * own "related" panel.
+ *
+ * Bounded, because a request id can be adopted from an inbound header: a proxy
+ * that sends a constant `x-request-id` would otherwise make this query return
+ * the entire table.
+ */
+export async function relatedByRequest(
+  db: Database,
+  requestId: string,
+  fingerprint: string,
+  limit = 10,
+): Promise<{ fingerprint: string, type: string, message: string, side: MonitorSide, at: number }[]> {
+  const rows = await db.prepare(`
+    SELECT e.fingerprint, e.ts, i.type, i.message, i.side
+    FROM events e
+    JOIN issues i USING (fingerprint)
+    WHERE e.request_id = ? AND e.fingerprint <> ?
+    GROUP BY e.fingerprint
+    ORDER BY MIN(e.ts)
+    LIMIT ?
+  `).all(requestId, fingerprint, limit) as Record<string, unknown>[]
+
+  return rows.map(row => ({
+    fingerprint: String(row.fingerprint),
+    type: String(row.type),
+    message: String(row.message),
+    side: row.side as MonitorSide,
+    at: Number(row.ts),
+  }))
 }
 
 /**

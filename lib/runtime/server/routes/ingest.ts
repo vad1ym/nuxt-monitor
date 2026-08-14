@@ -23,6 +23,8 @@ const MAX_STACK = 10_000
 const MAX_BREADCRUMBS = 30
 const MAX_SESSION = 64
 const MAX_RELEASE = 64
+/** Matches the server's own ceiling, since the value round-trips from there. */
+const MAX_REQUEST_ID = 200
 
 /** Events accepted per address per window, before anything is written. */
 const RATE_LIMIT = 100
@@ -285,6 +287,19 @@ function sanitizeContext(
     if (typeof out[key] === 'string') {
       out[key] = scrubUrl(out[key], options)
     }
+  }
+
+  /**
+   * The correlation id, held to the same shape the server generates.
+   *
+   * It arrives from the browser, which means it is a claim rather than a fact
+   * — but the browser only ever learned it from a response header this server
+   * set, and the worst a forged one can do is link an issue to another issue
+   * in the same database. Constrained to an identifier and bounded so it
+   * cannot become free text on an indexed column.
+   */
+  if (out.requestId !== undefined) {
+    out.requestId = identifier(out.requestId, MAX_REQUEST_ID)
   }
 
   return out

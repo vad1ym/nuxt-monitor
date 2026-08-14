@@ -11,7 +11,12 @@ import StackTrace from './StackTrace.vue'
 import TimeChart from './LazyTimeChart'
 
 const props = defineProps<{ fingerprint: string }>()
-const emit = defineEmits<{ back: [], changed: [] }>()
+const emit = defineEmits<{
+  back: []
+  changed: []
+  /** Open another issue — the other half of the same failing request. */
+  select: [fingerprint: string]
+}>()
 
 const detail = ref<IssueDetail | null>(null)
 const error = ref('')
@@ -390,6 +395,15 @@ function describeGap(ms: number): string {
   return `${Math.round(hours / 24)} days`
 }
 
+/**
+ * The other issues from the same request as the occurrence being shown.
+ *
+ * Empty for anything with no correlation id behind it — an error thrown by no
+ * request at all, or one stored before ids were kept — which is why the panel
+ * disappears rather than saying "none".
+ */
+const related = computed(() => detail.value?.related ?? [])
+
 const trend = computed(() => detail.value?.trend)
 
 /**
@@ -759,6 +773,35 @@ onMounted(loadBaseline)
                 class="text-dimmed"
                 title="How long the request had been running when it failed"
               > · {{ request.duration }}</span>
+            </dd>
+          </div>
+
+          <!-- The other half of the same incident.
+               One failing request usually leaves two rows on two screens: the
+               endpoint's 500 here, and the browser's "Cannot read properties
+               of undefined" under client errors, thrown by the component that
+               received the answer. Read apart they are two mysteries; read
+               together the second one explains itself. -->
+          <div v-if="related.length">
+            <dt class="text-xs text-dimmed">
+              Same request
+            </dt>
+            <dd class="space-y-1">
+              <button
+                v-for="item in related"
+                :key="item.fingerprint"
+                type="button"
+                class="flex w-full items-baseline gap-1.5 text-start text-toned hover:text-primary"
+                @click="emit('select', item.fingerprint)"
+              >
+                <UBadge
+                  :color="item.side === 'client' ? 'info' : 'warning'"
+                  variant="subtle"
+                  size="sm"
+                >{{ item.side }}</UBadge>
+                <span class="font-mono text-xs">{{ item.type }}</span>
+                <span class="truncate text-xs text-dimmed">{{ item.message }}</span>
+              </button>
             </dd>
           </div>
 

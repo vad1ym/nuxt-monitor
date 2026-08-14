@@ -1,5 +1,5 @@
 import type { H3Event } from 'h3'
-import { defineNitroPlugin, getRequestHeader, getRequestHeaders, getResponseStatus } from '#imports'
+import { defineNitroPlugin, getRequestHeader, getRequestHeaders, getResponseHeader, getResponseStatus, setResponseHeader } from '#imports'
 import type { MonitorEvent, MonitorFacets } from '../../types'
 import { isAssetPath, routeKind } from '../shared/route'
 import { captureBodies, snapshotRequestBody } from './bodies'
@@ -56,6 +56,7 @@ export default defineNitroPlugin((nitroApp) => {
     try {
       if (!isMonitorRoute(event, config.route)) {
         snapshotRequestBody(event, config.capture)
+        echoRequestId(event)
       }
     }
     catch {
@@ -77,6 +78,14 @@ export default defineNitroPlugin((nitroApp) => {
       // from the denominator.
       if (context.event) {
         countOnce(context.event, statusOf(error, getResponseStatus(context.event)))
+
+        // And the correlation id, for the same reason and with worse
+        // consequences. `beforeResponse` is skipped by a thrown request, so
+        // setting the header only there put it on every response except the
+        // failing ones — precisely the responses whose id is worth having.
+        // Verified against a running server: a 200 carried the header and a
+        // 500 did not.
+        echoRequestId(context.event)
       }
 
       if (isDuplicate(error, context.event)) {
@@ -189,6 +198,29 @@ function countOnce(event: H3Event, status: number): void {
   // than by their being one visitor.
   if (routeKind(path, getRequestHeader(event, 'accept')) === 'page') {
     countTrafficSync(parseUserAgent(getRequestHeader(event, 'user-agent')))
+  }
+}
+
+/**
+ * Puts the correlation id on the response, so the browser can quote it back.
+ *
+ * This is what closes the loop across the two sides. A failing endpoint and
+ * the component that broke on its answer are one incident, and until the
+ * browser knows the id there is nothing to join them by — the client error
+ * arrives with a URL and a timestamp, which during an incident matches forty
+ * other requests in the same second.
+ *
+ * `x-request-id` rather than a name of our own, because the value is very
+ * often not ours: it is adopted from whatever the proxy in front already set,
+ * and echoing it under the conventional name is what lets it match the access
+ * log too. Set rather than overwritten only when absent — a proxy that sets
+ * its own on the way out should win, since that is the one in its log.
+ */
+function echoRequestId(event: H3Event): void {
+  const id = requestId(event)
+
+  if (id && !getResponseHeader(event, 'x-request-id')) {
+    setResponseHeader(event, 'x-request-id', id)
   }
 }
 

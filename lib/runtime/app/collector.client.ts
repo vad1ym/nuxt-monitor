@@ -45,6 +45,17 @@ export default defineNuxtPlugin({
     const breadcrumbs: MonitorBreadcrumb[] = []
     const MAX_BREADCRUMBS = 30
 
+    /**
+     * The id of the most recent request that failed, if the server sent one.
+     *
+     * What lets a browser error be joined to the endpoint failure behind it.
+     * Held in one variable rather than per request because the error being
+     * reported has no reference to any particular fetch — it is thrown by a
+     * component reacting to one — so the only available link is "the request
+     * that just failed".
+     */
+    let lastFailedRequestId: string | undefined
+
     const queue = new EventQueue({
       send: events => post(endpoint, events, sessionId()),
     })
@@ -78,7 +89,13 @@ export default defineNuxtPlugin({
     }
 
     const capture = (error: unknown, extra: Record<string, unknown> = {}): void => {
-      const normalized = toClientEvent(error, extra, breadcrumbs)
+      const normalized = toClientEvent(
+        error,
+        // Carried so the two halves of one incident can be read as one: the
+        // endpoint's 500 and the component that broke on its answer.
+        lastFailedRequestId ? { ...extra, requestId: lastFailedRequestId } : extra,
+        breadcrumbs,
+      )
 
       if (normalized) {
         // Browser and OS are not sent from here: the request carries a
@@ -165,6 +182,25 @@ export default defineNuxtPlugin({
         const response = await originalFetch(...args)
 
         if (!ours) {
+          /**
+           * The correlation id the server put on the response.
+           *
+           * Remembered only for failing responses, and only until the next
+           * one. A component that breaks on a bad payload throws within a tick
+           * or two of receiving it, so the most recent failure is very nearly
+           * always the one that caused the error being reported — and when it
+           * is not, the worst case is a link to a request that also failed a
+           * moment earlier, which is still the right neighbourhood.
+           *
+           * Successful responses deliberately do not overwrite it: the whole
+           * value is joining a browser error to the request that broke it, and
+           * a page firing analytics between the failure and the throw would
+           * otherwise erase the only useful id.
+           */
+          if (response.status >= 400) {
+            lastFailedRequestId = response.headers.get('x-request-id') ?? lastFailedRequestId
+          }
+
           record({
             type: 'fetch',
             timestamp: started,

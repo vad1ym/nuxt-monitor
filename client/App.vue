@@ -539,6 +539,7 @@ onMounted(async () => {
               :fingerprint="selected"
               @back="selected = null"
               @changed="refresh"
+              @select="selected = $event"
             />
 
             <template v-else>

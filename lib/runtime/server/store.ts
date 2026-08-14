@@ -16,6 +16,7 @@ import type {
   MonitorRelease,
   MonitorRouteStat,
   MonitorSessionStats,
+  MonitorSide,
   MonitorTrafficStats,
   MonitorUptimeSummary,
   MonitorHeatCell,
@@ -840,9 +841,9 @@ export class MonitorStore {
       INSERT INTO events (
         fingerprint, ts, stack, context, breadcrumbs, tags, message,
         session, browser, browser_version, os, os_version, device_type, \`release\`, route,
-        manual, level, group_name, kind
+        manual, level, group_name, kind, request_id
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     await this.db.exec('BEGIN')
@@ -892,6 +893,11 @@ export class MonitorStore {
           event.level ?? null,
           event.group ?? null,
           event.kind ?? null,
+          // Promoted out of the context blob it is also written into. The
+          // duplication is deliberate: the context is what the issue page
+          // renders, the column is what a search and a join can reach, and
+          // dropping either would break one of the two.
+          typeof context.requestId === 'string' ? context.requestId.slice(0, 200) : null,
         )
       }
 
@@ -1764,6 +1770,20 @@ export class MonitorStore {
   ): Promise<{ affected: number, total: number } | undefined> {
     await this.flush()
     return queries.sessionShare(this.db, fp, filter)
+  }
+
+  /**
+   * The other issues that failed in the same request.
+   *
+   * The join the correlation id was captured for: a server 500 and the browser
+   * error thrown by the component that received it are one incident.
+   */
+  async relatedByRequest(
+    requestId: string,
+    fingerprint: string,
+  ): Promise<{ fingerprint: string, type: string, message: string, side: MonitorSide, at: number }[]> {
+    await this.flush()
+    return queries.relatedByRequest(this.db, requestId, fingerprint)
   }
 
   /** The deploys that landed inside a span, for drawing on an issue's chart. */

@@ -2267,3 +2267,83 @@ describe('the heatmap buckets', () => {
     expect(await store.heatmap(at - HOUR)).toHaveLength(1)
   })
 })
+
+describe('correlating the two sides of one request', () => {
+  /**
+   * The join the correlation id was captured for and could not do while it
+   * sat inside a JSON blob. A failing endpoint and the component that broke
+   * on its answer are one incident; read as two rows on two screens, the
+   * second one is a mystery.
+   */
+  function withRequest(id: string, overrides: Partial<MonitorEvent> = {}): MonitorEvent {
+    return {
+      side: 'server',
+      type: 'TypeError',
+      message: 'boom',
+      timestamp: Date.now(),
+      ...overrides,
+      context: { requestId: id, ...(overrides.context ?? {}) },
+    }
+  }
+
+  it('finds the other issue from the same request', async () => {
+    store.capture(withRequest('req-1', { message: 'endpoint failed', side: 'server' }))
+    store.capture(withRequest('req-1', {
+      message: 'component broke on the answer',
+      side: 'client',
+      type: 'TypeError',
+    }))
+    await store.flush()
+
+    const { issues } = await store.listIssues({ search: 'endpoint failed' })
+    const related = await store.relatedByRequest('req-1', issues[0]!.fingerprint)
+
+    expect(related).toHaveLength(1)
+    expect(related[0]!.message).toBe('component broke on the answer')
+    expect(related[0]!.side).toBe('client')
+  })
+
+  it('does not relate an issue to itself', async () => {
+    // It is the row the reader is already looking at, and listing it inside
+    // its own "related" panel says nothing.
+    store.capture(withRequest('req-2', { message: 'only one' }))
+    await store.flush()
+
+    const { issues } = await store.listIssues({ search: 'only one' })
+
+    expect(await store.relatedByRequest('req-2', issues[0]!.fingerprint)).toHaveLength(0)
+  })
+
+  it('does not relate errors from different requests', async () => {
+    store.capture(withRequest('req-3', { message: 'first request' }))
+    store.capture(withRequest('req-4', { message: 'second request' }))
+    await store.flush()
+
+    const { issues } = await store.listIssues({ search: 'first request' })
+
+    expect(await store.relatedByRequest('req-3', issues[0]!.fingerprint)).toHaveLength(0)
+  })
+
+  it('finds an issue by pasting a request id into the search box', async () => {
+    // What somebody does when a user quotes an id from a support ticket or a
+    // proxy log. It lives on the occurrence, so the search has to reach
+    // through to the events.
+    store.capture(withRequest('req-paste-me', { message: 'findable by id' }))
+    await store.flush()
+
+    const { issues } = await store.listIssues({ search: 'req-paste-me' })
+
+    expect(issues.map(i => i.message)).toContain('findable by id')
+  })
+
+  it('does not match a request id by substring', async () => {
+    // An id is either the one or it is not, and a LIKE over the indexed
+    // column would give up the index on a query that runs per keystroke.
+    store.capture(withRequest('abcdef123456', { message: 'exact only' }))
+    await store.flush()
+
+    const { issues } = await store.listIssues({ search: 'abcdef' })
+
+    expect(issues.map(i => i.message)).not.toContain('exact only')
+  })
+})

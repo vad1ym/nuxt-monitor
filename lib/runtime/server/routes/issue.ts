@@ -158,6 +158,32 @@ export default defineEventHandler(async (event) => {
     // and narrowing to one browser would answer "introduced in 1.8.2 *for
     // Firefox users*" under a heading that does not say so.
     releases: await store.issueReleases(fingerprint),
+    /**
+     * The other errors from the same request as the newest occurrence.
+     *
+     * One failing request usually produces two rows on two different screens:
+     * the endpoint's 500 under server errors, and the browser's "Cannot read
+     * properties of undefined" under client errors, thrown by the component
+     * that received the failure. They are one incident, and reading them as
+     * two is how an afternoon goes into debugging the symptom.
+     *
+     * Taken from the newest occurrence rather than every one of them: an issue
+     * that happened four hundred times has four hundred request ids, and the
+     * union of everything that ever co-occurred with it is not a finding — it
+     * is the whole database. One request is a story.
+     */
+    related: await relatedFor(store, resolved[0], fingerprint),
     events: resolved,
   }
 })
+
+/** Nothing to relate when the occurrence carried no correlation id. */
+async function relatedFor(
+  store: Awaited<ReturnType<typeof useMonitorStore>>,
+  newest: { context?: Record<string, unknown> } | undefined,
+  fingerprint: string,
+): Promise<Awaited<ReturnType<typeof store.relatedByRequest>>> {
+  const id = newest?.context?.requestId
+
+  return typeof id === 'string' && id ? store.relatedByRequest(id, fingerprint) : []
+}

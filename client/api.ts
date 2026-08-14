@@ -129,6 +129,15 @@ export interface IssueDetail {
   deploys: MonitorDeploy[]
   /** Which releases it spans. Absent when no release is configured. */
   releases?: MonitorIssueReleases
+  /**
+   * Other issues that failed in the same request as the newest occurrence.
+   *
+   * Usually the other half of one incident: an endpoint answering 500 and the
+   * component that broke on its answer are two rows on two screens and one
+   * problem. Empty when the occurrence carried no correlation id — a client
+   * error with no failing request behind it, or an older stored event.
+   */
+  related?: { fingerprint: string, type: string, message: string, side: 'client' | 'server', at: number }[]
 }
 
 /** Turns a facet filter into repeated query parameters. */
