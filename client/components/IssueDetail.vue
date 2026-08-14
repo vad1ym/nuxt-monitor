@@ -161,6 +161,107 @@ const headers = computed(() => {
   return raw && typeof raw === 'object' ? Object.entries(raw as Record<string, unknown>) : []
 })
 
+/**
+ * The trail as a timeline rather than a table of three columns.
+ *
+ * A list of `FETCH · POST /api/checkout/quote → 500 · 12h ago` rows makes the
+ * reader parse every line to find the one that matters — every row looks the
+ * same weight, and "12h ago" repeated eight times says nothing about the order
+ * of events it is supposed to establish. What a person actually wants from
+ * this section is: what kind of thing was this, did it go wrong, and how long
+ * before the error did it happen. So each of those gets its own channel — an
+ * icon and colour for the kind, a red tint for a failed call, and an offset
+ * measured back from the crash instead of a wall clock.
+ */
+const CRUMB_KINDS = {
+  navigation: { icon: 'i-lucide-corner-down-right', color: 'text-primary', label: 'Navigated' },
+  fetch: { icon: 'i-lucide-arrow-up-down', color: 'text-info', label: 'Request' },
+  click: { icon: 'i-lucide-mouse-pointer-click', color: 'text-toned', label: 'Clicked' },
+  console: { icon: 'i-lucide-terminal', color: 'text-muted', label: 'Console' },
+} as const
+
+const timeline = computed(() => {
+  const crumbs = current.value?.breadcrumbs ?? []
+
+  /**
+   * What the offsets are measured back from.
+   *
+   * The error's own timestamp is the honest anchor and the one to prefer, but
+   * it cannot be trusted to be the latest thing here: a crumb is recorded in
+   * the browser and the error may be stamped on a different clock or by a
+   * queued batch, and seed data disagrees by half an hour. When that happens
+   * every row renders "after", which is worse than useless — it is a column of
+   * one repeated word where the sequence should be. Falling back to the last
+   * crumb keeps the gaps between steps, which is the part that reads.
+   */
+  const errorAt = current.value?.timestamp
+  const lastCrumb = crumbs.length ? crumbs[crumbs.length - 1]!.timestamp : undefined
+  const crashedAt = errorAt !== undefined && (lastCrumb === undefined || errorAt >= lastCrumb)
+    ? errorAt
+    : lastCrumb
+
+  return crumbs.map((crumb, index) => {
+    const kind = CRUMB_KINDS[crumb.type] ?? CRUMB_KINDS.console
+
+    // Read off the crumb's own message rather than its data, because that is
+    // the one field every source fills in — a status arrives in `data` from
+    // the browser's own fetch wrapper, but a crumb forwarded from anywhere
+    // else only ever has the sentence.
+    const status = typeof crumb.data?.status === 'number'
+      ? crumb.data.status
+      : Number(/→\s*(\d{3})\b/.exec(crumb.message)?.[1]) || undefined
+
+    const failed = crumb.type === 'fetch'
+      && (status === undefined ? /→\s*failed\b/.test(crumb.message) : status >= 400)
+
+    return {
+      index,
+      icon: kind.icon,
+      label: kind.label,
+      color: failed ? 'text-error' : kind.color,
+      failed,
+      status,
+      message: crumb.message,
+      ms: typeof crumb.data?.ms === 'number' ? crumb.data.ms : undefined,
+      // How long before the crash, which is the only reading of these times
+      // anybody does. Absolute time stays on the title for the rare case.
+      offset: crashedAt !== undefined ? beforeCrash(crumb.timestamp, crashedAt) : undefined,
+      title: absoluteTime(crumb.timestamp),
+    }
+  })
+})
+
+/**
+ * "2.4s before" — the distance from a crumb to the error.
+ *
+ * Sub-second resolution near the crash, because that is where the interesting
+ * gaps are: a request that returned 40ms before the throw is a different story
+ * from one that returned four seconds before it, and both render as "12h ago".
+ */
+function beforeCrash(timestamp: number, crashedAt: number): string {
+  const ms = crashedAt - timestamp
+
+  if (ms < 0) {
+    return 'after'
+  }
+
+  // The step the anchor itself sits on. "0ms before" is a label pretending to
+  // be a measurement.
+  if (ms === 0) {
+    return ''
+  }
+
+  if (ms < 1_000) {
+    return `${ms}ms before`
+  }
+
+  if (ms < 60_000) {
+    return `${(ms / 1_000).toFixed(1)}s before`
+  }
+
+  return ms < 3_600_000 ? `${Math.round(ms / 60_000)}m before` : `${Math.round(ms / 3_600_000)}h before`
+}
+
 const trend = computed(() => detail.value?.trend)
 
 const trendSeries = computed(() => [{
@@ -494,24 +595,6 @@ onMounted(loadBaseline)
         </dl>
       </header>
 
-      <!-- When it happened, not just how often. A count says an issue is
-           frequent; the shape says whether it is over, steady, or starting. -->
-      <section v-if="trend && trend.points.length > 1" class="rounded-lg border border-default p-3">
-        <div class="mb-3 flex items-baseline justify-between gap-3">
-          <h2 class="text-xs font-medium uppercase tracking-wide text-dimmed">
-            Occurrences over time
-          </h2>
-          <!-- Said rather than left to be inferred: the chart is drawn from the
-               occurrences that survived trimming, and without this the issue
-               looks as though it began when the oldest kept one did. -->
-          <span v-if="trendPartial" class="text-xs text-dimmed">
-            last {{ formatCount(trend.stored) }} of {{ formatCount(detail.issue.count) }}
-          </span>
-        </div>
-
-        <TimeChart :at="trend.points.map(point => point.at)" :series="trendSeries" />
-      </section>
-
       <!-- The conclusion only. One line, and it frames the stack below it —
            the table it used to drag along now sits at the foot of the page. -->
       <IssueBreakdown
@@ -524,26 +607,54 @@ onMounted(loadBaseline)
         :loading="loading"
       />
 
-      <!-- The evidence behind the sentence at the top, and the control that
-           narrows the occurrences above. One row of dropdowns rather than five
-           stacked lists: as a column it ran to forty rows and pushed the stack
-           — the reason anybody opened the issue — off the screen. -->
-      <section>
-        <h2 class="mb-2 text-xs font-medium uppercase tracking-wide text-dimmed">
-          Narrow by
-        </h2>
+      <!-- Two answers to "is this still happening, and to whom" side by side on
+           a wide screen. Alone, the chart claimed a full-width band of the page
+           to draw one flat line, which is a lot of screen for a shape you read
+           in half a second — and it pushed the stack, the reason anybody opened
+           the issue, below the fold. -->
+      <div class="grid gap-4 lg:grid-cols-2">
+        <!-- When it happened, not just how often. A count says an issue is
+             frequent; the shape says whether it is over, steady, or starting. -->
+        <section v-if="trend && trend.points.length > 1" class="rounded-lg border border-default p-3">
+          <div class="mb-2 flex items-baseline justify-between gap-3">
+            <h2 class="text-xs font-medium uppercase tracking-wide text-dimmed">
+              Occurrences over time
+            </h2>
+            <!-- Said rather than left to be inferred: the chart is drawn from
+                 the occurrences that survived trimming, and without this the
+                 issue looks as though it began when the oldest kept one did. -->
+            <span v-if="trendPartial" class="text-xs text-dimmed">
+              last {{ formatCount(trend.stored) }} of {{ formatCount(detail.issue.count) }}
+            </span>
+          </div>
 
-        <IssueBreakdown
-          v-model:filter="filter"
-          panel-only
-          :facets="detail.facets"
-          :baseline="baseline"
-          :session-count="detail.sessionCount"
-          :event-count="detail.eventCount"
-          :loading="loading"
-          @expand="expandFacets"
-        />
-      </section>
+          <TimeChart
+            :at="trend.points.map(point => point.at)"
+            :series="trendSeries"
+            height="h-32"
+          />
+        </section>
+
+        <!-- The evidence behind the sentence above, and the control that
+             narrows the occurrences below. One row of dropdowns rather than
+             five stacked lists: as a column it ran to forty rows. -->
+        <section class="rounded-lg border border-default p-3">
+          <h2 class="mb-2 text-xs font-medium uppercase tracking-wide text-dimmed">
+            Narrow by
+          </h2>
+
+          <IssueBreakdown
+            v-model:filter="filter"
+            panel-only
+            :facets="detail.facets"
+            :baseline="baseline"
+            :session-count="detail.sessionCount"
+            :event-count="detail.eventCount"
+            :loading="loading"
+            @expand="expandFacets"
+          />
+        </section>
+      </div>
 
       <div v-if="!detail.events.length" class="py-10 text-center">
         <p class="text-sm text-muted">
@@ -622,19 +733,60 @@ onMounted(loadBaseline)
           </div>
         </section>
 
-        <section v-if="current.breadcrumbs?.length">
+        <!-- A rail with the error at its end, so the trail reads as a sequence
+             running into the crash rather than as four columns of text. -->
+        <section v-if="timeline.length">
           <h2 class="mb-2 text-xs font-medium uppercase tracking-wide text-dimmed">
             Leading up to it
           </h2>
-          <ol class="space-y-0.5">
+
+          <ol class="relative space-y-px">
+            <!-- The thread the markers sit on. Behind them and stopping at the
+                 last one, so it reads as a path with an end. -->
+            <span class="absolute inset-y-3 start-[0.6875rem] w-px bg-default" aria-hidden="true" />
+
             <li
-              v-for="(crumb, index) in current.breadcrumbs"
-              :key="index"
-              class="flex items-baseline gap-3 rounded px-2 py-1 text-sm hover:bg-elevated/30"
+              v-for="step in timeline"
+              :key="step.index"
+              class="relative flex items-baseline gap-3 rounded py-1 pe-2 ps-1 text-sm hover:bg-elevated/30"
             >
-              <span class="w-16 shrink-0 text-xs uppercase text-dimmed">{{ crumb.type }}</span>
-              <span class="min-w-0 flex-1 text-toned break-all">{{ crumb.message }}</span>
-              <span class="shrink-0 text-xs text-dimmed">{{ relativeTime(crumb.timestamp) }}</span>
+              <!-- Kind carried by an icon rather than a word: four repeated
+                   labels down the left edge is a column of noise, and the eye
+                   picks a shape out of a list faster than it reads. -->
+              <span
+                class="grid size-[1.375rem] shrink-0 place-items-center rounded-full border border-default bg-default"
+                :class="step.failed ? 'border-error/40' : ''"
+                :title="step.label"
+              >
+                <UIcon :name="step.icon" class="size-3" :class="step.color" />
+              </span>
+
+              <span class="min-w-0 flex-1 break-all" :class="step.failed ? 'text-error' : 'text-toned'">
+                {{ step.message }}
+              </span>
+
+              <!-- How long it took, where that is known. A call that returned
+                   in 4s before a timeout-shaped failure is its own story. -->
+              <span v-if="step.ms !== undefined" class="shrink-0 text-xs tabular-nums text-dimmed">
+                {{ step.ms }}ms
+              </span>
+
+              <span
+                v-if="step.offset"
+                class="shrink-0 text-xs tabular-nums text-dimmed"
+                :title="step.title"
+              >{{ step.offset }}</span>
+            </li>
+
+            <!-- Where the trail leads. Without it the last crumb is just
+                 another row, and the section's whole claim is that these
+                 things ran into something. -->
+            <li class="relative flex items-center gap-3 py-1 ps-1 text-sm">
+              <span class="grid size-[1.375rem] shrink-0 place-items-center rounded-full bg-error/15">
+                <UIcon name="i-lucide-zap" class="size-3 text-error" />
+              </span>
+              <span class="font-medium text-error">{{ detail.issue.type }}</span>
+              <span class="min-w-0 truncate font-mono text-xs text-muted">{{ detail.issue.message }}</span>
             </li>
           </ol>
         </section>

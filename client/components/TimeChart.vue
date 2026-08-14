@@ -48,6 +48,14 @@ const props = defineProps<{
    * reader to do that comparison from memory.
    */
   markers?: { at: number, label: string, title?: string }[]
+  /**
+   * Tailwind height class for the plot.
+   *
+   * A chart that shares a row with something else has to match its neighbour's
+   * height, and the overview's full-width charts want more room than a
+   * side-by-side one does.
+   */
+  height?: string
 }>()
 
 /**
@@ -320,7 +328,7 @@ watch(
 </script>
 
 <template>
-  <div class="relative h-40">
+  <div class="relative" :class="height ?? 'h-40'">
     <div ref="container" class="size-full" />
 
     <p
