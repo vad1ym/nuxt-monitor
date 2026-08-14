@@ -23,7 +23,8 @@
     ".": {
       "types": "./dist/module.d.ts",
       "import": "./dist/module.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "main": "./dist/module.js",
   "types": "./dist/module.d.ts",
