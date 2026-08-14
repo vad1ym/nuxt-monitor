@@ -43,22 +43,45 @@ const DAYS = [
 
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour)
 
-const busiest = computed(() =>
-  props.cells.reduce((most, cell) => Math.max(most, cell.count), 0),
-)
-
 const total = computed(() => props.cells.reduce((sum, cell) => sum + cell.count, 0))
 
-/** Sparse cells indexed for lookup, so the grid can be drawn dense. */
+/**
+ * Absolute hours folded into the local weekday-and-hour grid.
+ *
+ * This is the step that has to happen here rather than on the server: an hour
+ * is a moment, and which weekday and which hour that moment falls on depends
+ * entirely on where the person reading is. `getDay()` and `getHours()` answer
+ * in the browser's own zone, which is the whole point — the server used to
+ * answer in *its* zone, so a team spread across two of them read two different
+ * pictures from one dataset, and the one conclusion the grid offers ("this
+ * only happens at night") was wrong for whoever was not sitting next to the
+ * server.
+ */
 const counts = computed(() => {
   const map = new Map<number, number>()
 
   for (const cell of props.cells) {
-    map.set(cell.day * 24 + cell.hour, cell.count)
+    const at = new Date(cell.at)
+    const key = at.getDay() * 24 + at.getHours()
+
+    map.set(key, (map.get(key) ?? 0) + cell.count)
   }
 
   return map
 })
+
+/**
+ * The fullest cell, measured after folding rather than before.
+ *
+ * Two absolute hours can land in the same local cell — 168 buckets, a week of
+ * data, and any zone at all — so the largest incoming bucket is not the
+ * largest drawn one. Taking the max from the raw cells understated the top of
+ * the scale, which left the darkest cell short of full colour and the legend
+ * claiming a number smaller than one the grid actually contains.
+ */
+const busiest = computed(() =>
+  [...counts.value.values()].reduce((most, count) => Math.max(most, count), 0),
+)
 
 /**
  * One hue, light to dark — the rule for a magnitude scale.
@@ -114,40 +137,61 @@ function labelOf(day: { index: number, label: string }, hour: number): string {
            comparable, and a grid whose cells cannot be compared is not doing
            the one thing it exists for. Scrolls on a narrow screen instead. -->
       <div class="min-w-[34rem]">
-        <div class="flex gap-1">
-          <!-- The day column, sized to match the rows beside it. -->
-          <div class="flex shrink-0 flex-col gap-px pt-4">
-            <span
-              v-for="day in DAYS"
-              :key="day.index"
-              class="flex h-3.5 items-center text-[0.625rem] leading-none text-dimmed"
-            >{{ day.label }}</span>
-          </div>
+        <!-- A real table, not a stack of divs.
+             The grid *is* a table — a value at the intersection of a weekday
+             and an hour — and saying so in the markup is what lets a screen
+             reader walk it by row and column and hear the headers with each
+             cell. As divs the entire content was carried by `title` and a
+             background colour: unreachable by keyboard, invisible to a reader,
+             and gone in forced-colours mode. -->
+        <table class="w-full border-separate border-spacing-px">
+          <caption class="sr-only">
+            Errors by hour of the week, in your timezone. Rows are days, columns are hours.
+          </caption>
 
-          <div class="min-w-0 flex-1">
-            <!-- Every sixth hour only. Twenty-four labels at this size overlap
-                 into a grey smear, and the grid is read by position anyway. -->
-            <div class="mb-1 flex h-3 gap-px">
-              <span
+          <thead>
+            <tr>
+              <!-- The corner above the day labels. -->
+              <td class="w-8" />
+              <!-- Every sixth hour is shown; the rest are labelled for
+                   assistive tech only, so the column keeps its header without
+                   twenty-four numbers smearing into each other on screen. -->
+              <th
                 v-for="hour in HOURS"
                 :key="hour"
-                class="min-w-0 flex-1 text-[0.625rem] leading-none text-dimmed"
-              >{{ hour % 6 === 0 ? String(hour).padStart(2, '0') : '' }}</span>
-            </div>
+                scope="col"
+                class="pb-1 text-[0.625rem] font-normal leading-none text-dimmed"
+              >
+                <span v-if="hour % 6 === 0">{{ String(hour).padStart(2, '0') }}</span>
+                <span v-else class="sr-only">{{ String(hour).padStart(2, '0') }}</span>
+              </th>
+            </tr>
+          </thead>
 
-            <div class="flex flex-col gap-px">
-              <div v-for="day in DAYS" :key="day.index" class="flex gap-px">
-                <span
-                  v-for="hour in HOURS"
-                  :key="hour"
-                  class="h-3.5 min-w-0 flex-1 rounded-[2px]"
-                  :class="toneOf(counts.get(day.index * 24 + hour) ?? 0)"
-                  :title="labelOf(day, hour)"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
+          <tbody>
+            <tr v-for="day in DAYS" :key="day.index">
+              <th
+                scope="row"
+                class="w-8 pe-1 text-end text-[0.625rem] font-normal leading-none text-dimmed"
+              >
+                {{ day.label }}
+              </th>
+              <td
+                v-for="hour in HOURS"
+                :key="hour"
+                class="h-3.5 rounded-[2px]"
+                :class="toneOf(counts.get(day.index * 24 + hour) ?? 0)"
+                :title="labelOf(day, hour)"
+              >
+                <!-- The count in text, for anything that cannot see a colour.
+                     Visually hidden rather than omitted: the shade carries it
+                     for sighted readers, and colour alone is never an
+                     accessible encoding. -->
+                <span class="sr-only">{{ labelOf(day, hour) }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
 
         <!-- The key. A shade without one is decoration, and this ramp is
              relative to the busiest hour rather than to a count, which nobody

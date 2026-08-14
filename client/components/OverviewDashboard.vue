@@ -78,6 +78,22 @@ const days = computed(() => {
   return first <= 0 ? all : all.slice(Math.max(0, first - 7))
 })
 
+/**
+ * The zone the heatmap is drawn in, named for the reader.
+ *
+ * Read once rather than computed per render — it cannot change while the page
+ * is open, and `resolvedOptions()` is not free. Falls back to a plain word
+ * where the API is unavailable, since a heading is not worth an exception.
+ */
+const localZone = (() => {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'your timezone'
+  }
+  catch {
+    return 'your timezone'
+  }
+})()
+
 const DAY_TONE: Record<string, string> = {
   calm: 'bg-success',
   notable: 'bg-warning',
@@ -677,11 +693,13 @@ onMounted(load)
           <h2 class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-dimmed">
             <UIcon name="i-lucide-clock" class="size-3.5" />Hour of the week
           </h2>
-          <!-- Said plainly, because the grid is in the server's zone and the
-               reader's may differ by enough to move a night shift into an
-               afternoon — which would invert the one conclusion it offers. -->
+          <!-- Named rather than left implicit. The grid is folded into
+               whichever zone the browser is in, so two people reading the same
+               data from different places see different — and each correct —
+               pictures. Saying which zone is what makes that legible instead
+               of confusing when they compare screens. -->
           <p class="text-xs text-dimmed">
-            in the server's timezone
+            {{ localZone }}
           </p>
         </div>
 

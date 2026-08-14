@@ -1132,29 +1132,41 @@ export async function setIgnored(db: Database, fp: string, ignored: boolean): Pr
  * line and an obvious bright cell. Reading it needs no explanation, which is
  * most of why it is worth the query.
  *
- * Bucketed in the server's local zone rather than UTC — "3am" means the hour
- * the people reading this were asleep, not an offset.
+ * Bucketed in **UTC** here and shifted to the reader's own zone in the browser.
+ * Doing it in the server's zone was the obvious thing and the wrong one: "3am"
+ * has to mean the hour the person looking at it was asleep, and a team spread
+ * across two zones — or a server on UTC and nobody living there, which is the
+ * normal deployment — saw a grid whose one conclusion was off by hours. The
+ * hour of a *timestamp* is a question only the viewer can answer.
+ *
+ * A whole-hour bucket survives the shift intact because every zone this could
+ * be read in is a whole or half hour from UTC; the half-hour ones land the
+ * count in one adjacent cell, which is a smaller error than being wrong about
+ * the whole grid.
  */
 export async function heatmap(db: Database, since: number): Promise<MonitorHeatCell[]> {
   const rows = await db
     .prepare('SELECT ts FROM events WHERE ts >= ?')
     .all(since) as { ts: number | string }[]
 
-  const cells = new Map<string, number>()
+  // Keyed by the absolute hour, not by weekday-and-hour. Collapsing to
+  // "Tuesday 15:00" here would throw away the date, and the date is what the
+  // browser needs to work out which weekday and which hour that instant falls
+  // on where the reader is sitting.
+  const cells = new Map<number, number>()
 
   for (const row of rows) {
-    const at = new Date(Number(row.ts))
-    const key = `${at.getDay()}:${at.getHours()}`
+    const hour = Math.floor(Number(row.ts) / HOUR_MS) * HOUR_MS
 
-    cells.set(key, (cells.get(key) ?? 0) + 1)
+    cells.set(hour, (cells.get(hour) ?? 0) + 1)
   }
 
-  return [...cells].map(([key, count]) => {
-    const [day, hour] = key.split(':')
-
-    return { day: Number(day), hour: Number(hour), count }
-  })
+  return [...cells]
+    .map(([at, count]) => ({ at, count }))
+    .sort((a, b) => a.at - b.at)
 }
+
+const HOUR_MS = 60 * 60 * 1_000
 
 /**
  * What the traffic looked like, as facet shares.

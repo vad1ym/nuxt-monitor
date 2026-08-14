@@ -1066,11 +1066,17 @@ export interface MonitorIssueReleases {
 }
 
 /** One cell of the when-does-it-happen grid. */
+/**
+ * Errors in one hour, as an absolute moment.
+ *
+ * Not a weekday-and-hour pair, which is what the grid draws: that shape can
+ * only be built where somebody's timezone is known, and the server is the one
+ * place it is not. "3am" has to mean the hour the reader was asleep, so the
+ * bucketing into days and hours happens in the browser.
+ */
 export interface MonitorHeatCell {
-  /** `0` Sunday – `6` Saturday, in the server's zone. */
-  day: number
-  /** `0`–`23`, in the server's zone. */
-  hour: number
+  /** Start of the hour, epoch ms, UTC. */
+  at: number
   count: number
 }
 

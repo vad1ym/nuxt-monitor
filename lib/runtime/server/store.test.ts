@@ -2195,3 +2195,69 @@ describe('regression is remembered, not just alerted on', () => {
     expect((await store.listIssues()).issues[0]!.regressedAt).toBe(first)
   })
 })
+
+/**
+ * When errors happen, as absolute hours.
+ *
+ * The server deliberately does *not* fold these into weekdays and hours. That
+ * shape can only be built where somebody's timezone is known, and the server
+ * is the one place it is not: it used to answer in its own zone, so a team
+ * spread across two of them read two different pictures from one dataset and
+ * the grid's only conclusion — "this happens at night" — was wrong for
+ * whoever was not sitting beside the server.
+ */
+describe('the heatmap buckets', () => {
+  const HOUR = 60 * 60 * 1_000
+
+  it('returns whole hours, not weekday-and-hour pairs', async () => {
+    const at = 1_700_000_000_000
+
+    store.capture(makeEvent({ timestamp: at }))
+    await store.flush()
+
+    const cells = await store.heatmap(at - HOUR)
+
+    expect(cells).toHaveLength(1)
+    // The date survives, which is what lets the browser work out which weekday
+    // and which hour this instant falls on where the reader is.
+    expect(cells[0]!.at).toBe(Math.floor(at / HOUR) * HOUR)
+    expect(cells[0]!.count).toBe(1)
+  })
+
+  it('adds up occurrences inside one hour', async () => {
+    const at = 1_700_000_000_000
+
+    store.capture(makeEvent({ timestamp: at }))
+    store.capture(makeEvent({ timestamp: at + 60_000 }))
+    store.capture(makeEvent({ timestamp: at + 30 * 60_000 }))
+    await store.flush()
+
+    const cells = await store.heatmap(at - HOUR)
+
+    expect(cells).toHaveLength(1)
+    expect(cells[0]!.count).toBe(3)
+  })
+
+  it('keeps separate hours apart, oldest first', async () => {
+    const at = 1_700_000_000_000
+
+    store.capture(makeEvent({ timestamp: at + 3 * HOUR }))
+    store.capture(makeEvent({ timestamp: at }))
+    await store.flush()
+
+    const cells = await store.heatmap(at - HOUR)
+
+    expect(cells).toHaveLength(2)
+    expect(cells[0]!.at).toBeLessThan(cells[1]!.at)
+  })
+
+  it('leaves out everything before the window', async () => {
+    const at = 1_700_000_000_000
+
+    store.capture(makeEvent({ timestamp: at - 10 * HOUR }))
+    store.capture(makeEvent({ timestamp: at }))
+    await store.flush()
+
+    expect(await store.heatmap(at - HOUR)).toHaveLength(1)
+  })
+})
