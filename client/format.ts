@@ -69,3 +69,19 @@ export function formatDuration(ms: number): string {
 
   return seconds < 10 ? `${seconds.toFixed(1)} s` : `${Math.round(seconds)} s`
 }
+
+/**
+ * Server errors read as 5xx-or-not; 4xx is usually someone else's problem.
+ *
+ * Here rather than beside one of its callers because the list and the detail
+ * page both colour the same badge, and a status that is red on one screen and
+ * amber on the other is a screen contradicting itself about how bad something
+ * is.
+ */
+export function statusColor(status: number): 'error' | 'warning' | 'neutral' {
+  if (status >= 500) {
+    return 'error'
+  }
+
+  return status >= 400 ? 'warning' : 'neutral'
+}

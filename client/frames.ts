@@ -105,8 +105,14 @@ function vendorLabel(frames: MonitorFrame[]): string {
   return `${count} in ${names.join(', ')}${suffix}`
 }
 
-/** The package a file belongs to, for labelling only. */
-function packageOf(file: string): string | undefined {
+/**
+ * The package a file belongs to, for labelling only.
+ *
+ * Exported for the issue header, which has to name the dependency a trace
+ * stopped in: "in ofetch" is what turns an unopenable path into an
+ * explanation of why it is unopenable.
+ */
+export function packageOf(file: string): string | undefined {
   if (file.startsWith('node:')) {
     return 'node'
   }

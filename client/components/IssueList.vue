@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { MonitorIssue } from '../../lib/types'
-import { relativeTime } from '../format'
+import { relativeTime, statusColor } from '../format'
 
 /**
  * The list is scanned, not read.
@@ -52,15 +52,6 @@ function levelColor(level: MonitorIssue['level']): 'error' | 'warning' | 'info' 
   }
 
   return level === 'info' ? 'info' : 'neutral'
-}
-
-/** Server errors read as 5xx-or-not; 4xx is usually someone else's problem. */
-function statusColor(status: number): 'error' | 'warning' | 'neutral' {
-  if (status >= 500) {
-    return 'error'
-  }
-
-  return status >= 400 ? 'warning' : 'neutral'
 }
 </script>
 
