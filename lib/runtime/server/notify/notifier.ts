@@ -326,7 +326,7 @@ export class MonitorNotifier {
       at: this.now(),
       channel,
       reason: alerts[0]?.reason ?? 'test',
-      fingerprint: alerts.length === 1 ? alerts[0]?.issue.fingerprint : undefined,
+      fingerprint: alerts.length === 1 ? alerts[0]?.issue?.fingerprint : undefined,
       alerts: alerts.length,
       status,
       detail,

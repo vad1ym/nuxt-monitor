@@ -39,17 +39,24 @@ export function accepts(channel: MonitorChannelOptions, alert: MonitorAlert): bo
   }
 
   if (channel.groups?.length) {
-    const group = alert.issue.group
+    const group = alert.issue?.group
 
     // A caught error has no group, so a channel that names groups does not
-    // receive it. Naming one is a statement about what this channel is for.
+    // receive it. Naming one is a statement about what this channel is for —
+    // and an application-wide alert belongs to no group by construction, so it
+    // is not what a channel about payments asked to hear.
     if (!group || !channel.groups.includes(group)) {
       return false
     }
   }
 
   if (channel.minLevel) {
-    const level = alert.issue.level ?? CAUGHT_LEVEL
+    // An alert with no issue carries no level of its own. Treated as
+    // `critical` rather than as unset: the failure rate of the whole
+    // application crossing its threshold is the most severe thing this module
+    // can say, and defaulting it to `error` would let `minLevel: 'critical'`
+    // silence exactly the alert that floor was raised to keep.
+    const level = alert.issue ? alert.issue.level ?? CAUGHT_LEVEL : 'critical'
 
     return ORDER[level] >= ORDER[channel.minLevel]
   }

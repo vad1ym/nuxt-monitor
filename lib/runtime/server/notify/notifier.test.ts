@@ -27,6 +27,11 @@ function makeEvent(overrides: Partial<MonitorEvent> = {}): MonitorEvent {
   }
 }
 
+/** The reasons inside one webhook payload. `alerts` is the array; there is no top-level `reason`. */
+function reasonsOf(entry: { body: Record<string, unknown> }): string[] {
+  return ((entry.body.alerts ?? []) as { reason: string }[]).map(alert => alert.reason)
+}
+
 /** A store whose alerts go to a webhook this test can read. */
 async function open(notifications: Partial<MonitorNotificationOptions> = {}): Promise<MonitorStore> {
   return MonitorStore.open({
@@ -462,5 +467,87 @@ describe('the test alert', () => {
 
     expect(sent).toHaveLength(1)
     expect(deliveries[0]?.status).toBe('sent')
+  })
+})
+
+/**
+ * The application-wide trigger, through the real store.
+ *
+ * Worth an end-to-end test rather than only a unit one because the query it
+ * depends on is where this goes wrong quietly: `class` holds `'5xx'` as text,
+ * and comparing it against the number 5 matches no row — the trigger then
+ * never fires, and never firing is indistinguishable from working.
+ */
+describe('the application error rate', () => {
+  it('alerts once the failure rate crosses the threshold', async () => {
+    store = await open({ triggers: { errorRate: 0.25 } })
+
+    const now = Date.now()
+
+    for (let i = 0; i < 30; i++) {
+      store.countRequest('/api/checkout', 'POST', i < 12 ? 500 : 200, now)
+    }
+
+    // An error has to be captured for a flush to evaluate anything at all.
+    store.capture(makeEvent({ timestamp: now }))
+    await store.flush()
+
+    // The rate alert is enqueued after the per-issue loop, so its send lands a
+    // tick later than the new-issue one.
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    const rate = sent.find(entry => reasonsOf(entry).includes('error-rate'))
+
+    expect(rate).toBeDefined()
+    expect(String(rate!.body.text)).toContain('40% of requests failed')
+  })
+
+  it('stays quiet when the rate is healthy', async () => {
+    store = await open({ triggers: { errorRate: 0.25 } })
+
+    const now = Date.now()
+
+    for (let i = 0; i < 30; i++) {
+      store.countRequest('/api/checkout', 'POST', i < 2 ? 500 : 200, now)
+    }
+
+    store.capture(makeEvent({ timestamp: now }))
+    await store.flush()
+
+    expect(sent.some(entry => reasonsOf(entry).includes('error-rate'))).toBe(false)
+  })
+
+  it('is off unless configured', async () => {
+    store = await open()
+
+    const now = Date.now()
+
+    for (let i = 0; i < 30; i++) {
+      store.countRequest('/api/checkout', 'POST', 500, now)
+    }
+
+    store.capture(makeEvent({ timestamp: now }))
+    await store.flush()
+
+    expect(sent.some(entry => reasonsOf(entry).includes('error-rate'))).toBe(false)
+  })
+
+  it('does not repeat itself on every flush', async () => {
+    // The cooldown that keeps an outage from becoming a message per flush.
+    store = await open({ triggers: { errorRate: 0.25 } })
+
+    const now = Date.now()
+
+    for (let i = 0; i < 30; i++) {
+      store.countRequest('/api/checkout', 'POST', 500, now)
+    }
+
+    store.capture(makeEvent({ timestamp: now }))
+    await store.flush()
+
+    store.capture(makeEvent({ message: 'again', timestamp: now }))
+    await store.flush()
+
+    expect(sent.filter(entry => reasonsOf(entry).includes('error-rate'))).toHaveLength(1)
   })
 })

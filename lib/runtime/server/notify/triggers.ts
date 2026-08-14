@@ -11,6 +11,22 @@ import type { MonitorAlert, MonitorIssue, MonitorTriggerOptions } from '../../..
 /** An order of magnitude at a time. Ten of something is a pattern; two is not. */
 const DEFAULT_THRESHOLDS = [10, 100, 1_000]
 
+/** How much faster than usual counts as a spike, when `spike: true`. */
+const DEFAULT_SPIKE_FACTOR = 5
+
+/**
+ * Occurrences in this flush below which a spike is not claimed.
+ *
+ * Ratios are wild at small numbers: an issue that happened once an hour and
+ * now happens three times in a minute is ×180 by arithmetic and nothing at all
+ * by judgement. This is the floor that keeps the trigger describing outages
+ * rather than noise.
+ */
+const DEFAULT_SPIKE_MINIMUM = 10
+
+/** Requests below which an error rate is not worth reporting. */
+const DEFAULT_MINIMUM_REQUESTS = 20
+
 export interface IssueState {
   /** Count before this flush wrote to the issue. `0` for a fingerprint never seen. */
   previousCount: number
@@ -20,6 +36,18 @@ export interface IssueState {
   alertedCount: number
   /** When this issue last raised an alert. `0` for never. */
   alertedAt: number
+  /**
+   * The issue's established rate, in occurrences per minute, before this flush.
+   *
+   * Absent when there is no history to compare against — a brand-new issue, or
+   * one whose whole life fits inside one flush. `newIssue` already covers the
+   * first, and the second has no "usual" to be faster than.
+   */
+  ratePerMinute?: number
+  /** Occurrences written in this flush, for judging the rate now. */
+  addedCount?: number
+  /** Milliseconds this flush covered, for turning `addedCount` into a rate. */
+  spanMs?: number
 }
 
 /**
@@ -56,6 +84,17 @@ export function evaluate(
     return { reason: 'regression', issue, at }
   }
 
+  // Before the threshold, deliberately. The two can fire together — an issue
+  // going vertical also passes counts on the way — and of the two "it is
+  // happening five times faster than usual" is the one that says something
+  // changed just now. A threshold says only that a total got bigger, which for
+  // a busy issue is true every day.
+  const factor = spikeFactor(state, options)
+
+  if (factor !== undefined) {
+    return { reason: 'spike', issue, factor, at }
+  }
+
   const crossed = crossedThreshold(issue.count, state, options)
 
   if (crossed !== undefined) {
@@ -71,6 +110,86 @@ export function evaluate(
   // Still subject to the per-issue cooldown applied by the store, which is
   // what keeps "every failure" from meaning "every occurrence".
   return watched ? { reason: 'watched', issue, at } : undefined
+}
+
+/**
+ * How many times its usual rate this issue is running at, if that is a spike.
+ *
+ * Compares occurrences per minute in this flush against the rate the issue had
+ * established before it. `undefined` — no alert — whenever the comparison
+ * cannot be made honestly: no history, no elapsed time, or too few occurrences
+ * for a ratio to mean anything.
+ */
+function spikeFactor(
+  state: IssueState,
+  options: MonitorTriggerOptions | undefined,
+): number | undefined {
+  const spike = options?.spike
+
+  if (!spike) {
+    return undefined
+  }
+
+  const settings = typeof spike === 'object' ? spike : {}
+  const threshold = settings.factor ?? DEFAULT_SPIKE_FACTOR
+  const minimum = settings.minimum ?? DEFAULT_SPIKE_MINIMUM
+
+  const added = state.addedCount ?? 0
+  const spanMs = state.spanMs ?? 0
+  const before = state.ratePerMinute
+
+  // Every one of these is "cannot tell", not "no spike". An issue with no
+  // previous rate is new; a flush covering no time has no rate to speak of;
+  // and a handful of occurrences is not a trend however it divides.
+  if (!before || spanMs <= 0 || added < minimum) {
+    return undefined
+  }
+
+  const now = added / (spanMs / 60_000)
+  const factor = now / before
+
+  // Rounded for the message, and compared after rounding so the number the
+  // reader sees is the number that fired: "5× its usual rate" from a factor of
+  // 4.6 invites the reply "that's not five".
+  const rounded = Math.round(factor)
+
+  return rounded >= threshold ? rounded : undefined
+}
+
+/**
+ * Whether the application's failure rate is worth an alert.
+ *
+ * Separate from `evaluate` because it is not about an issue: it takes counted
+ * requests, not a row, and it can fire in a flush where every individual issue
+ * is unremarkable. Fifty small faults that each stay under every threshold are
+ * still a checkout nobody can complete.
+ */
+export function evaluateErrorRate(
+  counts: { failed: number, total: number },
+  options: MonitorTriggerOptions | undefined,
+  at: number,
+): MonitorAlert | undefined {
+  const setting = options?.errorRate
+
+  if (setting === undefined) {
+    return undefined
+  }
+
+  const above = typeof setting === 'object' ? setting.above : setting
+  const minimum = typeof setting === 'object'
+    ? setting.minimumRequests ?? DEFAULT_MINIMUM_REQUESTS
+    : DEFAULT_MINIMUM_REQUESTS
+
+  // A rate needs a denominator worth dividing by. Three failures out of four
+  // requests at 4am is 75% and is not an outage; without this the trigger is
+  // loudest exactly when the application is quietest.
+  if (counts.total < minimum || counts.total === 0) {
+    return undefined
+  }
+
+  return counts.failed / counts.total >= above
+    ? { reason: 'error-rate', rate: counts, at }
+    : undefined
 }
 
 /**

@@ -90,13 +90,16 @@ Then open the dashboard's Notifications section and send a test.
 
 ## What raises an alert
 
-Three triggers, all on by default:
+Five triggers. The first three are on by default; the last two are off until
+you set them.
 
 | Trigger | Fires when |
 | --- | --- |
 | `newIssue` | A fingerprint is seen for the first time |
 | `regression` | An issue marked resolved happens again |
 | `thresholds` | An issue's count crosses `10`, `100` or `1000` |
+| `spike` | An issue starts happening far faster than it used to |
+| `errorRate` | The application's failure rate crosses a fraction you set |
 
 ```ts
 triggers: {
@@ -104,8 +107,27 @@ triggers: {
   newIssue: false,
   // An order of magnitude at a time. `[]` turns thresholds off.
   thresholds: [50, 500],
+  // `true` means ×5. An issue needs an established rate to be faster than,
+  // and at least 10 occurrences in the flush — a ratio off three occurrences
+  // is arithmetic, not a finding.
+  spike: { factor: 5, minimum: 10 },
+  // A quarter of requests failing, measured over the last five minutes and
+  // only once at least 20 were served: three failures out of four at 4am is
+  // 75% and is not an outage.
+  errorRate: { above: 0.25, minimumRequests: 20 },
 }
 ```
+
+`spike` is the one the counts cannot express. An issue that has ticked along
+for a week and does four hundred in a minute has crossed no new threshold — it
+passed `100` and `1000` months ago — so without it nothing is said at the
+moment something actually changed.
+
+`errorRate` is the only trigger that is not about an issue, and the only one
+that can fire when no single issue is remarkable: fifty small faults, each
+under every threshold, are still a checkout nobody can complete. Its message
+names no issue, because pointing at one would blame a symptom that may not be
+the cause.
 
 `regression` is the one worth keeping if you keep only one: somebody said this
 was fixed, and it was not. Nothing else in the tool contradicts a human on the

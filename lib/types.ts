@@ -452,6 +452,31 @@ export interface MonitorTriggerOptions {
    * Set to `[]` to alert only on new issues and regressions.
    */
   thresholds?: number[]
+  /**
+   * Alert when an issue starts happening far faster than it used to.
+   * Off by default; `true` uses ×5.
+   *
+   * The trigger the count-based ones cannot express. An issue that has ticked
+   * along at two an hour for a week and does four hundred in a minute has not
+   * crossed a new threshold — it passed 100 and 1000 long ago — so nothing is
+   * said, at exactly the moment something changed. This compares the rate now
+   * against the rate before, which is what "it got worse" actually means.
+   *
+   * Needs history to compare against: an issue with no established rate is
+   * simply new, and `newIssue` already covers that.
+   */
+  spike?: boolean | { factor?: number, minimum?: number }
+  /**
+   * Alert when the application's failure rate crosses this fraction, e.g.
+   * `0.25` for a quarter of requests. Off by default.
+   *
+   * Application-wide rather than per issue, and the only trigger here that can
+   * fire when no single issue is remarkable: fifty different faults each too
+   * small to alert on still add up to a checkout nobody can complete. Measured
+   * against requests served, so it stays quiet on a quiet night — three
+   * failures out of four requests at 4am is not an outage.
+   */
+  errorRate?: number | { above: number, minimumRequests?: number }
 }
 
 /**
@@ -479,14 +504,33 @@ export interface MonitorQuietHours {
 }
 
 /** Why an alert was raised. */
-export type MonitorAlertReason = 'new-issue' | 'regression' | 'threshold' | 'watched' | 'test'
+export type MonitorAlertReason =
+  | 'new-issue'
+  | 'regression'
+  | 'threshold'
+  | 'watched'
+  | 'spike'
+  | 'error-rate'
+  | 'test'
 
 /** One thing worth telling somebody about. */
 export interface MonitorAlert {
   reason: MonitorAlertReason
-  issue: MonitorIssue
+  /**
+   * The issue this is about.
+   *
+   * Absent only for `error-rate`, which is a statement about the application
+   * rather than about any one fault — that is the whole reason it exists, and
+   * naming an arbitrary issue on it would point the reader at a symptom that
+   * may not be the cause.
+   */
+  issue?: MonitorIssue
   /** The threshold that was crossed, for `threshold` alerts. */
   threshold?: number
+  /** How much faster than before, for `spike` alerts. */
+  factor?: number
+  /** The failure rate and what it was measured over, for `error-rate`. */
+  rate?: { failed: number, total: number }
   at: number
 }
 

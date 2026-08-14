@@ -22,7 +22,7 @@ import type {
   MonitorDashboard,
 } from '../../types'
 import type { IssueState } from './notify/triggers'
-import { evaluate } from './notify/triggers'
+import { evaluate, evaluateErrorRate } from './notify/triggers'
 import { MonitorNotifier } from './notify/notifier'
 import type { SamplingOptions } from './sampling'
 import { Sampler } from './sampling'
@@ -119,6 +119,15 @@ const RETRY_BACKOFF_MS = 5_000
 const DROP_REPORT_INTERVAL_MS = 60_000
 
 /**
+ * How far back the application-wide error rate is measured.
+ *
+ * Short on purpose. Averaged over a day, a catastrophic ten minutes is a
+ * rounding error against the healthy traffic either side of it, and a trigger
+ * that cannot fire during an outage is not a trigger.
+ */
+const ERROR_RATE_WINDOW_MS = 5 * 60_000
+
+/**
  * Events deleted per pass when over the byte ceiling.
  *
  * How many bytes a row frees is not knowable in advance — one event carries a
@@ -182,6 +191,8 @@ export class MonitorStore {
   private sampled = 0
   /** Compiled once at startup, like the ignore rules. */
   private readonly groups: CompiledGroup[]
+  /** When the application-wide rate alert last fired. See `raiseErrorRate`. */
+  private rateAlertedAt = 0
 
   /**
    * Opens a store, ready to use.
@@ -923,16 +934,49 @@ export class MonitorStore {
     const placeholders = fingerprints.map(() => '?').join(', ')
 
     const rows = await this.db.prepare(`
-      SELECT fingerprint, count, resolved, alerted_at, alerted_count
+      SELECT fingerprint, count, resolved, alerted_at, alerted_count, first_seen, last_seen
       FROM issues WHERE fingerprint IN (${placeholders})
     `).all(...fingerprints) as Record<string, unknown>[]
 
+    // What this flush is about to add, per fingerprint, and over how long. The
+    // spike trigger compares one against the other, and both are knowable only
+    // here — the batch is gone by the time the rows are re-read.
+    const added = new Map<string, { count: number, first: number, last: number }>()
+
+    for (const event of batch) {
+      const seen = added.get(event.fingerprint)
+
+      if (seen) {
+        seen.count += 1
+        seen.first = Math.min(seen.first, event.timestamp)
+        seen.last = Math.max(seen.last, event.timestamp)
+      }
+      else {
+        added.set(event.fingerprint, { count: 1, first: event.timestamp, last: event.timestamp })
+      }
+    }
+
     for (const row of rows) {
-      states.set(String(row.fingerprint), {
-        previousCount: Number(row.count ?? 0),
+      const fp = String(row.fingerprint)
+      const previousCount = Number(row.count ?? 0)
+      const firstSeen = Number(row.first_seen ?? 0)
+      const lastSeen = Number(row.last_seen ?? 0)
+      const history = lastSeen - firstSeen
+      const batched = added.get(fp)
+
+      states.set(fp, {
+        previousCount,
         wasResolved: Number(row.resolved ?? 0) === 1,
         alertedCount: Number(row.alerted_count ?? 0),
         alertedAt: Number(row.alerted_at ?? 0),
+        // Left undefined when the issue has no span to average over: everything
+        // it has ever done happened inside one instant, so it has no "usual".
+        ratePerMinute: history > 0 ? previousCount / (history / 60_000) : undefined,
+        addedCount: batched?.count,
+        // The span these occurrences actually cover, not the wall-clock gap
+        // since the last flush. A batch of forty stamped across two seconds is
+        // a spike whether it was written promptly or after a retry.
+        spanMs: batched ? Math.max(1, batched.last - batched.first) : undefined,
       })
     }
 
@@ -1001,6 +1045,62 @@ export class MonitorStore {
         'UPDATE issues SET alerted_at = ?, alerted_count = ? WHERE fingerprint = ?',
       ).run(now, Math.max(state.alertedCount, alert.threshold ?? 0), String(row.fingerprint))
     }
+
+    await this.raiseErrorRate(now)
+  }
+
+  /**
+   * The one alert that is about the application rather than about an issue.
+   *
+   * Evaluated once per flush over the last few minutes of counted requests, so
+   * it can fire in a flush where no single issue was remarkable — fifty small
+   * faults, each under every threshold, are still a checkout nobody completes.
+   *
+   * Its cooldown is held in memory rather than on a row, which is the one place
+   * this differs from the per-issue cooldown and is a deliberate trade: there is
+   * no row to hang it on, and the failure mode of losing it on a restart is one
+   * extra message during an outage that is already sending them.
+   */
+  private async raiseErrorRate(now: number): Promise<void> {
+    const triggers = this.options.notifications?.triggers
+
+    if (!this.notifier || triggers?.errorRate === undefined) {
+      return
+    }
+
+    if (now - this.rateAlertedAt < this.notifier.cooldownMs) {
+      return
+    }
+
+    // The same bucket size the counters are written in, over a short window:
+    // an error rate averaged across a day cannot cross anything, because a bad
+    // ten minutes is a rounding error against 24 hours of healthy traffic.
+    const since = bucketOf(now - ERROR_RATE_WINDOW_MS, BUCKET_MS)
+
+    // `class` is the status class as text — `'5xx'`, not the number 5. Written
+    // the way every other failure count in this module is, because the two
+    // spellings differ by nothing visible and the wrong one matches no row at
+    // all: the trigger would simply never fire, and silence is what it looks
+    // like when it is working.
+    const counts = await this.db.prepare(`
+      SELECT
+        COALESCE(SUM(count), 0)                                     AS total,
+        COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0)     AS failed
+      FROM request_stats WHERE bucket >= ?
+    `).get(since) as { total: number | null, failed: number | null }
+
+    const alert = evaluateErrorRate(
+      { failed: Number(counts.failed ?? 0), total: Number(counts.total ?? 0) },
+      triggers,
+      now,
+    )
+
+    if (!alert) {
+      return
+    }
+
+    this.rateAlertedAt = now
+    this.notifier.enqueue(alert)
   }
 
   /**

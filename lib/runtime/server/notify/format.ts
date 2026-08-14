@@ -16,6 +16,12 @@ const HEADLINE: Record<MonitorAlertReason, string> = {
   'threshold': 'Issue growing',
   // A group somebody asked to hear about, failing again.
   'watched': 'Watched group',
+  // Not "growing": a threshold says an issue got bigger, this says it got
+  // faster, and the two come apart on exactly the issue worth waking up for —
+  // one that passed every count months ago and just went vertical.
+  'spike': 'Sudden spike',
+  // The only one that is not about an issue at all.
+  'error-rate': 'Failure rate high',
   'test': 'Test alert',
 }
 
@@ -67,6 +73,8 @@ const ICON: Record<MonitorAlertReason, string> = {
   'regression': '🔁',
   'threshold': '📈',
   'watched': '👀',
+  'spike': '🚨',
+  'error-rate': '🔥',
   'test': '✅',
 }
 
@@ -146,6 +154,13 @@ export function formatSlack(alerts: MonitorAlert[], dashboardUrl: string): {
 /** The error itself: what broke, and where. */
 function slackLine(alert: MonitorAlert): string {
   const { issue } = alert
+
+  // An application-wide alert has no issue to describe, and picking one to
+  // stand in for it would name a symptom that may not be the cause.
+  if (!issue) {
+    return escapeSlack(rateLine(alert))
+  }
+
   const where = issue.culprit || issue.route
 
   const label = issue.manual
@@ -175,6 +190,10 @@ function slackLine(alert: MonitorAlert): string {
 function slackContext(alert: MonitorAlert): string {
   const { issue } = alert
 
+  if (!issue) {
+    return ''
+  }
+
   const parts: string[] = [issue.side]
 
   if (issue.group) {
@@ -189,7 +208,32 @@ function slackContext(alert: MonitorAlert): string {
     parts.push(`${issue.count} occurrences`)
   }
 
+  // How much faster, which is the entire content of a spike: without it the
+  // message says an issue is happening, which the reader already assumed.
+  if (alert.reason === 'spike' && alert.factor) {
+    parts.push(`${alert.factor}× its usual rate`, `${issue.count} occurrences`)
+  }
+
   return parts.map(escapeSlack).join(' · ')
+}
+
+/**
+ * The failure rate as a sentence.
+ *
+ * Both numbers, never the percentage alone: "80% of requests failed" is an
+ * emergency at 500 requests and a rounding error at five, and the reader
+ * cannot tell which without the denominator.
+ */
+function rateLine(alert: MonitorAlert): string {
+  const rate = alert.rate
+
+  if (!rate?.total) {
+    return 'The application failure rate crossed its threshold.'
+  }
+
+  const percent = Math.round((rate.failed / rate.total) * 100)
+
+  return `${percent}% of requests failed — ${rate.failed} of ${rate.total}.`
 }
 
 /**
@@ -274,6 +318,13 @@ function summary(alerts: MonitorAlert[]): string {
 
 function describe(alert: MonitorAlert, escape: (value: string) => string, markup: Markup): string {
   const { issue } = alert
+
+  // The application-wide alert. No issue to name, and naming one anyway would
+  // point at a symptom rather than the cause.
+  if (!issue) {
+    return escape(rateLine(alert))
+  }
+
   const where = issue.culprit || issue.route
 
   // For a manual report the type is always `MonitorException`, which says
@@ -294,6 +345,12 @@ function describe(alert: MonitorAlert, escape: (value: string) => string, markup
 
   if (alert.reason === 'threshold') {
     parts.push(escape(`— ${issue.count} occurrences`))
+  }
+
+  // The number that *is* the alert. A spike without its factor reads as a
+  // notification that an error happened, which the reader assumed already.
+  if (alert.reason === 'spike' && alert.factor) {
+    parts.push(escape(`— ${alert.factor}× its usual rate, ${issue.count} occurrences`))
   }
 
   // The side answers "is this mine to fix right now" faster than anything else
@@ -319,9 +376,13 @@ function issueLink(alerts: MonitorAlert[], dashboardUrl: string): string {
 
   // A test alert describes no stored issue, so linking at one lands on a 404 —
   // from the very message somebody sent to confirm the setup works, which is
-  // the worst possible moment to show them a broken link.
-  return alerts.length === 1 && alerts[0]!.reason !== 'test'
-    ? `${base}/issues/${alerts[0]!.issue.fingerprint}`
+  // the worst possible moment to show them a broken link. An `error-rate`
+  // alert has no issue for a different reason but lands the same way, so the
+  // check is on the issue itself rather than on the reason.
+  const only = alerts.length === 1 ? alerts[0]! : undefined
+
+  return only && only.reason !== 'test' && only.issue
+    ? `${base}/issues/${only.issue.fingerprint}`
     : base
 }
 
