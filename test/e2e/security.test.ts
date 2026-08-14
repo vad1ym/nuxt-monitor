@@ -178,11 +178,34 @@ describe('sourcemap exposure', () => {
 })
 
 describe('dashboard shell', () => {
-  it('redirects the bare route so relative assets resolve', async () => {
+  /**
+   * Both forms serve the shell. Neither redirects.
+   *
+   * The bare route used to 302 to the slashed one so that `./assets/…` would
+   * resolve. That was a trap in any application which canonicalises URLs by
+   * stripping trailing slashes — a common SEO rule, usually installed in a
+   * Nitro `request` hook ahead of every route. Its 301 and our 302 answered
+   * each other until the browser gave up with ERR_TOO_MANY_REDIRECTS, and the
+   * dashboard was simply unreachable. A `<base>` does the same job with no
+   * redirect for anything to fight with.
+   */
+  it('serves the bare route without redirecting', async () => {
     const response = await raw('/_monitor')
 
-    expect(response.status).toBe(302)
-    expect(response.headers.get('location')).toBe('/_monitor/')
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-type')).toContain('text/html')
+  })
+
+  it('anchors relative assets with a base tag on the bare route', async () => {
+    const response = await raw('/_monitor')
+
+    expect(await response.text()).toContain('<base href="/_monitor/">')
+  })
+
+  it('needs no base tag under the trailing slash, where relatives already work', async () => {
+    const response = await raw('/_monitor/')
+
+    expect(await response.text()).not.toContain('<base')
   })
 
   it('serves the shell unauthenticated so the login screen can render', async () => {

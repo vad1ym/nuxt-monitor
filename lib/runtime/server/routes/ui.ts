@@ -3,7 +3,6 @@ import {
   defineEventHandler,
   getRequestHeader,
   send,
-  sendRedirect,
   setResponseHeader,
   setResponseStatus,
   useStorage,
@@ -29,11 +28,19 @@ export default defineEventHandler(async (event) => {
   const requestPath = (event.path ?? '').split('?')[0] ?? ''
 
   // The shell references its assets relatively (`./assets/…`) so the bundle
-  // works at any mount point. That only resolves correctly under a trailing
-  // slash — without one the browser resolves against the parent directory and
-  // requests `/assets/…`, which is not ours.
+  // works at any mount point. Without a trailing slash the browser resolves
+  // those against the parent directory and asks for `/assets/…`, which is not
+  // ours — so the bare path is served with a `<base>` naming the mount point
+  // instead.
+  //
+  // A 302 to the slashed form used to do this, and it was a trap: an
+  // application that canonicalises URLs by *stripping* trailing slashes — a
+  // common SEO rule, and one that usually runs in a Nitro `request` hook ahead
+  // of every route — answers that redirect with one of its own, and the two
+  // bounce until the browser gives up with ERR_TOO_MANY_REDIRECTS. Serving
+  // both forms directly means there is no redirect left to fight with.
   if (requestPath === config.route) {
-    return sendRedirect(event, `${config.route}/`, 302)
+    return sendShell(event, useStorage('assets:monitor-client'), config.route)
   }
 
   const path = assetPath(event.path ?? '', config.route)
@@ -106,6 +113,13 @@ function assetPath(requestPath: string, route: string): string {
 async function sendShell(
   event: Parameters<typeof setResponseHeader>[0],
   storage: ReturnType<typeof useStorage>,
+  /**
+   * Mount point to anchor relative asset URLs to.
+   *
+   * Passed only when the request had no trailing slash, which is the one case
+   * where `./assets/…` would resolve against the parent directory.
+   */
+  base?: string,
 ): Promise<unknown> {
   const shell = await storage.getItemRaw('index.html').catch(() => null)
 
@@ -116,7 +130,27 @@ async function sendShell(
   setResponseHeader(event, 'content-type', 'text/html; charset=utf-8')
   setResponseHeader(event, 'cache-control', 'no-store')
 
-  return send(event, toBuffer(shell))
+  return send(event, base ? withBase(toBuffer(shell), base) : toBuffer(shell))
+}
+
+/**
+ * Points the shell's relative URLs at the mount point.
+ *
+ * Inserted rather than baked in at build time because the mount point is a
+ * runtime option: the same bundle serves `/_monitor` and whatever anybody
+ * renames it to. Injected right after `<head>` so it precedes the asset tags —
+ * a `<base>` after them has no effect on what they already resolved.
+ */
+function withBase(shell: Buffer, route: string): Buffer {
+  const html = shell.toString('utf8')
+
+  // Only when there is a head to put it in. A shell without one is not
+  // something to guess at, and serving it unchanged is what happened before.
+  if (!html.includes('<head>')) {
+    return shell
+  }
+
+  return Buffer.from(html.replace('<head>', `<head><base href="${route}/">`), 'utf8')
 }
 
 function notFound(): never {
