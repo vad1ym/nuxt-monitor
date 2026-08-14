@@ -11,6 +11,7 @@ import type {
   MonitorGroupOptions,
   MonitorIssueReleases,
   MonitorIssueTrend,
+  MonitorLatency,
   MonitorNotificationOptions,
   MonitorOverview,
   MonitorRelease,
@@ -39,6 +40,7 @@ import type { CompiledGroup } from '../shared/groups'
 import { compileGroups, findGroup, groupFor } from '../shared/groups'
 import { fingerprint } from '../shared/fingerprint'
 import { FAILED_SUM, bucketOf, countedClass, normalizeRoute } from '../shared/route'
+import { bucketFor, labelFor } from '../shared/latency'
 import { culpritOf, toIssue } from './rows'
 import * as queries from './queries'
 import { BUCKET_MS, migrate } from './schema'
@@ -176,6 +178,8 @@ export class MonitorStore {
   private counters = new Map<string, number>()
   /** `bucket facet value` → count. The traffic baseline for breakdowns. */
   private trafficCounters = new Map<string, number>()
+  /** `bucket route le` → count. How long requests took, as a histogram. */
+  private latencyCounters = new Map<string, number>()
   private timer: ReturnType<typeof setInterval> | undefined
   private purgeTimer: ReturnType<typeof setInterval> | undefined
   private readonly flushSize: number
@@ -567,6 +571,37 @@ export class MonitorStore {
   }
 
   /**
+   * Records how long a request took, into a histogram bucket.
+   *
+   * The measurement that separates an error tracker from a monitor. Everything
+   * else here begins with something throwing, so an application answering 200
+   * in eight seconds was invisible: error rate zero, issue list empty, and
+   * unusable for everyone trying to use it.
+   *
+   * Every request, not only the failures — which is the whole point, and also
+   * why it must stay this cheap. One comparison loop over eighteen bounds and
+   * one map write, on the same buffered path as the status counters, so a
+   * request pays no I/O for being measured.
+   */
+  countLatency(route: string, ms: number, at = Date.now()): void {
+    if (this.closed || !Number.isFinite(ms) || ms < 0) {
+      return
+    }
+
+    const key = [
+      bucketOf(at, BUCKET_MS),
+      normalizeRoute(route),
+      labelFor(bucketFor(ms)),
+    ].join(KEY_SEPARATOR)
+
+    this.latencyCounters.set(key, (this.latencyCounters.get(key) ?? 0) + 1)
+
+    if (this.latencyCounters.size > 5_000) {
+      void this.flushCounters()
+    }
+  }
+
+  /**
    * Counts one page view's browser and device.
    *
    * The baseline every breakdown is judged against. Aggregated in memory and
@@ -609,6 +644,7 @@ export class MonitorStore {
   /** Writes buffered counters. */
   private async flushCounters(): Promise<void> {
     await this.flushTrafficFacets()
+    await this.flushLatency()
 
     if (this.counters.size === 0) {
       return
@@ -647,6 +683,55 @@ export class MonitorStore {
       }
 
       this.dropCountersIfHopeless()
+    }
+  }
+
+  /**
+   * Writes the latency histogram.
+   *
+   * Its own transaction for the same reason the traffic baseline has one:
+   * these are independent tallies, and failing to write one must not roll back
+   * another. Merged back on failure rather than dropped — a histogram with
+   * holes understates the tail, which is the half anybody reads it for.
+   */
+  private async flushLatency(): Promise<void> {
+    if (this.latencyCounters.size === 0) {
+      return
+    }
+
+    const batch = this.latencyCounters
+    this.latencyCounters = new Map()
+
+    const upsert = this.statement('latency', `
+      INSERT INTO request_latency (bucket, route, le, count)
+      VALUES (?, ?, ?, ?)
+      ${upsertClause(this.connection.dialect, 'request_latency', ['bucket', 'route', 'le'], ['count = count + excluded.count'])}
+    `)
+
+    await this.db.exec('BEGIN')
+
+    try {
+      for (const [key, count] of batch) {
+        const [bucket, route, le] = key.split(KEY_SEPARATOR)
+
+        await upsert.run(Number(bucket), route!, le!, count)
+      }
+
+      await this.db.exec('COMMIT')
+    }
+    catch (error) {
+      await this.rollback()
+      console.error('[monitor] failed to flush latency counters', error)
+
+      for (const [key, count] of batch) {
+        this.latencyCounters.set(key, (this.latencyCounters.get(key) ?? 0) + count)
+      }
+
+      // Bounded like the others: a database that stays unwritable must not
+      // turn a histogram into an out-of-memory kill in the monitored app.
+      if (this.latencyCounters.size > MAX_PENDING_COUNTERS) {
+        this.latencyCounters.clear()
+      }
     }
   }
 
@@ -1656,8 +1741,9 @@ export class MonitorStore {
     this.counters.clear()
 
     this.trafficCounters.clear()
+    this.latencyCounters.clear()
 
-    for (const table of ['events', 'issues', 'request_stats', 'traffic_facets', 'notifications']) {
+    for (const table of ['events', 'issues', 'request_stats', 'request_latency', 'traffic_facets', 'notifications']) {
       await this.db.exec(`DELETE FROM ${table}`)
     }
   }
@@ -1677,6 +1763,10 @@ export class MonitorStore {
     // that give the error numbers meaning, and a baseline that expired first
     // would silently stop qualifying the breakdowns.
     await this.db.prepare('DELETE FROM traffic_facets WHERE bucket < ?').run(counterCutoff)
+    // Same window again: latency is the other denominator-shaped table, and a
+    // histogram that expired first would make "slower than last week"
+    // unanswerable at exactly the range that question is asked over.
+    await this.db.prepare('DELETE FROM request_latency WHERE bucket < ?').run(counterCutoff)
     const issues = await this.db.prepare(`
       DELETE FROM issues
       WHERE fingerprint NOT IN (SELECT DISTINCT fingerprint FROM events)
@@ -1784,6 +1874,16 @@ export class MonitorStore {
   ): Promise<{ fingerprint: string, type: string, message: string, side: MonitorSide, at: number }[]> {
     await this.flush()
     return queries.relatedByRequest(this.db, requestId, fingerprint)
+  }
+
+  /**
+   * How long requests took, as percentiles.
+   *
+   * The one read here that is not about an error at all.
+   */
+  async latency(windowMs: number, now = Date.now()): Promise<MonitorLatency> {
+    await this.flush()
+    return queries.latency(this.db, now - windowMs)
   }
 
   /** The deploys that landed inside a span, for drawing on an issue's chart. */

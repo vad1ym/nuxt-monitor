@@ -9,7 +9,7 @@ import type {
 } from '../../lib/types'
 import { api } from '../api'
 import { formatCount, formatRate, formatShare } from '../chart'
-import { relativeTime } from '../format'
+import { formatDuration, relativeTime } from '../format'
 import DeltaBadge from './DeltaBadge.vue'
 import HeatMap from './HeatMap.vue'
 import StatBar from './StatBar.vue'
@@ -251,6 +251,37 @@ const active = computed(() =>
  */
 const previous = computed(() => active.value.length ? undefined : data.value?.previous)
 
+/** Empty rather than absent, so the tile renders "—" instead of failing. */
+const latency = computed(() => data.value?.latency ?? { requests: 0, routes: [] })
+
+/**
+ * When the tail is slow enough to be worth colouring.
+ *
+ * One second is the point where an interaction stops feeling immediate and
+ * starts feeling like waiting — a threshold about people rather than about
+ * servers, which is the right kind for a number on a dashboard.
+ */
+const slow = computed(() => (latency.value.p95 ?? 0) > 1_000)
+
+/**
+ * Whether the session total can be shown as a denominator.
+ *
+ * It has to be at least as large as the number it divides, and there is a real
+ * window where it is not: sessions are only counted from the moment the client
+ * collector starts saying hello, while errors carry session ids that were
+ * stored long before. A database that predates the counter therefore reports
+ * more affected sessions than sessions — "8 of 2", which is visibly nonsense
+ * and destroys confidence in every other figure on the screen.
+ *
+ * Withheld rather than clamped: showing "8 of 8" would invent a total that
+ * makes a partial baseline look complete, and the honest reading of a
+ * denominator smaller than its numerator is that there is no denominator yet.
+ * Corrects itself once the window contains only data collected since.
+ */
+const hasSessionBaseline = computed(() =>
+  Boolean(totals.value && totals.value.sessions >= totals.value.affectedSessions && totals.value.sessions > 0),
+)
+
 async function load(): Promise<void> {
   loading.value = true
   error.value = ''
@@ -374,7 +405,11 @@ onMounted(load)
            aggregates with no browser or group attached, so there is nothing to
            narrow them by. Quietly leaving them looking filtered would be the
            screen contradicting itself. -->
-      <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <!-- Five across on a wide screen. Latency joined the row rather than
+           taking a section of its own: it belongs beside the failure rate,
+           since "slow" and "broken" are the two ways an application lets
+           somebody down and reading them apart hides the trade between them. -->
+      <div class="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <div class="rounded-lg border border-default p-3">
           <p class="flex items-center gap-1.5 text-xs text-dimmed">
             <UIcon name="i-lucide-arrow-down-up" class="size-3.5" />Requests
@@ -423,6 +458,29 @@ onMounted(load)
           </p>
         </div>
 
+        <!-- p95, not an average.
+             Latency distributions have long tails, so a mean sits in the empty
+             space between the fast majority and the slow minority — describing
+             nobody — and it is the last number to move when the tail is what
+             broke. "One request in twenty was at least this slow" is what
+             somebody acts on. -->
+        <div class="rounded-lg border border-default p-3">
+          <p class="flex items-center gap-1.5 text-xs text-dimmed">
+            <UIcon name="i-lucide-timer" class="size-3.5" />Slowest 5%
+          </p>
+          <p
+            class="mt-1 flex items-baseline gap-2 text-2xl font-semibold tabular-nums"
+            :class="slow ? 'text-warning' : 'text-highlighted'"
+          >
+            {{ latency.p95 === undefined ? '—' : formatDuration(latency.p95) }}
+          </p>
+          <p class="text-xs text-dimmed">
+            <!-- The median beside it, because one number cannot say whether
+                 everything slowed down or only the tail did. -->
+            {{ latency.p50 === undefined ? 'nothing measured' : `${formatDuration(latency.p50)} typical` }}
+          </p>
+        </div>
+
         <div class="rounded-lg border border-default p-3">
           <p class="flex items-center gap-1.5 text-xs text-dimmed">
             <UIcon name="i-lucide-bug" class="size-3.5" />Errors
@@ -465,7 +523,7 @@ onMounted(load)
                  client collector running, or a database older than it —
                  because "5 of 0" would be worse than saying less. -->
             {{ formatCount(totals!.affectedSessions) }}
-            {{ totals!.sessions ? `of ${formatCount(totals!.sessions)} sessions` : 'sessions affected' }}
+            {{ hasSessionBaseline ? `of ${formatCount(totals!.sessions)} sessions` : 'sessions affected' }}
           </p>
         </div>
       </div>
@@ -593,6 +651,40 @@ onMounted(load)
                 :value="formatCount(route.total)"
                 :hint="route.failed ? formatShare(route.rate) : undefined"
                 :tone="route.rate >= 0.05 ? 'error' : route.failed ? 'warning' : 'neutral'"
+                mono
+              />
+            </button>
+          </div>
+        </section>
+
+        <!-- Where the time goes, beside where the failures go.
+             Ranked by the tail rather than by traffic: a busy fast endpoint is
+             not news and a slow one is, however rarely it is called. This is
+             the only table here that can name a fault which never threw. -->
+        <section v-if="latency.routes.length" class="rounded-lg border border-default p-3">
+          <h2 class="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-dimmed">
+            <UIcon name="i-lucide-timer" class="size-3.5" />Slowest endpoints
+          </h2>
+
+          <div class="space-y-0.5">
+            <button
+              v-for="route in latency.routes"
+              :key="route.route"
+              type="button"
+              class="block w-full cursor-pointer text-left"
+              @click="emit('browse', 'route', route.route)"
+            >
+              <!-- Bars relative to the slowest, so the column reads as a
+                   comparison between endpoints rather than against an absolute
+                   scale nobody chose. The p95 is the value; the median is the
+                   hint, because one number cannot say whether everything
+                   slowed or only the tail did. -->
+              <StatBar
+                :share="(route.p95 ?? 0) / Math.max(1, latency.routes[0]!.p95 ?? 1)"
+                :label="route.route"
+                :value="route.p95 === undefined ? '—' : formatDuration(route.p95)"
+                :hint="route.p50 === undefined ? undefined : `${formatDuration(route.p50)} typical`"
+                :tone="(route.p95 ?? 0) > 1_000 ? 'warning' : 'neutral'"
                 mono
               />
             </button>

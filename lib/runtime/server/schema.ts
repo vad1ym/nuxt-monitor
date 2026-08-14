@@ -71,6 +71,7 @@ const INDEXES: [name: string, table: string, columns: string][] = [
   ['idx_notifications_at', 'notifications', 'at DESC'],
   // Read by window, like the request counters beside it.
   ['idx_traffic_bucket', 'traffic_facets', 'bucket DESC'],
+  ['idx_latency_bucket', 'request_latency', 'bucket DESC'],
 ]
 
 /**
@@ -153,6 +154,27 @@ function tables(dialect: MonitorDialect): string[] {
   class   ${t.key(16)} NOT NULL,
   count   ${t.int} NOT NULL DEFAULT 0,
   PRIMARY KEY (bucket, route, method, class)${indexesFor('request_stats')}
+)`,
+
+    // How long requests took, as a histogram.
+    //
+    // The table that lets this tool see a fault that never throws: an
+    // application answering 200 in eight seconds was invisible here, because
+    // nothing was recorded unless it failed. Error rate zero, issue list
+    // empty, and unusable for everybody trying to use it.
+    //
+    // Separate from `request_stats` rather than more columns on it: that table
+    // is keyed by route, method and status class, and multiplying it by
+    // eighteen latency buckets would turn a bounded table into a much larger
+    // one for no gain — latency is asked about per route, not per route per
+    // status. Keyed by the bucket's *bound* rather than its index so old rows
+    // keep their meaning if the bucket list ever changes.
+    `CREATE TABLE IF NOT EXISTS request_latency (
+  bucket  ${t.int} NOT NULL,
+  route   ${t.key(191)} NOT NULL,
+  le      ${t.key(16)} NOT NULL,
+  count   ${t.int} NOT NULL DEFAULT 0,
+  PRIMARY KEY (bucket, route, le)${indexesFor('request_latency')}
 )`,
 
     // Who the traffic came from, so a breakdown of errors has something honest

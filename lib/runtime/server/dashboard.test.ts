@@ -440,3 +440,73 @@ describe('the session denominator', () => {
     expect(breakdowns.flatMap(b => b.slices.map(s => s.value))).not.toContain('total')
   })
 })
+
+describe('latency', () => {
+  /**
+   * The measurement that separates a monitor from an error tracker. Everything
+   * else here begins with something throwing, so an application answering 200
+   * in eight seconds registered nowhere at all — error rate zero, issue list
+   * empty, and unusable for everybody trying to use it.
+   */
+  it('measures requests that did not fail', async () => {
+    store.countLatency('/api/x', 30)
+    store.countLatency('/api/x', 40)
+    await store.flush()
+
+    const { latency } = await store.dashboard({ windowMs: HOUR })
+
+    expect(latency.requests).toBe(2)
+    expect(latency.p50).toBeGreaterThan(0)
+  })
+
+  it('reports no percentile where nothing was measured', async () => {
+    // "No data" and "instant" are different answers, and only one of them is
+    // reassuring.
+    const { latency } = await store.dashboard({ windowMs: HOUR })
+
+    expect(latency.requests).toBe(0)
+    expect(latency.p95).toBeUndefined()
+  })
+
+  it('separates a slow endpoint from a fast one', async () => {
+    // The finding an overall average hides: one endpoint degrading is
+    // invisible in a figure averaged across all of them.
+    for (let i = 0; i < 50; i++) {
+      store.countLatency('/api/fast', 20)
+      store.countLatency('/api/slow', 5_000)
+    }
+
+    await store.flush()
+
+    const { latency } = await store.dashboard({ windowMs: HOUR })
+
+    // Ranked by the tail, so the slow one leads however much traffic the fast
+    // one carries.
+    expect(latency.routes[0]!.route).toBe('/api/slow')
+    expect(latency.routes[0]!.p95).toBeGreaterThan(1_000)
+    expect(latency.routes.find(r => r.route === '/api/fast')!.p95).toBeLessThan(100)
+  })
+
+  it('collapses variable paths into one route, like the other counters', async () => {
+    // Otherwise every id in production becomes its own row and the table grows
+    // with traffic rather than with the size of the application.
+    store.countLatency('/users/1', 30)
+    store.countLatency('/users/2', 30)
+    await store.flush()
+
+    const { latency } = await store.dashboard({ windowMs: HOUR })
+
+    expect(latency.routes).toHaveLength(1)
+    expect(latency.routes[0]!.requests).toBe(2)
+  })
+
+  it('ignores a nonsensical reading rather than storing it', async () => {
+    // A negative duration means the clock moved backwards between two
+    // readings; recording it would drag the whole distribution down.
+    store.countLatency('/api/x', -5)
+    store.countLatency('/api/x', Number.NaN)
+    await store.flush()
+
+    expect((await store.dashboard({ windowMs: HOUR })).latency.requests).toBe(0)
+  })
+})

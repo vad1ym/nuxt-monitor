@@ -4,7 +4,7 @@ import type { MonitorFacetCounts, MonitorFacetFilter } from '../../lib/types'
 import type { IssueDetail } from '../api'
 import { api } from '../api'
 import { formatCount } from '../chart'
-import { absoluteTime, relativeTime } from '../format'
+import { absoluteTime, formatDuration, relativeTime } from '../format'
 import { primaryFrame, shortLocation } from '../frames'
 import IssueBreakdown from './IssueBreakdown.vue'
 import StackTrace from './StackTrace.vue'
@@ -138,24 +138,6 @@ const request = computed(() => {
     id: typeof context.requestId === 'string' ? context.requestId : undefined,
   }
 })
-
-/**
- * A duration as somebody would say it.
- *
- * Milliseconds up to a second, because that is the range where the digits
- * carry the meaning — 3ms and 900ms are different stories. Past that the
- * precision stops mattering and the magnitude starts: nobody investigating a
- * 31-second request needs to know it was 31,402.
- */
-function formatDuration(ms: number): string {
-  if (ms < 1_000) {
-    return `${Math.round(ms)} ms`
-  }
-
-  const seconds = ms / 1_000
-
-  return seconds < 10 ? `${seconds.toFixed(1)} s` : `${Math.round(seconds)} s`
-}
 
 /**
  * What was sent and what came back.

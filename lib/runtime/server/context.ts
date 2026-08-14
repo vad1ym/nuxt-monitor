@@ -231,6 +231,36 @@ export function countRequestSync(route: string, method: string, status: number):
   })
 }
 
+/** Durations recorded before the database finished opening. */
+const pendingLatency: [route: string, ms: number][] = []
+
+/**
+ * Records how long a request took, without waiting for the store.
+ *
+ * Queued rather than dropped for the same reason the counters are: opening an
+ * external database is a network round trip, and every request served in that
+ * window arrives here. Dropping them would leave the first minutes of every
+ * process missing from the histogram — which is exactly the stretch after a
+ * restart, when a cold cache makes latency least representative and most worth
+ * having recorded.
+ */
+export function countLatencySync(route: string, ms: number): void {
+  if (store) {
+    store.countLatency(route, ms)
+    return
+  }
+
+  if (pendingLatency.length < MAX_PENDING_BEFORE_OPEN) {
+    pendingLatency.push([route, ms])
+  }
+
+  void useMonitorStore().then((ready) => {
+    for (const [path, elapsed] of pendingLatency.splice(0)) {
+      ready.countLatency(path, elapsed)
+    }
+  })
+}
+
 /** Page views counted before the database finished opening. */
 const pendingTraffic: ParsedUserAgent[] = []
 

@@ -9,6 +9,7 @@ import type {
   MonitorHeatCell,
   MonitorIssue,
   MonitorIssueTrend,
+  MonitorLatency,
   MonitorLevel,
   MonitorRouteKind,
   MonitorOverview,
@@ -21,6 +22,7 @@ import type {
 import { FACET_NAMES, facetClause, facetColumn } from './facets'
 import { escapeLike, parseJson, toFacets, toIssue } from './rows'
 import { FAILED_SUM, bucketOf, isFailedClass } from '../shared/route'
+import { percentile } from '../shared/latency'
 import { BUCKET_MS } from './schema'
 import { changesOf } from './db'
 
@@ -1231,6 +1233,71 @@ export async function trafficFacets(db: Database, windowMs: number, now = Date.n
   }
 
   return counts
+}
+
+/**
+ * How long requests took, as percentiles.
+ *
+ * p50 and p95 rather than a mean, which is the number this deliberately does
+ * not report: latency distributions have long tails, so the mean sits in the
+ * empty space between the fast majority and the slow minority, describing
+ * nobody's experience, and it moves last exactly when the tail is what broke.
+ * The p95 is the number people act on — one request in twenty was at least
+ * this slow — and the p50 beside it is what says whether the whole thing
+ * shifted or only the tail.
+ *
+ * Per route as well as overall, because the overall figure hides the finding:
+ * one endpoint degrading is invisible in an average across all of them, and
+ * "which endpoint" is the first question anybody asks next.
+ */
+export async function latency(
+  db: Database,
+  since: number,
+  limit = 10,
+): Promise<MonitorLatency> {
+  const rows = await db.prepare(`
+    SELECT route, le, SUM(count) AS count
+    FROM request_latency
+    WHERE bucket >= ?
+    GROUP BY route, le
+  `).all(bucketOf(since, BUCKET_MS)) as Record<string, unknown>[]
+
+  const overall = new Map<string, number>()
+  const byRoute = new Map<string, Map<string, number>>()
+
+  for (const row of rows) {
+    const route = String(row.route)
+    const le = String(row.le)
+    const count = Number(row.count)
+
+    overall.set(le, (overall.get(le) ?? 0) + count)
+
+    const bucket = byRoute.get(route) ?? new Map<string, number>()
+
+    bucket.set(le, (bucket.get(le) ?? 0) + count)
+    byRoute.set(route, bucket)
+  }
+
+  const routes = [...byRoute.entries()]
+    .map(([route, counts]) => ({
+      route,
+      requests: [...counts.values()].reduce((sum, count) => sum + count, 0),
+      p50: percentile(counts, 0.5),
+      p95: percentile(counts, 0.95),
+      p99: percentile(counts, 0.99),
+    }))
+    // Ranked by the tail rather than by volume: a busy fast endpoint is not
+    // news, and a slow one is, however rarely it is called.
+    .sort((a, b) => (b.p95 ?? 0) - (a.p95 ?? 0))
+    .slice(0, limit)
+
+  return {
+    requests: [...overall.values()].reduce((sum, count) => sum + count, 0),
+    p50: percentile(overall, 0.5),
+    p95: percentile(overall, 0.95),
+    p99: percentile(overall, 0.99),
+    routes,
+  }
 }
 
 /**

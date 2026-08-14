@@ -6,7 +6,7 @@ import { captureBodies, snapshotRequestBody } from './bodies'
 import { scrub, scrubUrl } from '../shared/scrub'
 import { parseUserAgent } from '../shared/user-agent'
 import type { MonitorRuntimeConfig } from './context'
-import { captureSync, closeMonitorStore, countRequestSync, countTrafficSync, monitorConfig } from './context'
+import { captureSync, closeMonitorStore, countLatencySync, countRequestSync, countTrafficSync, monitorConfig } from './context'
 import { markRequestId, requestId } from './request-id'
 import { statusOf } from './status'
 import { describeRuntime } from './runtime-versions'
@@ -187,6 +187,18 @@ function countOnce(event: H3Event, status: number): void {
   }
 
   countRequestSync(path, event.method ?? 'GET', status)
+
+  // How long it took, whether or not it worked.
+  //
+  // The one measurement here that is not about an error, and the one that
+  // lets this see a fault that never throws: an endpoint answering 200 in
+  // eight seconds produced no issue, no error rate and no sign at all, while
+  // being the thing that made the application unusable.
+  const elapsed = requestDuration(event)
+
+  if (elapsed !== undefined) {
+    countLatencySync(path, elapsed)
+  }
 
   // The same request, counted a second way: which browser and device it came
   // from. That is what turns "90% of these errors are on iOS" into a finding

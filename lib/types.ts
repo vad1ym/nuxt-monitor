@@ -901,6 +901,35 @@ export interface MonitorPrevious {
   sessions: number
 }
 
+/**
+ * How long requests took.
+ *
+ * The measurement that separates a monitor from an error tracker: everything
+ * else here starts with something throwing, so an application answering 200 in
+ * eight seconds registered as perfectly healthy while being unusable.
+ *
+ * Percentiles, never a mean. Latency distributions have long tails, so a mean
+ * sits in the empty space between the fast majority and the slow minority —
+ * describing nobody — and it is the last number to move when the tail is what
+ * broke.
+ */
+export interface MonitorLatency {
+  /** Requests measured. The denominator every percentile here is out of. */
+  requests: number
+  /** Undefined when nothing was measured: "no data" is not "instant". */
+  p50?: number
+  p95?: number
+  p99?: number
+  /** The slowest routes by p95, since an average across all of them hides it. */
+  routes: {
+    route: string
+    requests: number
+    p50?: number
+    p95?: number
+    p99?: number
+  }[]
+}
+
 /** One release, and what happened while it was deployed. */
 export interface MonitorRelease {
   release: string
@@ -1073,6 +1102,14 @@ export interface MonitorDashboard {
    * measurement: a healthy previous day genuinely had no errors.
    */
   previous?: MonitorPrevious
+  /**
+   * How long requests took.
+   *
+   * The only figure on this screen not derived from something throwing, and
+   * the reason the screen can now see a fault that never does: an endpoint
+   * answering 200 in eight seconds registered nowhere at all.
+   */
+  latency: MonitorLatency
   /** Requests and errors on one axis, so a spike in both is not read as one. */
   trend: { bucket: number, requests: number, failed: number, errors: number }[]
   breakdowns: MonitorDashboardBreakdown[]

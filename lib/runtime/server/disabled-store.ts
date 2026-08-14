@@ -6,6 +6,7 @@ import type {
   MonitorHealth,
   MonitorIssue,
   MonitorIssueTrend,
+  MonitorLatency,
   MonitorOverview,
   MonitorRelease,
   MonitorRouteStat,
@@ -34,7 +35,8 @@ import type { MonitorStore } from './store'
  */
 export class DisabledStore implements Pick<
   MonitorStore,
-  'capture' | 'countRequest' | 'countTraffic' | 'countSession' | 'relatedByRequest'
+  'capture' | 'countRequest' | 'countTraffic' | 'countSession' | 'countLatency' | 'latency'
+  | 'relatedByRequest'
   | 'flush' | 'close' | 'listIssues' | 'getIssue'
   | 'getEvents' | 'facetCounts' | 'sessionCount' | 'eventCount' | 'overview'
   | 'setResolved' | 'setIgnored' | 'purge' | 'releases' | 'routes' | 'sessions' | 'health'
@@ -52,6 +54,12 @@ export class DisabledStore implements Pick<
   countTraffic(): void {}
 
   countSession(): void {}
+
+  countLatency(): void {}
+
+  async latency(): Promise<MonitorLatency> {
+    return { requests: 0, routes: [] }
+  }
 
   async relatedByRequest(): Promise<[]> {
     return []
@@ -172,6 +180,7 @@ export class DisabledStore implements Pick<
     return {
       windowMs: 0,
       totals: { requests: 0, failed: 0, events: 0, issues: 0, newIssues: 0, affectedSessions: 0, sessions: 0 },
+      latency: { requests: 0, routes: [] },
       trend: [],
       breakdowns: [],
       routes: [],

@@ -46,3 +46,26 @@ export function formatBytes(bytes: number): string {
   // where the extra digit is noise.
   return `${value < 10 && power > 0 ? value.toFixed(1) : Math.round(value)} ${units[power]}`
 }
+
+/**
+ * A duration as somebody would say it.
+ *
+ * Milliseconds up to a second, because that is the range where the digits
+ * carry the meaning — 3ms and 900ms are different stories. Past that the
+ * precision stops mattering and the magnitude starts: nobody investigating a
+ * 31-second request needs to know it was 31,402.
+ *
+ * Shared rather than kept beside the one screen that first needed it: the
+ * latency tiles render the same kind of number, and two formatters would
+ * eventually disagree about where the decimal goes — on one screen, in two
+ * places, about the same quantity.
+ */
+export function formatDuration(ms: number): string {
+  if (ms < 1_000) {
+    return `${Math.round(ms)} ms`
+  }
+
+  const seconds = ms / 1_000
+
+  return seconds < 10 ? `${seconds.toFixed(1)} s` : `${Math.round(seconds)} s`
+}

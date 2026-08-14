@@ -75,7 +75,7 @@ export async function dashboard(db: Database, options: DashboardOptions): Promis
    */
   const previousSince = since - windowMs
 
-  const [totals, previous, trend, breakdowns, routes, overview, released] = await Promise.all([
+  const [totals, previous, trend, breakdowns, routes, overview, released, latency] = await Promise.all([
     totalsFor(db, since, now, filter),
     previousTotals(db, previousSince, since - 1, filter),
     trendFor(db, since, now, windowMs, filter),
@@ -95,12 +95,16 @@ export async function dashboard(db: Database, options: DashboardOptions): Promis
     // that value to the edge — so every release still running would report
     // first appearing just now and draw a marker it never earned.
     queries.releases(db, RELEASES),
+    // How long requests took. The only figure on this screen that is not about
+    // an error, and the one that catches a fault which never throws.
+    queries.latency(db, since),
   ])
 
   return {
     windowMs,
     totals,
     previous,
+    latency,
     trend,
     breakdowns,
     routes,
