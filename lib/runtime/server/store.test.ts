@@ -899,6 +899,76 @@ describe('issue trend', () => {
   })
 })
 
+/**
+ * Deploys drawn on an issue's own chart.
+ *
+ * The marker answers "did the release end this, or start it", so what matters
+ * is that it lands on the axis it is drawn against. A release placed outside
+ * that span is drawn at an edge, where it marks the end of the chart rather
+ * than a moment on it.
+ */
+describe('deploys inside a span', () => {
+  const base = 1_700_000_000_000
+  const hour = 60 * 60 * 1_000
+
+  it('returns a release that first appeared inside the span', async () => {
+    store.capture(makeEvent({ timestamp: base, facets: { release: '1.0.0' } }))
+    store.capture(makeEvent({ message: 'later', timestamp: base + hour, facets: { release: '1.1.0' } }))
+    await store.flush()
+
+    const deploys = await store.deploysBetween(base, base + 2 * hour)
+
+    expect(deploys.map(entry => entry.release)).toEqual(['1.0.0', '1.1.0'])
+  })
+
+  it('leaves out a release that started before the span', async () => {
+    // Already running while the issue happened, so not a deploy that landed
+    // mid-issue. Drawn at the left edge it would claim the issue began there.
+    store.capture(makeEvent({ timestamp: base, facets: { release: 'old' } }))
+    store.capture(makeEvent({ message: 'later', timestamp: base + 2 * hour, facets: { release: 'new' } }))
+    await store.flush()
+
+    const deploys = await store.deploysBetween(base + hour, base + 3 * hour)
+
+    expect(deploys.map(entry => entry.release)).toEqual(['new'])
+  })
+
+  it('counts what each release introduced across the app', async () => {
+    // Not "within this issue", where the answer could only be 1 or 0. Seeing a
+    // marker land on a spike, the follow-up is whether the deploy was bad
+    // generally.
+    store.capture(makeEvent({ message: 'a', timestamp: base, facets: { release: '2.0.0' } }))
+    store.capture(makeEvent({ message: 'b', timestamp: base + 1_000, facets: { release: '2.0.0' } }))
+    await store.flush()
+
+    const [deploy] = await store.deploysBetween(base - hour, base + hour)
+
+    expect(deploy?.release).toBe('2.0.0')
+    expect(deploy?.newIssues).toBe(2)
+  })
+
+  it('ignores events carrying no release', async () => {
+    // `unknown` is what an unconfigured application records; a line for it
+    // would mark when collection started, which is not a deploy.
+    store.capture(makeEvent({ timestamp: base }))
+    await store.flush()
+
+    expect(await store.deploysBetween(base - hour, base + hour)).toEqual([])
+  })
+
+  it('does not count a later reappearance as a new deploy', async () => {
+    // A release ships once. Its first event is the deploy; the ones after are
+    // it still running, and a marker per burst would draw a picket fence.
+    store.capture(makeEvent({ timestamp: base, facets: { release: '3.0.0' } }))
+    store.capture(makeEvent({ message: 'later', timestamp: base + 5 * hour, facets: { release: '3.0.0' } }))
+    await store.flush()
+
+    // The span starts after the release first appeared, so it is not a deploy
+    // that landed inside it.
+    expect(await store.deploysBetween(base + hour, base + 6 * hour)).toEqual([])
+  })
+})
+
 describe('facets', () => {
   /** Distinct messages, so each lands in its own issue when needed. */
   function withFacets(facets: MonitorEvent['facets'], overrides: Partial<MonitorEvent> = {}): MonitorEvent {

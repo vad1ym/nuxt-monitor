@@ -1,5 +1,6 @@
 import type {
   MonitorDelivery,
+  MonitorDeploy,
   MonitorEvent,
   MonitorFacetCounts,
   MonitorFacetFilter,
@@ -117,6 +118,8 @@ export interface IssueDetail {
   eventCount: number
   /** When those occurrences happened, bucketed for the chart. */
   trend: MonitorIssueTrend
+  /** Releases that first appeared inside the trend's span, for markers on it. */
+  deploys: MonitorDeploy[]
   /** Which releases it spans. Absent when no release is configured. */
   releases?: MonitorIssueReleases
 }

@@ -1,5 +1,6 @@
 import type {
   MonitorDelivery,
+  MonitorDeploy,
   MonitorEvent,
   MonitorFacetCounts,
   MonitorHealth,
@@ -95,6 +96,10 @@ export class DisabledStore implements Pick<
 
   async issueReleases(): Promise<undefined> {
     return undefined
+  }
+
+  async deploysBetween(): Promise<MonitorDeploy[]> {
+    return []
   }
 
   async overview(windowMs = 24 * 60 * 60 * 1_000): Promise<MonitorOverview> {

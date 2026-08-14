@@ -1,6 +1,7 @@
 import type { Database } from 'db0'
 import type {
   MonitorDelivery,
+  MonitorDeploy,
   MonitorEvent,
   MonitorFacetCounts,
   MonitorFacetFilter,
@@ -462,6 +463,72 @@ export async function issueTrend(
     stored,
     step,
   }
+}
+
+/**
+ * The deploys that landed while one issue was happening.
+ *
+ * "Did the last release fix this, or cause it?" is the question an issue page
+ * exists to answer, and it is a question about shape either side of a moment.
+ * A list of release names in the header cannot answer it — "introduced in
+ * 1.8.2, last seen in 1.8.4" says an issue spans three releases, not that it
+ * stopped dead the moment the third one went out.
+ *
+ * Bounded to the trend's own span rather than the dashboard window: this chart
+ * is drawn from first to last occurrence of this issue, so a deploy outside
+ * that has no x-position on it and would be drawn at an edge, marking the end
+ * of the axis rather than an event on it.
+ *
+ * `unknown` is dropped, as everywhere else: it is what events carry when no
+ * release is configured, and a line for it would mark when collection started.
+ */
+export async function deploysBetween(
+  db: Database,
+  from: number,
+  to: number,
+): Promise<MonitorDeploy[]> {
+  // Each release's first appearance *anywhere*, not within the span. A release
+  // that started before this issue did was already running while it happened —
+  // it is not a deploy that landed mid-issue, and drawing it would claim the
+  // issue began at a moment that has nothing to do with it.
+  //
+  // `newIssues` counts what the release introduced across the application, not
+  // within this issue, where it could only ever be 1 or 0. On this chart the
+  // number answers the follow-up to seeing a line land on a spike: was this a
+  // bad deploy generally, or did it break only the thing being looked at.
+  const rows = await db.prepare(`
+    WITH first_seen AS (
+      SELECT release, MIN(ts) AS at
+      FROM events
+      WHERE release IS NOT NULL AND release != 'unknown'
+      GROUP BY release
+    ),
+    origin AS (
+      SELECT fingerprint, release
+      FROM (
+        SELECT fingerprint, release, ROW_NUMBER() OVER (
+          PARTITION BY fingerprint ORDER BY ts ASC
+        ) AS rn
+        FROM events
+      )
+      WHERE rn = 1
+    )
+    SELECT
+      f.release                        AS release,
+      f.at                             AS at,
+      COUNT(DISTINCT o.fingerprint)    AS new_issues
+    FROM first_seen f
+    LEFT JOIN origin o ON o.release = f.release
+    WHERE f.at >= ? AND f.at <= ?
+    GROUP BY f.release, f.at
+    ORDER BY f.at
+  `).all(from, to) as Record<string, number | string>[]
+
+  return rows.map(row => ({
+    release: String(row.release),
+    at: Number(row.at),
+    newIssues: Number(row.new_issues),
+  }))
 }
 
 /**

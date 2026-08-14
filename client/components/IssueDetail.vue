@@ -297,6 +297,31 @@ function beforeCrash(timestamp: number, crashedAt: number): string {
 
 const trend = computed(() => detail.value?.trend)
 
+/**
+ * Deploys drawn on this issue's own timeline.
+ *
+ * The header already says which releases the issue spans, and that is a
+ * different fact: "introduced in 1.8.2, last seen in 1.8.4" says it survived
+ * three releases, not whether the last one ended it. A line on the chart puts
+ * the deploy next to the shape, which is the only place the answer lives — the
+ * occurrences either stop at the line or they do not.
+ *
+ * Hidden under a filter. The chart is then drawn from a subset of occurrences
+ * and its axis no longer spans what it did, so a marker placed by absolute
+ * time would sit against a line that means something narrower than it claims.
+ */
+const deploys = computed(() =>
+  isFiltered.value
+    ? []
+    : (detail.value?.deploys ?? []).map(deploy => ({
+        at: deploy.at,
+        label: deploy.release,
+        title: deploy.newIssues
+          ? `${deploy.release} — first seen here: ${deploy.newIssues} new ${deploy.newIssues === 1 ? 'issue' : 'issues'} across the app`
+          : `${deploy.release} — nothing new appeared`,
+      })),
+)
+
 const trendSeries = computed(() => [{
   name: 'occurrences',
   values: trend.value?.points.map(point => point.count) ?? [],
@@ -658,17 +683,23 @@ onMounted(loadBaseline)
             <h2 class="text-xs font-medium uppercase tracking-wide text-dimmed">
               Occurrences over time
             </h2>
-            <!-- Said rather than left to be inferred: the chart is drawn from
-                 the occurrences that survived trimming, and without this the
-                 issue looks as though it began when the oldest kept one did. -->
-            <span v-if="trendPartial" class="text-xs text-dimmed">
-              last {{ formatCount(trend.stored) }} of {{ formatCount(detail.issue.count) }}
-            </span>
+            <div class="flex items-center gap-3 text-xs text-dimmed">
+              <span v-if="deploys.length" class="flex items-center gap-1.5">
+                <span class="h-2 w-px bg-dimmed" />deploys
+              </span>
+              <!-- Said rather than left to be inferred: the chart is drawn from
+                   the occurrences that survived trimming, and without this the
+                   issue looks as though it began when the oldest kept one did. -->
+              <span v-if="trendPartial">
+                last {{ formatCount(trend.stored) }} of {{ formatCount(detail.issue.count) }}
+              </span>
+            </div>
           </div>
 
           <TimeChart
             :at="trend.points.map(point => point.at)"
             :series="trendSeries"
+            :markers="deploys"
             height="h-32"
           />
         </section>

@@ -2,6 +2,7 @@ import type { Database, Statement } from 'db0'
 import type {
   MonitorDelivery,
   MonitorEvent,
+  MonitorDeploy,
   MonitorFacetCounts,
   MonitorFacetFilter,
   MonitorHealth,
@@ -1309,6 +1310,12 @@ export class MonitorStore {
   async issueReleases(fp: string): Promise<MonitorIssueReleases | undefined> {
     await this.flush()
     return queries.issueReleases(this.db, fp)
+  }
+
+  /** The deploys that landed inside a span, for drawing on an issue's chart. */
+  async deploysBetween(from: number, to: number): Promise<MonitorDeploy[]> {
+    await this.flush()
+    return queries.deploysBetween(this.db, from, to)
   }
 
   async overview(windowMs = 24 * 60 * 60 * 1_000, now = Date.now()): Promise<MonitorOverview> {

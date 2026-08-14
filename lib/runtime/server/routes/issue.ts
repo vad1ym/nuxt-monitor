@@ -101,6 +101,20 @@ export default defineEventHandler(async (event) => {
     }
   }
 
+  const trend = await store.issueTrend(fingerprint, filter)
+
+  // Drawn on the issue's own chart, so bounded by that chart's axis. "Did the
+  // release fix this or cause it" is a question about the shape either side of
+  // a moment, and the header's list of release names cannot answer it: that an
+  // issue spans 1.8.2 to 1.8.4 does not say it stopped when the last one
+  // shipped. Skipped entirely when there is no line to draw them on.
+  const deploys = trend.points.length > 1
+    ? await store.deploysBetween(
+        trend.points[0]!.at,
+        trend.points[trend.points.length - 1]!.at,
+      )
+    : []
+
   return {
     issue,
     facets: await store.facetCounts({
@@ -111,7 +125,8 @@ export default defineEventHandler(async (event) => {
     sessionCount: await store.sessionCount(fingerprint, filter),
     // What the breakdown is a breakdown of — see `eventCount`.
     eventCount: await store.eventCount(fingerprint, filter),
-    trend: await store.issueTrend(fingerprint, filter),
+    trend,
+    deploys,
     // Unfiltered on purpose: "introduced in 1.8.2" is a fact about the issue,
     // and narrowing to one browser would answer "introduced in 1.8.2 *for
     // Firefox users*" under a heading that does not say so.
