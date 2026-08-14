@@ -31,6 +31,15 @@ const props = defineProps<{
   findingOnly?: boolean
   /** The table without the sentence, for the other end of the page. */
   panelOnly?: boolean
+  /**
+   * Drops the repeat-rate finding, leaving only the dominant slice.
+   *
+   * "7× per session" is a statement about frequency, and the page has a chart
+   * captioned with exactly that. Stated in both places it was the same number
+   * twice, and the copy up in the header was a full-width banner spending a
+   * third of the first screen on it.
+   */
+  withoutRepeats?: boolean
 }>()
 
 /** Passed through from the panel: only the page that fetches can widen a list. */
@@ -72,7 +81,11 @@ const perSession = computed(() =>
 const repeats = computed(() => !filtered.value && (perSession.value ?? 0) >= 5)
 
 const finding = computed(() => {
-  if (repeats.value) {
+  // Suppressed only where the caller states the rate itself. Falling through
+  // to the dominant slice is the point: "everyone affected uses Chrome" is a
+  // weak finding when everyone is two people, but with the repeat count on
+  // screen elsewhere the reader has what they need to discount it.
+  if (repeats.value && !props.withoutRepeats) {
     return 'repeats' as const
   }
 

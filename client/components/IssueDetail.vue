@@ -424,6 +424,25 @@ const affected = computed(() => {
 })
 
 /**
+ * How hard one person is hit, for the caption under the chart.
+ *
+ * Sits with the chart rather than in the header because it answers the
+ * question the chart asks: the plot says when and how often, and this says
+ * whether that volume is many people once or a few people in a loop. As a
+ * banner above the fold it was a full-width strip stating a number nobody had
+ * asked for yet.
+ *
+ * The same threshold `IssueBreakdown` uses, for the same reason: below it the
+ * average is one or two and saying so is noise.
+ */
+const perSession = computed(() => {
+  const sessions = detail.value?.sessionCount ?? 0
+  const average = sessions > 0 ? (detail.value?.eventCount ?? 0) / sessions : 0
+
+  return average >= 5 ? `${Math.round(average)}× per session` : undefined
+})
+
+/**
  * A fix that did not hold.
  *
  * The most valuable sentence this tool has, and until now it existed only
@@ -607,39 +626,6 @@ const trendSeries = computed(() => [{
 const trendPartial = computed(() =>
   Boolean(trend.value && !isFiltered.value && trend.value.stored < (detail.value?.issue.count ?? 0)),
 )
-
-/**
- * How often it happens, over the span it happened in.
- *
- * Measured from first to last occurrence rather than "per hour since it
- * started": an issue that fired 200 times in a minute and never again is not
- * happening three times an hour, and averaging it over the silence since would
- * say exactly that.
- */
-const rate = computed(() => {
-  const issue = detail.value?.issue
-
-  if (!issue || issue.count < 2) {
-    return undefined
-  }
-
-  const spanMs = issue.lastSeen - issue.firstSeen
-
-  // Everything inside one instant is a burst, not a rate.
-  if (spanMs < 60_000) {
-    return undefined
-  }
-
-  const perHour = issue.count / (spanMs / 3_600_000)
-
-  if (perHour >= 1) {
-    return `${formatCount(Math.round(perHour))}/hour`
-  }
-
-  const perDay = perHour * 24
-
-  return perDay >= 1 ? `${formatCount(Math.round(perDay))}/day` : 'less than once a day'
-})
 
 async function load({ keepSelection = false } = {}): Promise<void> {
   loading.value = true
@@ -896,25 +882,6 @@ onMounted(loadBaseline)
             <span v-if="!location.mapped" class="text-xs text-dimmed">in bundle</span>
           </span>
 
-          <!-- A trace that never reaches your code.
-               `ofetch` throwing a `FetchError` is the common case: every frame
-               belongs to a dependency, so there is no file of yours to name.
-               Saying that plainly beats naming the dependency's own bundled
-               file in the colour reserved for your code — which is a confident
-               pointer at something nobody can open or fix. The route in the
-               title is the real location, and it is already on screen. -->
-          <span
-            v-else-if="location"
-            class="inline-flex items-center gap-1.5 rounded-md border border-dashed border-muted px-2 py-1"
-            :title="`The stack stops inside ${location.package ?? 'a dependency'} — no frame in your own code was captured. The failing call is named in the message above; search your code for the route to find where it is made.`"
-          >
-            <UIcon name="i-lucide-package" class="size-3.5 shrink-0 text-dimmed" />
-            <span class="text-xs text-muted">
-              Thrown inside <span class="font-mono">{{ location.package ?? 'a dependency' }}</span>
-              — no frame of yours
-            </span>
-          </span>
-
           <!-- The request as one badge, coloured by how it ended — the same
                shape the list uses, so the row somebody clicked and the header
                they land on describe the call the same way. The duration rides
@@ -941,61 +908,42 @@ onMounted(loadBaseline)
               title="How long the request had been running when it failed"
             >{{ request.duration }}</span>
           </UBadge>
+
+          <!-- A trace that never reaches your code.
+               `ofetch` throwing a `FetchError` is the common case: every frame
+               belongs to a dependency, so there is no file of yours to name.
+               Saying that plainly beats naming the dependency's own bundled
+               file in the colour reserved for your code — which is a confident
+               pointer at something nobody can open or fix.
+
+               Named, not boxed. In a bordered chip of its own it was the widest
+               thing under the title and the first thing read, which is backwards
+               twice over: it says where the fault is *not*, and it only matters
+               once somebody is already reading the trace. As muted text after
+               the route it answers "why is the stack all vendor frames" at the
+               moment that question comes up. -->
+          <span
+            v-if="location && !location.inApp"
+            class="inline-flex items-center gap-1 text-xs text-dimmed"
+            :title="`The stack stops inside ${location.package ?? 'a dependency'} — no frame in your own code was captured. The failing call is named in the message above; search your code for the route to find where it is made.`"
+          >
+            <UIcon name="i-lucide-package" class="size-3 shrink-0" />
+            <span class="font-mono">{{ location.package ?? 'a dependency' }}</span>
+          </span>
         </div>
 
-        <!-- The measurements, labelled.
-             No boxes here on purpose: these are read once to size up the
-             problem, not aimed at, and seven bordered chips competing with the
-             title is what made the header unreadable. Separation comes from an
-             icon and a hairline instead — enough to tell one fact from the
-             next, not enough to outrank the sentence above them. -->
-        <!-- An icon opens each fact and a rule closes it.
-             Borderless and evenly spaced, the four ran together into one line
-             of prose — the only thing marking a boundary was a slightly wider
-             gap, and each value already contains its own `·`, so the
-             separators inside a fact looked exactly like the space between
-             two. The icon gives the eye a place to land, and the divider says
-             where one fact ends without putting a box around it. -->
-        <!-- Each divider is the leading border of the fact that follows it, so
-             one is drawn between every pair and never after the last. A fact
-             that wraps to a new line then opens it with a hairline, which is
-             the one rough edge of drawing separators this way rather than
-             putting elements between the items — and at this weight it reads
-             as a margin rather than as a mistake. -->
-        <dl class="flex flex-wrap items-center gap-y-1.5 text-xs">
-          <div class="flex items-center gap-1.5 pe-3">
-            <UIcon name="i-lucide-repeat" class="size-3.5 shrink-0 text-dimmed" />
-            <dt class="sr-only">
-              Occurrences
-            </dt>
-            <!-- Under a filter the total would contradict everything below it,
-                 so it becomes "matching of total". -->
-            <dd class="text-toned tabular-nums">
-              <template v-if="isFiltered">{{ detail.eventCount }} of </template>{{ detail.issue.count }}
-              <!-- The count alone cannot separate "200 times last Tuesday"
-                   from "200 times a day, still going". -->
-              <span v-if="rate" class="text-dimmed">{{ ` · ${rate}` }}</span>
-            </dd>
-          </div>
+        <!-- The measurements, in two facts: which releases, and what scale.
+             No boxes on purpose — these are read once to size up the problem,
+             not aimed at, and a row of bordered chips competing with the title
+             is what made this header unreadable in the first place.
 
-          <!-- The count above says how loud; this says how wide. Twelve
-               occurrences across one session is somebody stuck in a retry
-               loop; twelve across twelve is everybody hitting it once. -->
-          <div
-            v-if="affected"
-            class="flex items-center gap-1.5 border-s border-default ps-3 pe-3"
-            :title="`${affected.affected} of the ${affected.total} sessions that saw any error while this issue was happening. Not a share of all visitors — page views are counted without a session id.`"
-          >
-            <UIcon name="i-lucide-users" class="size-3.5 shrink-0 text-dimmed" />
-            <dt class="sr-only">
-              Sessions
-            </dt>
-            <dd class="text-toned tabular-nums">
-              {{ affected.affected }}
-              <span class="text-dimmed">{{ ` · ${affected.percent}% of those with errors` }}</span>
-            </dd>
-          </div>
-
+             An icon opens each one, and that is now the whole separator. There
+             were four facts here when they also needed a hairline between them;
+             at two, each starting with a distinct glyph, a divider adds a rule
+             to the page without adding a boundary the icons do not already
+             draw — and it cost a stray leading hairline whenever the second
+             fact wrapped to its own line. -->
+        <dl class="flex flex-wrap items-center gap-x-5 gap-y-1.5 text-xs">
           <!-- The release, not just the timestamp. "Introduced in 1.8.2" is the
                sentence somebody wants before reading a line of the stack: it
                says whether a deploy caused this, and whether the one after it
@@ -1007,7 +955,7 @@ onMounted(loadBaseline)
                in, and those send somebody to different places. -->
           <div
             v-if="detail.releases?.first"
-            class="flex items-center gap-1.5 border-s border-default ps-3 pe-3"
+            class="flex items-center gap-1.5"
             :title="detail.releases.partial
               ? 'Older occurrences have been trimmed, so this is the earliest release still stored — not necessarily where it began'
               : 'The release its first occurrence carried'"
@@ -1035,56 +983,41 @@ onMounted(loadBaseline)
             </dd>
           </div>
 
-          <!-- Both times under one icon. They are read as a span — "started
-               five hours ago, still going two hours ago" is one sentence, and
-               as two separate labelled fields it was two lookups. -->
-          <div class="flex items-center gap-1.5 border-s border-default ps-3">
+          <!-- Scale, in one sentence: when it last happened, how many times,
+               and to how many people.
+
+               These were three labelled fields on their own, each with an icon
+               and a divider, and read that way they are three lookups for one
+               question. They only mean anything together — "twice, over six
+               hours" and "twice, in the same minute" are different problems,
+               and thirty occurrences is a retry loop or an outage depending
+               entirely on the session count beside it. -->
+          <div class="flex items-center gap-1.5">
             <UIcon name="i-lucide-clock" class="size-3.5 shrink-0 text-dimmed" />
             <dt class="sr-only">
               Last seen
             </dt>
             <dd class="text-toned">
               <span :title="absoluteTime(detail.issue.lastSeen)">{{ relativeTime(detail.issue.lastSeen) }}</span>
+              <!-- Under a filter the total would contradict everything below
+                   it, so it becomes "matching of total". -->
+              <span class="tabular-nums text-dimmed">{{ ' · ' }}<template
+                v-if="isFiltered"
+              >{{ `${detail.eventCount} of ` }}</template>{{ `${detail.issue.count} occurrences` }}</span>
+              <span
+                v-if="detail.sessionCount"
+                class="tabular-nums text-dimmed"
+                :title="affected
+                  ? `${affected.affected} of the ${affected.total} sessions that saw any error while this issue was happening. Not a share of all visitors — page views are counted without a session id.`
+                  : 'Distinct sessions behind these occurrences'"
+              >{{ ` · ${detail.sessionCount} ${detail.sessionCount === 1 ? 'session' : 'sessions'}` }}</span>
               <span
                 class="text-dimmed"
                 :title="`First seen ${absoluteTime(detail.issue.firstSeen)}`"
-              >{{ ` · first ${relativeTime(detail.issue.firstSeen)}` }}</span>
+              >{{ ` · since ${relativeTime(detail.issue.firstSeen)}` }}</span>
             </dd>
           </div>
         </dl>
-
-        <!-- The other half of the same incident.
-             One failing request usually leaves two rows on two screens: the
-             endpoint's 500 here, and the browser's "Cannot read properties of
-             undefined" under client errors, thrown by the component that
-             received the answer. Read apart they are two mysteries; read
-             together the second one explains itself.
-
-             On its own line rather than in the row of chips: it is the only one
-             of these facts that is a link, and a target you can click should
-             not be indistinguishable from seven that you cannot. -->
-        <div v-if="related.length" class="space-y-1">
-          <p class="text-xs text-dimmed">
-            Same request
-          </p>
-          <button
-            v-for="item in related"
-            :key="item.fingerprint"
-            type="button"
-            class="flex w-full items-center gap-2 rounded-md border border-default px-2 py-1 text-start text-toned hover:border-primary/50 hover:text-primary cursor-pointer"
-            @click="emit('select', item.fingerprint)"
-          >
-            <UIcon name="i-lucide-link" class="size-3.5 shrink-0 text-dimmed" />
-            <UBadge
-              :color="item.side === 'client' ? 'info' : 'warning'"
-              variant="subtle"
-              size="sm"
-              :label="item.side"
-            />
-            <span class="font-mono text-xs">{{ item.type }}</span>
-            <span class="truncate text-xs text-dimmed">{{ item.message }}</span>
-          </button>
-        </div>
       </header>
 
       <!-- The two one-line findings, side by side on a wide screen.
@@ -1131,6 +1064,7 @@ onMounted(loadBaseline)
         <IssueBreakdown
           v-model:filter="filter"
           finding-only
+          without-repeats
           :facets="detail.facets"
           :baseline="baseline"
           :session-count="detail.sessionCount"
@@ -1256,6 +1190,42 @@ onMounted(loadBaseline)
           <span class="text-dimmed">Request ID</span>
           <code class="select-all font-mono text-toned">{{ request.id }}</code>
         </p>
+
+        <!-- The other half of the same incident.
+             One failing request usually leaves two rows on two screens: the
+             endpoint's 500 here, and the browser's "Cannot read properties of
+             undefined" under client errors, thrown by the component that
+             received the answer. Read apart they are two mysteries; read
+             together the second one explains itself.
+
+             Below the picker rather than in the header, because it is a fact
+             about the *occurrence*, not about the issue: it names what else
+             went wrong in this one request, and the picker directly above it is
+             what chose that request. In the header it sat between the title and
+             the trace — the one clickable thing in a block of facts, splitting
+             the identity of the issue away from the evidence for it. -->
+        <div v-if="related.length" class="space-y-1">
+          <p class="text-xs text-dimmed">
+            Also in this request
+          </p>
+          <button
+            v-for="item in related"
+            :key="item.fingerprint"
+            type="button"
+            class="flex w-full items-center gap-2 rounded-md border border-default px-2 py-1 text-start text-toned hover:border-primary/50 hover:text-primary cursor-pointer"
+            @click="emit('select', item.fingerprint)"
+          >
+            <UIcon name="i-lucide-link" class="size-3.5 shrink-0 text-dimmed" />
+            <UBadge
+              :color="item.side === 'client' ? 'info' : 'warning'"
+              variant="subtle"
+              size="sm"
+              :label="item.side"
+            />
+            <span class="font-mono text-xs">{{ item.type }}</span>
+            <span class="truncate text-xs text-dimmed">{{ item.message }}</span>
+          </button>
+        </div>
 
         <section>
           <h2 class="mb-2 text-xs font-medium uppercase tracking-wide text-dimmed">
@@ -1405,8 +1375,17 @@ onMounted(loadBaseline)
           v-if="trend && trend.points.length > 1"
           class="flex h-[250px] flex-col rounded-lg border border-default p-3"
         >
-          <h2 class="mb-2 shrink-0 text-xs font-medium uppercase tracking-wide text-dimmed">
+          <!-- The heading answers "when", and the figures beside it answer
+               "how hard" — the same question from two directions, so they share
+               a line rather than stacking a banner somewhere above. -->
+          <h2 class="mb-2 flex shrink-0 flex-wrap items-baseline gap-x-2 text-xs font-medium uppercase tracking-wide text-dimmed">
             Occurrences over time
+            <!-- A few people in a retry loop is not an outage, and the shape of
+                 the plot above cannot tell the two apart on its own. Warning
+                 coloured because it changes what to do about the issue. -->
+            <span v-if="perSession" class="font-semibold normal-case tracking-normal text-warning">
+              {{ perSession }}
+            </span>
           </h2>
 
           <TimeChart
