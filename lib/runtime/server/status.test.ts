@@ -28,35 +28,41 @@ function h3Error(status: number): Error {
 }
 
 describe('statusOf', () => {
-  it('trusts a status the application declared about this response', () => {
-    expect(statusOf(h3Error(404), 404)).toBe(404)
-    expect(statusOf(h3Error(403), undefined)).toBe(403)
-  })
-
-  it('ignores the status a FetchError borrowed from upstream', () => {
-    // The page did not answer 422 — the API it called did. The visitor got an
-    // error page, and that is what this has to report.
+  it('reports what was actually written, whatever the error claims', () => {
+    // The response is the only thing that knows what the client got. Nuxt may
+    // or may not pass an inner failure's status on, and guessing which from
+    // the error's type was wrong in one direction or the other every time.
+    expect(statusOf(fetchError(422), 422)).toBe(422)
     expect(statusOf(fetchError(422), 500)).toBe(500)
-    expect(statusOf(fetchError(404), 500)).toBe(500)
-  })
-
-  it('falls back to 500 when nothing was written yet', () => {
-    // h3 reports 200 while the response is still being produced, and an error
-    // that escaped a handler is a 500 by the time anybody sees it.
-    expect(statusOf(fetchError(422), 200)).toBe(500)
-    expect(statusOf(new Error('boom'), undefined)).toBe(500)
-    expect(statusOf(new Error('boom'), 200)).toBe(500)
-  })
-
-  it('keeps a written error status for an error carrying none', () => {
+    expect(statusOf(h3Error(404), 404)).toBe(404)
     expect(statusOf(new Error('boom'), 503)).toBe(503)
+  })
+
+  it('falls back to the declared status when nothing is written yet', () => {
+    // `createError({ statusCode })` before h3 has applied it to the response.
+    expect(statusOf(h3Error(403), undefined)).toBe(403)
+    expect(statusOf(h3Error(404), 200)).toBe(404)
+  })
+
+  it('does not borrow an upstream status when nothing is written yet', () => {
+    // That number belongs to somebody else's response. Until this one says
+    // otherwise it is a 500.
+    expect(statusOf(fetchError(422), undefined)).toBe(500)
+    expect(statusOf(fetchError(404), 200)).toBe(500)
+  })
+
+  it('treats a 200 as undecided rather than as success', () => {
+    // h3 reports 200 while the response is still being produced, and a
+    // *failed* request cannot have ended there.
+    expect(statusOf(new Error('boom'), 200)).toBe(500)
+    expect(statusOf(new Error('boom'), undefined)).toBe(500)
   })
 
   it('rejects a nonsense status rather than storing it', () => {
     const error = new Error('boom');
     (error as { statusCode?: number }).statusCode = 99_999
 
-    expect(statusOf(error, 500)).toBe(500)
+    expect(statusOf(error, undefined)).toBe(500)
   })
 })
 

@@ -1,29 +1,41 @@
 /**
  * The status a failed request ended with, as the client saw it.
  *
- * `createError({ statusCode })` carries its own; anything else that escaped a
- * handler became a 500 by the time the client saw it.
+ * What was actually written wins. That sounds obvious and was not what this
+ * did: it preferred the status carried on the error, and for a `FetchError`
+ * that number describes a *different* request — the call the handler made to
+ * somebody else. Whether the framework then passes that status on to the
+ * browser is its decision, not ours to predict. Nuxt sometimes does (a page
+ * whose `$fetch` gets 422 can answer 422) and sometimes does not (an error
+ * escaping mid-render answers 500), so guessing from the error's type was
+ * wrong in one direction or the other every time.
  *
- * A `FetchError` is the exception, and the reason this is not a one-liner. It
- * also carries a `statusCode`, but that number describes a *different* request
- * — the call the handler made to somebody else. A page whose `$fetch` got 422
- * from an upstream API does not answer 422; it answers 500 and shows an error
- * page. Taking the borrowed number made a crashed render report the upstream's
- * status, and since the ignore rules filter on status, it then vanished
- * entirely behind a code that was never sent to anyone.
+ * Reading the response settles it without guessing: by the time the error hook
+ * runs, the status the client is getting is either already set or not set at
+ * all. `createError({ statusCode })` still works, because h3 has applied it to
+ * the response before we look.
+ *
+ * This matters beyond a mislabelled row. The ignore rules filter on this
+ * number, so a wrong one does not misdescribe an error — it deletes it.
  */
 export function statusOf(error: Error, written: number | undefined): number {
-  const declared = (error as { statusCode?: number }).statusCode
-  const borrowed = isFetchError(error)
+  // h3 reports 200 while the response is still being produced, which is not a
+  // status a *failed* request can have ended with — so it means "not decided
+  // yet" rather than "succeeded".
+  if (written && written >= 400) {
+    return written
+  }
 
-  if (!borrowed && typeof declared === 'number' && declared >= 100 && declared <= 599) {
+  const declared = (error as { statusCode?: number }).statusCode
+
+  // Nothing written yet. The error's own claim is the best guess left, except
+  // when it was borrowed from an outgoing call — that status belongs to
+  // somebody else's response, and this one is a 500 until proven otherwise.
+  if (!isFetchError(error) && typeof declared === 'number' && declared >= 100 && declared <= 599) {
     return declared
   }
 
-  // The response may not be written yet, in which case h3 reports 200. Passed
-  // in rather than read here so this stays a pure function of the error and
-  // the response — testable without a live H3 event.
-  return written && written >= 400 ? written : 500
+  return 500
 }
 
 /**
