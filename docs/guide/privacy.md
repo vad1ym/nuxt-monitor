@@ -47,6 +47,12 @@ errors, 250 sessions" and identifies nobody.
   the user agent.
 - The release.
 - The per-tab session id described above.
+- How long the failing request had been running, in milliseconds.
+- A **request id**, to line an error up with your logs and your proxy's. It is
+  adopted from `x-request-id`, `x-correlation-id`, `x-amzn-trace-id` or
+  `cf-ray` when one of those arrives, and generated otherwise. It is
+  per-request, never per-user: it dies with the response, and nothing can be
+  joined across two requests with it.
 - The **response body** of a failing request, which your application wrote.
 - What led up to a browser error: navigations, requests as
   `POST /api/checkout → 500`, and the visible label of what was clicked. No

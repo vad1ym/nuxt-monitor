@@ -109,6 +109,11 @@ const request = computed(() => {
       : typeof context.durationMs === 'number'
         ? formatDuration(context.durationMs)
         : undefined,
+    // Belongs to this occurrence rather than to the issue, which is why it is
+    // rendered down beside the stack and not up among the header facts: every
+    // occurrence has a different one, and a value in the header reads as
+    // describing all of them.
+    id: typeof context.requestId === 'string' ? context.requestId : undefined,
   }
 })
 
@@ -166,6 +171,7 @@ const contextEntries = computed(() => {
     'method',
     'statusCode',
     'durationMs',
+    'requestId',
     'headers',
     'userAgent',
     'requestBody',
@@ -745,6 +751,16 @@ onMounted(loadBaseline)
       </div>
 
       <template v-if="current">
+        <!-- The one value that leaves this screen. Everything else here is
+             read; this is copied — into a log query, into a proxy's access
+             log, into a message to whoever owns the service that failed. It
+             is rendered selectable and on its own line for that reason, and it
+             belongs to the occurrence on screen rather than to the issue. -->
+        <p v-if="request.id" class="flex items-center gap-2 text-xs">
+          <span class="text-dimmed">Request ID</span>
+          <code class="select-all font-mono text-toned">{{ request.id }}</code>
+        </p>
+
         <section>
           <h2 class="mb-2 text-xs font-medium uppercase tracking-wide text-dimmed">
             Stack

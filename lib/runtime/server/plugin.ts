@@ -7,6 +7,7 @@ import { scrub, scrubUrl } from '../shared/scrub'
 import { parseUserAgent } from '../shared/user-agent'
 import type { MonitorRuntimeConfig } from './context'
 import { captureSync, closeMonitorStore, countRequestSync, countTrafficSync, monitorConfig } from './context'
+import { markRequestId, requestId } from './request-id'
 import { markRequestStart, requestDuration } from './timing'
 
 /**
@@ -21,21 +22,22 @@ export default defineNitroPlugin((nitroApp) => {
   const config = monitorConfig()
 
   /**
-   * Starts the clock on every request.
+   * Starts the clock and settles the correlation id on every request.
    *
-   * Unconditional and about as cheap as a hook gets — one `Date.now()` and one
-   * property write — because there is no way to know at this point which
-   * requests are going to fail, and the measurement has to begin before the
-   * one that does. Nothing is stored for a request that succeeds.
+   * Unconditional and about as cheap as a hook gets — one `Date.now()`, one
+   * header read and two property writes — because there is no way to know at
+   * this point which requests are going to fail, and both have to be decided
+   * before the one that does. Nothing is stored for a request that succeeds.
    */
   nitroApp.hooks.hook('request', (event: H3Event) => {
     try {
       if (!isMonitorRoute(event, config.route)) {
         markRequestStart(event)
+        markRequestId(event, getRequestHeaders(event))
       }
     }
     catch {
-      // A clock reading must never interfere with serving.
+      // Bookkeeping must never interfere with serving.
     }
   })
 
@@ -347,6 +349,14 @@ function requestContext(
 
   if (duration !== undefined) {
     context.durationMs = duration
+  }
+
+  // What ties this error to the log lines and the proxy entry for the same
+  // request. Absent when the error had no request behind it.
+  const correlation = requestId(event)
+
+  if (correlation !== undefined) {
+    context.requestId = correlation
   }
 
   // What was sent and what came back. The response half used to be stored as
