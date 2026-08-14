@@ -944,13 +944,28 @@ onMounted(loadBaseline)
         </div>
 
         <!-- The measurements, labelled.
-             No borders here on purpose: these are read once to size up the
-             problem, not aimed at, and seven boxes competing with the title is
-             what made the header unreadable. The label is dimmed and the value
-             is not, so the row scans as values with their names attached. -->
-        <dl class="flex flex-wrap items-baseline gap-x-5 gap-y-1.5 text-xs">
-          <div class="flex items-baseline gap-1.5">
-            <dt class="text-dimmed">
+             No boxes here on purpose: these are read once to size up the
+             problem, not aimed at, and seven bordered chips competing with the
+             title is what made the header unreadable. Separation comes from an
+             icon and a hairline instead — enough to tell one fact from the
+             next, not enough to outrank the sentence above them. -->
+        <!-- An icon opens each fact and a rule closes it.
+             Borderless and evenly spaced, the four ran together into one line
+             of prose — the only thing marking a boundary was a slightly wider
+             gap, and each value already contains its own `·`, so the
+             separators inside a fact looked exactly like the space between
+             two. The icon gives the eye a place to land, and the divider says
+             where one fact ends without putting a box around it. -->
+        <!-- Each divider is the leading border of the fact that follows it, so
+             one is drawn between every pair and never after the last. A fact
+             that wraps to a new line then opens it with a hairline, which is
+             the one rough edge of drawing separators this way rather than
+             putting elements between the items — and at this weight it reads
+             as a margin rather than as a mistake. -->
+        <dl class="flex flex-wrap items-center gap-y-1.5 text-xs">
+          <div class="flex items-center gap-1.5 pe-3">
+            <UIcon name="i-lucide-repeat" class="size-3.5 shrink-0 text-dimmed" />
+            <dt class="sr-only">
               Occurrences
             </dt>
             <!-- Under a filter the total would contradict everything below it,
@@ -959,7 +974,7 @@ onMounted(loadBaseline)
               <template v-if="isFiltered">{{ detail.eventCount }} of </template>{{ detail.issue.count }}
               <!-- The count alone cannot separate "200 times last Tuesday"
                    from "200 times a day, still going". -->
-              <span v-if="rate" class="text-dimmed">· {{ rate }}</span>
+              <span v-if="rate" class="text-dimmed">{{ ` · ${rate}` }}</span>
             </dd>
           </div>
 
@@ -968,15 +983,16 @@ onMounted(loadBaseline)
                loop; twelve across twelve is everybody hitting it once. -->
           <div
             v-if="affected"
-            class="flex items-baseline gap-1.5"
+            class="flex items-center gap-1.5 border-s border-default ps-3 pe-3"
             :title="`${affected.affected} of the ${affected.total} sessions that saw any error while this issue was happening. Not a share of all visitors — page views are counted without a session id.`"
           >
-            <dt class="text-dimmed">
+            <UIcon name="i-lucide-users" class="size-3.5 shrink-0 text-dimmed" />
+            <dt class="sr-only">
               Sessions
             </dt>
             <dd class="text-toned tabular-nums">
               {{ affected.affected }}
-              <span class="text-dimmed">· {{ affected.percent }}% of those with errors</span>
+              <span class="text-dimmed">{{ ` · ${affected.percent}% of those with errors` }}</span>
             </dd>
           </div>
 
@@ -984,47 +1000,55 @@ onMounted(loadBaseline)
                sentence somebody wants before reading a line of the stack: it
                says whether a deploy caused this, and whether the one after it
                fixed it. A timestamp only answers that for whoever has the
-               deploy log open. -->
+               deploy log open.
+
+               This one keeps its words: a version number beside a tag icon
+               could be the release it started in or the one it was last seen
+               in, and those send somebody to different places. -->
           <div
             v-if="detail.releases?.first"
-            class="flex items-baseline gap-1.5"
+            class="flex items-center gap-1.5 border-s border-default ps-3 pe-3"
             :title="detail.releases.partial
               ? 'Older occurrences have been trimmed, so this is the earliest release still stored — not necessarily where it began'
               : 'The release its first occurrence carried'"
           >
+            <UIcon name="i-lucide-tag" class="size-3.5 shrink-0 text-dimmed" />
             <dt class="text-dimmed">
-              {{ detail.releases.partial ? 'Seen in' : 'Introduced in' }}
+              {{ detail.releases.partial ? 'seen in' : 'from' }}
             </dt>
             <dd class="font-mono text-toned">
               {{ detail.releases.first }}
               <!-- Only when it has moved on. Repeating the same name twice
-                   under two headings says nothing and reads as two facts. -->
-              <!-- Spelled out inside the interpolation, not left to whitespace
+                   under two headings says nothing and reads as two facts.
+
+                   Spelled out inside the interpolation, not left to whitespace
                    between tags: Vue trims that, so `dev` ran straight into the
                    `·` that follows it. -->
               <span
                 v-if="detail.releases.last && detail.releases.last !== detail.releases.first"
                 class="text-dimmed"
-              >{{ `→ ${detail.releases.last} ` }}</span>
+              >{{ ` → ${detail.releases.last}` }}</span>
               <span
                 v-if="detail.releases.count > 2"
                 class="font-sans text-dimmed"
-              >{{ `· ${detail.releases.count} releases` }}</span>
+              >{{ ` · ${detail.releases.count} releases` }}</span>
             </dd>
           </div>
 
-          <!-- Both times under one label. They are read as a span — "started
+          <!-- Both times under one icon. They are read as a span — "started
                five hours ago, still going two hours ago" is one sentence, and
                as two separate labelled fields it was two lookups. -->
-          <div class="flex items-baseline gap-1.5">
-            <dt class="text-dimmed">
+          <div class="flex items-center gap-1.5 border-s border-default ps-3">
+            <UIcon name="i-lucide-clock" class="size-3.5 shrink-0 text-dimmed" />
+            <dt class="sr-only">
               Last seen
             </dt>
             <dd class="text-toned">
               <span :title="absoluteTime(detail.issue.lastSeen)">{{ relativeTime(detail.issue.lastSeen) }}</span>
-              <span class="text-dimmed" :title="`First seen ${absoluteTime(detail.issue.firstSeen)}`">
-                · first {{ relativeTime(detail.issue.firstSeen) }}
-              </span>
+              <span
+                class="text-dimmed"
+                :title="`First seen ${absoluteTime(detail.issue.firstSeen)}`"
+              >{{ ` · first ${relativeTime(detail.issue.firstSeen)}` }}</span>
             </dd>
           </div>
         </dl>
