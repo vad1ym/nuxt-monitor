@@ -477,6 +477,27 @@ export interface MonitorTriggerOptions {
    * failures out of four requests at 4am is not an outage.
    */
   errorRate?: number | { above: number, minimumRequests?: number }
+  /**
+   * Alert when the application stops reporting anything at all. Off by
+   * default; `true` uses two hours.
+   *
+   * The only trigger here that fires on an *absence*, and the one that decides
+   * whether any of the others can be trusted. Every other rule watches for
+   * something getting worse, so a collector that has died — a bad deploy, an
+   * intake answering 404 behind a changed route prefix, a browser plugin that
+   * never loaded — produces perfect silence, and silence is indistinguishable
+   * from a healthy afternoon. The most dangerous chart in monitoring is the
+   * one that went flat, and nothing was watching for it.
+   *
+   * Compared against this application's own history rather than a fixed
+   * expectation: a tool that normally sees four requests an hour has not
+   * broken by seeing none for twenty minutes. Nothing is claimed until the
+   * database has enough history to say what normal was.
+   *
+   * `after` is how long the quiet has to last, in milliseconds. Keep it well
+   * above a deploy's restart window, or every deploy raises one.
+   */
+  silence?: boolean | { after?: number }
 }
 
 /**
@@ -511,6 +532,7 @@ export type MonitorAlertReason =
   | 'watched'
   | 'spike'
   | 'error-rate'
+  | 'silence'
   | 'test'
 
 /** One thing worth telling somebody about. */
@@ -531,6 +553,14 @@ export interface MonitorAlert {
   factor?: number
   /** The failure rate and what it was measured over, for `error-rate`. */
   rate?: { failed: number, total: number }
+  /**
+   * How long the application has been silent, for `silence` alerts.
+   *
+   * Carried rather than left to the message to compute, because the reader's
+   * first question is "since when" — and the answer decides whether this is a
+   * deploy still restarting or a collector that died last night.
+   */
+  quietFor?: { sinceMs: number, lastSeen: number }
   at: number
 }
 

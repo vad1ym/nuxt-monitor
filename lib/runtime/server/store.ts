@@ -22,7 +22,7 @@ import type {
   MonitorDashboard,
 } from '../../types'
 import type { IssueState } from './notify/triggers'
-import { evaluate, evaluateErrorRate } from './notify/triggers'
+import { evaluate, evaluateErrorRate, evaluateSilence } from './notify/triggers'
 import { MonitorNotifier } from './notify/notifier'
 import type { SamplingOptions } from './sampling'
 import { Sampler } from './sampling'
@@ -194,6 +194,12 @@ export class MonitorStore {
   private readonly groups: CompiledGroup[]
   /** When the application-wide rate alert last fired. See `raiseErrorRate`. */
   private rateAlertedAt = 0
+  /**
+   * When the silence alert last fired. Held separately from `rateAlertedAt`
+   * because the two describe different conditions, and sharing a cooldown
+   * would let a noisy outage suppress the notice that collection had stopped.
+   */
+  private silenceAlertedAt = 0
   /**
    * Fingerprints somebody has marked as not worth attention.
    *
@@ -697,6 +703,15 @@ export class MonitorStore {
       // only when there is something to write would lose exactly the counts
       // that matter most — the ones from the heaviest spikes.
       await this.drainSampled()
+
+      // And still checked for silence. This is the branch a stopped collector
+      // takes — no events, nothing to write — so a check that ran only when
+      // there was something to write could never fire on the one condition it
+      // exists to detect.
+      if (!this.closed) {
+        await this.raiseSilence(Date.now())
+      }
+
       return
     }
 
@@ -1201,6 +1216,74 @@ export class MonitorStore {
     }
 
     this.rateAlertedAt = now
+    this.notifier.enqueue(alert)
+  }
+
+  /**
+   * The alert that fires when nothing has arrived at all.
+   *
+   * Runs on the flush timer rather than on the flush *contents*, which is the
+   * whole point: this is the only condition here that produces no events, so a
+   * check driven by events could never observe it. The timer ticks whether or
+   * not anything happened, and this is called on both paths.
+   *
+   * Its cooldown is `silenceAlertedAt` rather than the notifier's own, so a
+   * quiet week says something once every cooldown instead of once — and does
+   * not compete with the rate alert's cooldown, which is about a different
+   * condition entirely.
+   */
+  private async raiseSilence(now: number): Promise<void> {
+    const triggers = this.options.notifications?.triggers
+
+    if (!this.notifier || !triggers?.silence) {
+      return
+    }
+
+    if (now - this.silenceAlertedAt < this.notifier.cooldownMs) {
+      return
+    }
+
+    /**
+     * The last sign of life, from either source.
+     *
+     * Both, because they fail independently and either one alone would lie: a
+     * browser collector that stopped reporting leaves server requests still
+     * arriving, and an application serving no traffic at all still counts as
+     * observed if its error collector is alive. The most recent of the two is
+     * the honest answer to "when did we last hear anything".
+     */
+    const seen = await this.db.prepare(`
+      SELECT
+        (SELECT MAX(ts) FROM events)                AS last_event,
+        (SELECT MAX(bucket) FROM request_stats)     AS last_request,
+        (SELECT MIN(bucket) FROM request_stats)     AS first_request,
+        (SELECT COALESCE(SUM(count), 0) FROM request_stats) AS requests
+    `).get() as Record<string, number | null>
+
+    const lastSeen = Math.max(Number(seen.last_event ?? 0), Number(seen.last_request ?? 0))
+    const firstSeen = Number(seen.first_request ?? 0)
+
+    // Nothing has ever been recorded, so there is no silence to report — only
+    // an application that has not started yet.
+    if (!lastSeen || !firstSeen) {
+      return
+    }
+
+    const alert = evaluateSilence(
+      {
+        lastSeen,
+        observedMs: now - firstSeen,
+        requests: Number(seen.requests ?? 0),
+      },
+      triggers,
+      now,
+    )
+
+    if (!alert) {
+      return
+    }
+
+    this.silenceAlertedAt = now
     this.notifier.enqueue(alert)
   }
 

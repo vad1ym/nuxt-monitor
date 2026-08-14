@@ -90,7 +90,7 @@ Then open the dashboard's Notifications section and send a test.
 
 ## What raises an alert
 
-Five triggers. The first three are on by default; the last two are off until
+Six triggers. The first three are on by default; the last three are off until
 you set them.
 
 | Trigger | Fires when |
@@ -100,6 +100,7 @@ you set them.
 | `thresholds` | An issue's count crosses `10`, `100` or `1000` |
 | `spike` | An issue starts happening far faster than it used to |
 | `errorRate` | The application's failure rate crosses a fraction you set |
+| `silence` | Nothing at all has been recorded for a while |
 
 ```ts
 triggers: {
@@ -115,6 +116,9 @@ triggers: {
   // only once at least 20 were served: three failures out of four at 4am is
   // 75% and is not an outage.
   errorRate: { above: 0.25, minimumRequests: 20 },
+  // `true` means two hours. Keep it well clear of a deploy's restart window,
+  // or every release raises one.
+  silence: { after: 2 * 60 * 60 * 1000 },
 }
 ```
 
@@ -128,6 +132,20 @@ that can fire when no single issue is remarkable: fifty small faults, each
 under every threshold, are still a checkout nobody can complete. Its message
 names no issue, because pointing at one would blame a symptom that may not be
 the cause.
+
+`silence` is the only one that fires on an *absence*, and it is what decides
+whether the other five can be trusted. Every other rule watches for something
+getting worse, so a collector that has died — a bad deploy, an intake behind a
+changed route prefix, a browser plugin that never loaded — produces perfect
+silence, and silence reads exactly like a healthy afternoon. The most dangerous
+chart in monitoring is the one that went flat.
+
+Its message says "nothing recorded", never "the application is down", because
+those are different claims and it cannot tell them apart: your app may be
+serving fine while the monitor behind it is the thing that stopped. It stays
+quiet until the database has enough history to know what normal was, and on an
+application quiet enough that silence *is* normal — a tool nobody opens at
+night should not page you every night.
 
 `regression` is the one worth keeping if you keep only one: somebody said this
 was fixed, and it was not. Nothing else in the tool contradicts a human on the

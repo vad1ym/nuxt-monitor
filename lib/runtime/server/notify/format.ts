@@ -22,6 +22,9 @@ const HEADLINE: Record<MonitorAlertReason, string> = {
   'spike': 'Sudden spike',
   // The only one that is not about an issue at all.
   'error-rate': 'Failure rate high',
+  // Not "application down": all that is known is that nothing arrived, and the
+  // collector is as likely to be the thing that stopped as the application.
+  'silence': 'Nothing reported',
   'test': 'Test alert',
 }
 
@@ -75,6 +78,7 @@ const ICON: Record<MonitorAlertReason, string> = {
   'watched': '👀',
   'spike': '🚨',
   'error-rate': '🔥',
+  'silence': '🔇',
   'test': '✅',
 }
 
@@ -225,6 +229,10 @@ function slackContext(alert: MonitorAlert): string {
  * cannot tell which without the denominator.
  */
 function rateLine(alert: MonitorAlert): string {
+  if (alert.reason === 'silence') {
+    return silenceLine(alert)
+  }
+
   const rate = alert.rate
 
   if (!rate?.total) {
@@ -234,6 +242,44 @@ function rateLine(alert: MonitorAlert): string {
   const percent = Math.round((rate.failed / rate.total) * 100)
 
   return `${percent}% of requests failed — ${rate.failed} of ${rate.total}.`
+}
+
+/**
+ * The alert about an absence, which has to say what it does *not* know.
+ *
+ * Worded as "nothing has been recorded" rather than "the application is down",
+ * because those are different claims and this one cannot tell them apart: the
+ * application may be serving perfectly while the collector behind it is the
+ * thing that died. Naming the wrong one sends somebody to the wrong system
+ * during the minutes that matter.
+ */
+function silenceLine(alert: MonitorAlert): string {
+  const quiet = alert.quietFor
+
+  if (!quiet) {
+    return 'Nothing has been recorded for a while — check that the monitor is still collecting.'
+  }
+
+  return `Nothing recorded for ${describeSpan(quiet.sinceMs)}. Either traffic stopped or the monitor did.`
+}
+
+/** A duration as somebody would say it out loud. */
+function describeSpan(ms: number): string {
+  const minutes = Math.round(ms / 60_000)
+
+  if (minutes < 60) {
+    return `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
+  }
+
+  const hours = Math.round(minutes / 60)
+
+  if (hours < 24) {
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`
+  }
+
+  const days = Math.round(hours / 24)
+
+  return `${days} ${days === 1 ? 'day' : 'days'}`
 }
 
 /**

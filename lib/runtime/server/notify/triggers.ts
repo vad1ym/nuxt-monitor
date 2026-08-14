@@ -27,6 +27,34 @@ const DEFAULT_SPIKE_MINIMUM = 10
 /** Requests below which an error rate is not worth reporting. */
 const DEFAULT_MINIMUM_REQUESTS = 20
 
+/**
+ * How long nothing may arrive before it is worth saying so, when `silence: true`.
+ *
+ * Two hours is chosen to sit well clear of a deploy. A restart stops
+ * collection for seconds and a slow rollout for minutes; a threshold near
+ * either would raise an alert on every release, and an alert that fires on
+ * routine work is one people learn to close without reading.
+ */
+const DEFAULT_SILENCE_MS = 2 * 60 * 60 * 1_000
+
+/**
+ * History needed before silence means anything, as a multiple of the threshold.
+ *
+ * A two-hour rule cannot be applied by a database that has been collecting for
+ * two hours: it has never seen this application awake for long enough to know
+ * that quiet is unusual. Scaling with the threshold rather than fixing a span
+ * keeps a short rule usable on a busy service without arming instantly.
+ */
+const MIN_HISTORY_FACTOR = 3
+
+/**
+ * Requests over the observed history below which quiet is simply normal.
+ *
+ * An internal tool nobody opens at night is silent every night, and a trigger
+ * that fires on that is an alarm clock rather than a monitor.
+ */
+const MIN_SILENCE_REQUESTS = 100
+
 export interface IssueState {
   /** Count before this flush wrote to the issue. `0` for a fingerprint never seen. */
   previousCount: number
@@ -190,6 +218,80 @@ export function evaluateErrorRate(
   return counts.failed / counts.total >= above
     ? { reason: 'error-rate', rate: counts, at }
     : undefined
+}
+
+/**
+ * Whether the application has gone quiet, and for long enough to mean it.
+ *
+ * The one trigger that fires on an absence. Everything else here watches a
+ * number get worse, which means a collector that has stopped reporting — a bad
+ * deploy, an intake behind a changed route prefix, a plugin that never
+ * loaded — reads exactly like a healthy afternoon, and the silence is
+ * interpreted as good news right up until somebody notices by other means.
+ *
+ * `observedMs` is what keeps it honest. An application that has only ever been
+ * watched for ten minutes has not "gone quiet" after twenty; neither has one
+ * whose normal traffic is a handful of requests an hour. Without a history to
+ * compare against there is nothing to notice a change from, so nothing is
+ * claimed — the trigger stays silent rather than guessing, which is the same
+ * rule the previous-window comparison follows on the dashboard.
+ */
+export function evaluateSilence(
+  observed: {
+    /** When anything — a request or an error — was last recorded. */
+    lastSeen: number
+    /** How long the database has been collecting. */
+    observedMs: number
+    /** Requests counted over that history, for judging whether quiet is normal. */
+    requests: number
+  },
+  options: MonitorTriggerOptions | undefined,
+  at: number,
+): MonitorAlert | undefined {
+  const setting = options?.silence
+
+  if (!setting) {
+    return undefined
+  }
+
+  const after = typeof setting === 'object' ? setting.after ?? DEFAULT_SILENCE_MS : DEFAULT_SILENCE_MS
+
+  /**
+   * Enough history to know what normal was.
+   *
+   * Deliberately a multiple of the threshold rather than a fixed span: a
+   * two-hour rule needs more than two hours of history to mean anything, and
+   * somebody who sets a ten-minute rule on a busy service should not wait a
+   * day for it to arm. The first window after installation is therefore never
+   * alerted on, which is right — nothing is known yet.
+   */
+  if (observed.observedMs < after * MIN_HISTORY_FACTOR) {
+    return undefined
+  }
+
+  /**
+   * Enough traffic that silence is a change rather than the status quo.
+   *
+   * An internal tool nobody visits overnight is quiet every night, and a
+   * trigger that fires on that is an alarm clock. The floor is measured over
+   * the whole observed history, so it scales with how long the tool has been
+   * watching instead of assuming a busy application.
+   */
+  if (observed.requests < MIN_SILENCE_REQUESTS) {
+    return undefined
+  }
+
+  const sinceMs = at - observed.lastSeen
+
+  if (sinceMs < after) {
+    return undefined
+  }
+
+  return {
+    reason: 'silence',
+    quietFor: { sinceMs, lastSeen: observed.lastSeen },
+    at,
+  }
 }
 
 /**

@@ -551,3 +551,74 @@ describe('the application error rate', () => {
     expect(sent.filter(entry => reasonsOf(entry).includes('error-rate'))).toHaveLength(1)
   })
 })
+
+describe('silence', () => {
+  const HOUR = 60 * 60 * 1_000
+
+  /**
+   * History old enough and busy enough to arm the trigger.
+   *
+   * Written straight to the counter table rather than through `countRequest`,
+   * because the whole point is traffic that happened *hours* ago and stopped —
+   * which is not something the collector can be asked to produce live.
+   */
+  async function seedTraffic(db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown } }, at: number, count: number): Promise<void> {
+    await db.prepare(
+      'INSERT INTO request_stats (bucket, route, method, class, count) VALUES (?, ?, ?, ?, ?)',
+    ).run(Math.floor(at / 60_000) * 60_000, '/api/x', 'GET', '2xx', count)
+  }
+
+  it('reports that nothing has arrived for a long time', async () => {
+    // The condition no other trigger can see: every one of them watches a
+    // number get worse, and a collector that stopped produces no numbers.
+    store = await open({ triggers: { silence: true, newIssue: false } })
+
+    const db = (store as unknown as { db: Parameters<typeof seedTraffic>[0] }).db
+
+    // A day of history, ending three hours ago.
+    await seedTraffic(db, Date.now() - 30 * HOUR, 3_000)
+    await seedTraffic(db, Date.now() - 3 * HOUR, 3_000)
+
+    // An empty flush — exactly what the timer does when nothing is happening.
+    await store.flush()
+
+    expect(sent.flatMap(reasonsOf)).toContain('silence')
+  })
+
+  it('stays quiet on a database with no history behind it', async () => {
+    // The first window after installation. Alerting here would make the
+    // product's first impression a false alarm.
+    store = await open({ triggers: { silence: true, newIssue: false } })
+
+    const db = (store as unknown as { db: Parameters<typeof seedTraffic>[0] }).db
+
+    await seedTraffic(db, Date.now() - 3 * HOUR, 3_000)
+    await store.flush()
+
+    expect(sent.flatMap(reasonsOf)).not.toContain('silence')
+  })
+
+  it('stays quiet while events are still arriving', async () => {
+    store = await open({ triggers: { silence: true, newIssue: false } })
+
+    const db = (store as unknown as { db: Parameters<typeof seedTraffic>[0] }).db
+
+    await seedTraffic(db, Date.now() - 30 * HOUR, 3_000)
+    store.capture(makeEvent())
+    await store.flush()
+
+    expect(sent.flatMap(reasonsOf)).not.toContain('silence')
+  })
+
+  it('is off unless it is asked for', async () => {
+    store = await open({ triggers: { newIssue: false } })
+
+    const db = (store as unknown as { db: Parameters<typeof seedTraffic>[0] }).db
+
+    await seedTraffic(db, Date.now() - 30 * HOUR, 3_000)
+    await seedTraffic(db, Date.now() - 3 * HOUR, 3_000)
+    await store.flush()
+
+    expect(sent.flatMap(reasonsOf)).not.toContain('silence')
+  })
+})

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { MonitorIssue } from '../../../types'
 import type { IssueState } from './triggers'
-import { evaluate, evaluateErrorRate } from './triggers'
+import { evaluate, evaluateErrorRate, evaluateSilence } from './triggers'
 
 const NOW = 1_700_000_000_000
 
@@ -229,5 +229,72 @@ describe('error rate', () => {
 
   it('survives a window with no traffic at all', () => {
     expect(evaluateErrorRate({ failed: 0, total: 0 }, { errorRate: 0.25 }, NOW)).toBeUndefined()
+  })
+})
+
+describe('silence', () => {
+  const HOUR = 60 * 60 * 1_000
+
+  /** Comfortably past every guard, so each test can break exactly one. */
+  function observed(overrides: Partial<Parameters<typeof evaluateSilence>[0]> = {}) {
+    return {
+      lastSeen: NOW - 3 * HOUR,
+      observedMs: 30 * HOUR,
+      requests: 5_000,
+      ...overrides,
+    }
+  }
+
+  it('is off unless asked for', () => {
+    // Every trigger here is off by default, and this one especially: it is the
+    // only one that can fire when nothing is wrong with the application.
+    expect(evaluateSilence(observed(), {}, NOW)).toBeUndefined()
+  })
+
+  it('reports an application that has stopped saying anything', () => {
+    // The failure mode the whole trigger exists for: a collector that died
+    // produces perfect silence, which reads exactly like a healthy afternoon.
+    const alert = evaluateSilence(observed(), { silence: true }, NOW)
+
+    expect(alert?.reason).toBe('silence')
+    expect(alert?.quietFor?.sinceMs).toBe(3 * HOUR)
+  })
+
+  it('stays quiet while the gap is shorter than the threshold', () => {
+    expect(evaluateSilence(observed({ lastSeen: NOW - 30 * 60_000 }), { silence: true }, NOW))
+      .toBeUndefined()
+  })
+
+  it('honours a custom threshold', () => {
+    const alert = evaluateSilence(
+      observed({ lastSeen: NOW - 30 * 60_000, observedMs: 30 * HOUR }),
+      { silence: { after: 20 * 60_000 } },
+      NOW,
+    )
+
+    expect(alert?.reason).toBe('silence')
+  })
+
+  it('says nothing without enough history to know what normal was', () => {
+    // A database collecting for two hours has never seen this application
+    // awake long enough to call quiet unusual. The first window after
+    // installation must never alert.
+    expect(evaluateSilence(observed({ observedMs: 2 * HOUR }), { silence: true }, NOW))
+      .toBeUndefined()
+  })
+
+  it('says nothing when quiet is simply this application\'s normal', () => {
+    // An internal tool nobody opens at night is silent every night, and a
+    // trigger that fires on that is an alarm clock rather than a monitor.
+    expect(evaluateSilence(observed({ requests: 10 }), { silence: true }, NOW))
+      .toBeUndefined()
+  })
+
+  it('carries when it last heard something, not just how long ago', () => {
+    // The reader's first question is "since when": the answer decides whether
+    // this is a deploy still restarting or a collector that died last night.
+    const alert = evaluateSilence(observed(), { silence: true }, NOW)
+
+    expect(alert?.quietFor?.lastSeen).toBe(NOW - 3 * HOUR)
   })
 })
