@@ -4,11 +4,13 @@ import type {
   MonitorDashboard,
   MonitorFacetFilter,
   MonitorFacetName,
+  MonitorHeatCell,
   MonitorUptimeSummary,
 } from '../../lib/types'
 import { api } from '../api'
 import { formatCount, formatRate, formatShare } from '../chart'
 import { relativeTime } from '../format'
+import HeatMap from './HeatMap.vue'
 import StatBar from './StatBar.vue'
 import TimeChart from './TimeChart.vue'
 
@@ -36,6 +38,7 @@ const emit = defineEmits<{
 
 const data = ref<MonitorDashboard | null>(null)
 const uptime = ref<MonitorUptimeSummary | null>(null)
+const heat = ref<MonitorHeatCell[] | null>(null)
 const loading = ref(true)
 const error = ref('')
 
@@ -223,14 +226,19 @@ async function load(): Promise<void> {
   error.value = ''
 
   try {
-    const [dashboard, bar] = await Promise.all([
+    const [dashboard, bar, stats] = await Promise.all([
       api.dashboard(props.hours, filter.value, chosen.value),
       // Not windowed, so it is fetched once and kept while the window moves.
       uptime.value ? Promise.resolve(uptime.value) : api.uptime(),
+      // Windowed, unlike the bar above: "when do errors happen" is a question
+      // about the period being looked at, and a week of history under a
+      // one-hour heading would be a second scale on the same screen.
+      api.stats('heatmap', props.hours),
     ])
 
     data.value = dashboard
     uptime.value = bar
+    heat.value = stats.heatmap ?? []
   }
   catch (caught) {
     error.value = caught instanceof Error ? caught.message : 'Could not load the dashboard'
@@ -645,6 +653,26 @@ onMounted(load)
             </button>
           </li>
         </ul>
+      </section>
+
+      <!-- When, rather than how much. The trend answers "is it happening now";
+           this answers "is it always at 3am" — and a fault confined to the
+           nightly batch reads as a low flat line on the first and an obvious
+           bright band on the second. -->
+      <section v-if="heat?.length" class="rounded-lg border border-default p-3">
+        <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+          <h2 class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-dimmed">
+            <UIcon name="i-lucide-clock" class="size-3.5" />Hour of the week
+          </h2>
+          <!-- Said plainly, because the grid is in the server's zone and the
+               reader's may differ by enough to move a night shift into an
+               afternoon — which would invert the one conclusion it offers. -->
+          <p class="text-xs text-dimmed">
+            in the server's timezone
+          </p>
+        </div>
+
+        <HeatMap :cells="heat" empty-label="No errors in this window." />
       </section>
 
       <!-- Ninety days, deliberately outside the window: "has this been calm" is
