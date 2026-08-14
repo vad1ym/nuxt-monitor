@@ -767,7 +767,10 @@ onMounted(loadBaseline)
     />
 
     <template v-else-if="detail">
-      <header class="space-y-3">
+      <!-- `space-y-2`, not 3: the identity line and the measurements under it
+           describe the same thing and should read as one block under the
+           title, not as two more sections. -->
+      <header class="space-y-2">
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 text-xs">
@@ -822,7 +825,17 @@ onMounted(loadBaseline)
               />
             </div>
 
-            <h1 class="mt-1.5 font-mono text-lg leading-snug text-highlighted break-words">
+            <!-- The one line that says what broke, and it should win the page.
+                 At `text-lg` in the same weight as body copy it was outranked
+                 by its own supporting chips: a row of bordered boxes has more
+                 visual weight than an unemphasised sentence, however large the
+                 sentence is. Bigger, heavier, and tighter-set fixes that.
+
+                 Still monospace: these are messages full of paths, quoted
+                 identifiers and status codes, and a proportional face turns
+                 `"/api/medicines?country_slug=spain"` into something you have
+                 to read twice. -->
+            <h1 class="mt-2 font-mono text-xl font-semibold leading-tight tracking-tight text-highlighted break-words">
               {{ detail.issue.message }}
             </h1>
           </div>
@@ -853,14 +866,20 @@ onMounted(loadBaseline)
           </div>
         </div>
 
-        <!-- The facts you want before reading any code.
-             One row of chips rather than a wall of stacked label/value pairs.
-             Eight `dt`/`dd` columns in one grey wrapped at whatever width the
-             window happened to be, so nothing had a fixed place and the eye had
-             to read every label to find the one it wanted. An icon per fact is
-             a shape you can aim at, and the border around each chip stops
-             "Where" from bleeding into "Request" when they wrap. -->
-        <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
+        <!-- The facts you want before reading any code, in two tiers.
+
+             As one row of seven identically-bordered chips they were unrankable:
+             a box around every fact gives them all the same weight, so the
+             location of the bug and the number of releases it spans competed as
+             equals — and the numbers carried no labels, only an icon each, so
+             `1 ms`, `29 · 16/day` and `from 1.8.0 → dev` had to be decoded
+             rather than read.
+
+             So: the two facts that say *what broke* keep a box and stay on the
+             line under the title, and the four that *measure* it become
+             labelled values on a quiet second line. A label costs a word and
+             saves the decoding. -->
+        <div class="flex flex-wrap items-center gap-2 text-sm">
           <!-- Where the fault is, when the trace actually reaches the
                application. Otherwise the honest version below. -->
           <span
@@ -898,9 +917,11 @@ onMounted(loadBaseline)
 
           <!-- The request as one badge, coloured by how it ended — the same
                shape the list uses, so the row somebody clicked and the header
-               they land on describe the call the same way. Method, path and
-               status were three plain runs of text before, and Vue trimmed the
-               space after the method so `GET` ran straight into the path. -->
+               they land on describe the call the same way. The duration rides
+               inside it rather than in a chip of its own: how long a call ran
+               is part of how it failed, and a 500 in 3ms is a rejected input
+               where the same 500 after 30s is something downstream timing
+               out. -->
           <UBadge
             v-if="request.url"
             :color="request.status ? statusColor(request.status) : 'neutral'"
@@ -914,82 +935,99 @@ onMounted(loadBaseline)
                 v-if="request.status"
               >{{ ` → ${request.status}` }}</span>
             </span>
+            <span
+              v-if="request.duration"
+              class="ms-1.5 shrink-0 opacity-60"
+              title="How long the request had been running when it failed"
+            >{{ request.duration }}</span>
           </UBadge>
+        </div>
 
-          <!-- How long it ran before it broke. Beside the status because the
-               two are read together: a 500 in 3ms is a rejected input, the
-               same 500 after 30s is something downstream timing out. -->
-          <span
-            v-if="request.duration"
-            class="inline-flex items-center gap-1.5 rounded-md border border-default bg-elevated/30 px-2 py-1 text-xs text-muted"
-            title="How long the request had been running when it failed"
-          >
-            <UIcon name="i-lucide-timer" class="size-3.5 shrink-0 text-dimmed" />
-            {{ request.duration }}
-          </span>
-
-          <span class="inline-flex items-center gap-1.5 rounded-md border border-default bg-elevated/30 px-2 py-1 text-xs">
-            <UIcon name="i-lucide-repeat" class="size-3.5 shrink-0 text-dimmed" />
+        <!-- The measurements, labelled.
+             No borders here on purpose: these are read once to size up the
+             problem, not aimed at, and seven boxes competing with the title is
+             what made the header unreadable. The label is dimmed and the value
+             is not, so the row scans as values with their names attached. -->
+        <dl class="flex flex-wrap items-baseline gap-x-5 gap-y-1.5 text-xs">
+          <div class="flex items-baseline gap-1.5">
+            <dt class="text-dimmed">
+              Occurrences
+            </dt>
             <!-- Under a filter the total would contradict everything below it,
                  so it becomes "matching of total". -->
-            <span class="text-toned tabular-nums">
+            <dd class="text-toned tabular-nums">
               <template v-if="isFiltered">{{ detail.eventCount }} of </template>{{ detail.issue.count }}
-            </span>
-            <!-- The count alone cannot separate "200 times last Tuesday"
-                 from "200 times a day, still going". -->
-            <span v-if="rate" class="text-dimmed">· {{ rate }}</span>
-          </span>
+              <!-- The count alone cannot separate "200 times last Tuesday"
+                   from "200 times a day, still going". -->
+              <span v-if="rate" class="text-dimmed">· {{ rate }}</span>
+            </dd>
+          </div>
 
           <!-- The count above says how loud; this says how wide. Twelve
                occurrences across one session is somebody stuck in a retry
                loop; twelve across twelve is everybody hitting it once. -->
-          <span
+          <div
             v-if="affected"
-            class="inline-flex items-center gap-1.5 rounded-md border border-default bg-elevated/30 px-2 py-1 text-xs"
+            class="flex items-baseline gap-1.5"
             :title="`${affected.affected} of the ${affected.total} sessions that saw any error while this issue was happening. Not a share of all visitors — page views are counted without a session id.`"
           >
-            <UIcon name="i-lucide-users" class="size-3.5 shrink-0 text-dimmed" />
-            <span class="text-toned tabular-nums">{{ affected.affected }}</span>
-            <span class="text-dimmed">· {{ affected.percent }}% of those with errors</span>
-          </span>
+            <dt class="text-dimmed">
+              Sessions
+            </dt>
+            <dd class="text-toned tabular-nums">
+              {{ affected.affected }}
+              <span class="text-dimmed">· {{ affected.percent }}% of those with errors</span>
+            </dd>
+          </div>
 
           <!-- The release, not just the timestamp. "Introduced in 1.8.2" is the
                sentence somebody wants before reading a line of the stack: it
                says whether a deploy caused this, and whether the one after it
                fixed it. A timestamp only answers that for whoever has the
                deploy log open. -->
-          <span
+          <div
             v-if="detail.releases?.first"
-            class="inline-flex items-center gap-1.5 rounded-md border border-default bg-elevated/30 px-2 py-1 text-xs"
+            class="flex items-baseline gap-1.5"
             :title="detail.releases.partial
               ? 'Older occurrences have been trimmed, so this is the earliest release still stored — not necessarily where it began'
               : 'The release its first occurrence carried'"
           >
-            <UIcon name="i-lucide-tag" class="size-3.5 shrink-0 text-dimmed" />
-            <span class="text-dimmed">{{ detail.releases.partial ? 'seen in' : 'from' }}</span>
-            <span class="font-mono text-toned">{{ detail.releases.first }}</span>
-            <!-- Only when it has moved on. Repeating the same name twice under
-                 two headings says nothing and reads as two facts. -->
-            <span
-              v-if="detail.releases.last && detail.releases.last !== detail.releases.first"
-              class="font-mono text-dimmed"
-            >→ {{ detail.releases.last }}</span>
-            <span v-if="detail.releases.count > 2" class="text-dimmed">· {{ detail.releases.count }} releases</span>
-          </span>
+            <dt class="text-dimmed">
+              {{ detail.releases.partial ? 'Seen in' : 'Introduced in' }}
+            </dt>
+            <dd class="font-mono text-toned">
+              {{ detail.releases.first }}
+              <!-- Only when it has moved on. Repeating the same name twice
+                   under two headings says nothing and reads as two facts. -->
+              <!-- Spelled out inside the interpolation, not left to whitespace
+                   between tags: Vue trims that, so `dev` ran straight into the
+                   `·` that follows it. -->
+              <span
+                v-if="detail.releases.last && detail.releases.last !== detail.releases.first"
+                class="text-dimmed"
+              >{{ `→ ${detail.releases.last} ` }}</span>
+              <span
+                v-if="detail.releases.count > 2"
+                class="font-sans text-dimmed"
+              >{{ `· ${detail.releases.count} releases` }}</span>
+            </dd>
+          </div>
 
-          <!-- Both times in one chip. They are read as a span — "started five
-               hours ago, still going two hours ago" is one sentence, and as two
-               separate labelled fields it was two lookups. -->
-          <span class="inline-flex items-center gap-1.5 rounded-md border border-default bg-elevated/30 px-2 py-1 text-xs">
-            <UIcon name="i-lucide-clock" class="size-3.5 shrink-0 text-dimmed" />
-            <span class="text-toned" :title="`Last seen ${absoluteTime(detail.issue.lastSeen)}`">
-              {{ relativeTime(detail.issue.lastSeen) }}
-            </span>
-            <span class="text-dimmed" :title="`First seen ${absoluteTime(detail.issue.firstSeen)}`">
-              · first {{ relativeTime(detail.issue.firstSeen) }}
-            </span>
-          </span>
-        </div>
+          <!-- Both times under one label. They are read as a span — "started
+               five hours ago, still going two hours ago" is one sentence, and
+               as two separate labelled fields it was two lookups. -->
+          <div class="flex items-baseline gap-1.5">
+            <dt class="text-dimmed">
+              Last seen
+            </dt>
+            <dd class="text-toned">
+              <span :title="absoluteTime(detail.issue.lastSeen)">{{ relativeTime(detail.issue.lastSeen) }}</span>
+              <span class="text-dimmed" :title="`First seen ${absoluteTime(detail.issue.firstSeen)}`">
+                · first {{ relativeTime(detail.issue.firstSeen) }}
+              </span>
+            </dd>
+          </div>
+        </dl>
 
         <!-- The other half of the same incident.
              One failing request usually leaves two rows on two screens: the
