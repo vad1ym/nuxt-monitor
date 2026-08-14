@@ -1,9 +1,8 @@
 import { mkdirSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { createDatabase } from 'db0'
 import nodeSqlite from 'db0/connectors/node-sqlite'
-import mysql from 'db0/connectors/mysql2'
-import postgresql from 'db0/connectors/postgresql'
 import type { Connector, Database } from 'db0'
 
 /**
@@ -76,6 +75,25 @@ export function openDatabase(options: DatabaseOptions): MonitorDatabase {
 }
 
 /**
+ * Loads a db0 connector at call time.
+ *
+ * A static import would make `pg` and `mysql2` load-bearing for every install:
+ * the bundler follows the import, and the driver is resolved when this module
+ * is first evaluated rather than when a url actually asks for it. `require` is
+ * opaque to the bundler and runs on demand, which is what keeps them optional.
+ * It also stays synchronous, so `openDatabase` does not have to become async
+ * for the sake of two connectors most installs never touch.
+ */
+function loadConnector<Config>(specifier: string): (config: Config) => Connector {
+  const require = createRequire(import.meta.url)
+  const loaded = require(specifier) as
+    | ((config: Config) => Connector)
+    | { default: (config: Config) => Connector }
+
+  return 'default' in loaded ? loaded.default : loaded
+}
+
+/**
  * Opens an external database from its connection string.
  *
  * The driver is imported only once a url asks for it, so an install that stays
@@ -92,11 +110,11 @@ function openExternal(url: string): MonitorDatabase {
   const scheme = (url.split(':')[0] ?? '').toLowerCase()
 
   if (scheme === 'postgres' || scheme === 'postgresql') {
-    return connect('postgresql', () => postgresql({ url }))
+    return connect('postgresql', () => loadConnector<{ url: string }>('db0/connectors/postgresql')({ url }))
   }
 
   if (scheme === 'mysql' || scheme === 'mariadb') {
-    return connect('mysql', () => mysql({ uri: url }))
+    return connect('mysql', () => loadConnector<{ uri: string }>('db0/connectors/mysql2')({ uri: url }))
   }
 
   throw new Error(
