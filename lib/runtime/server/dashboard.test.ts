@@ -310,3 +310,78 @@ describe('the latest release line', () => {
       .toBe('1.0.0')
   })
 })
+
+describe('the window before this one', () => {
+  /**
+   * Why the comparison exists: an absolute count is close to unreadable. "120
+   * errors" is a quiet morning or a fire depending entirely on what the window
+   * before it held, and nothing on the screen used to say which.
+   */
+  const now = Date.now()
+
+  it('reports the previous window beside the current one', async () => {
+    // Two windows, one event each side, deliberately different counts.
+    store.capture(event({ timestamp: now - 30 * 60_000 }))
+    store.capture(event({ message: 'older', timestamp: now - 90 * 60_000 }))
+    store.capture(event({ message: 'older too', timestamp: now - 100 * 60_000 }))
+    await store.flush()
+
+    const { totals, previous } = await store.dashboard({ windowMs: HOUR, now })
+
+    expect(totals.events).toBe(1)
+    expect(previous?.events).toBe(2)
+  })
+
+  it('does not count the current window in the previous one', async () => {
+    // The bug this guards: `totalsFor` was open-ended at `now`, so asking it
+    // about the earlier window would have counted everything since — the
+    // current window included, compared against itself.
+    store.capture(event({ timestamp: now - 5 * 60_000 }))
+    await store.flush()
+
+    const { previous } = await store.dashboard({ windowMs: HOUR, now })
+
+    // Requests, not events, decide whether the window was observed at all —
+    // here neither exists, so there is nothing to compare against.
+    expect(previous).toBeUndefined()
+  })
+
+  it('says nothing at all when there was no previous window', async () => {
+    // A monitor installed this morning has nothing behind it, and "up from 0"
+    // would be the loudest possible claim made from no evidence — on the first
+    // day of every installation.
+    store.capture(event({ timestamp: now - 10 * 60_000 }))
+    store.countRequest('/api/x', 'GET', 200, now - 10 * 60_000)
+    await store.flush()
+
+    expect((await store.dashboard({ windowMs: HOUR, now })).previous).toBeUndefined()
+  })
+
+  it('reports a previous window that was healthy rather than absent', async () => {
+    // The distinction that keeps this honest: a quiet previous window is a
+    // real measurement, and errors going 0 → 40 is exactly the comparison
+    // worth drawing. Only the absence of *both* traffic and errors means the
+    // window was never observed.
+    store.countRequest('/api/x', 'GET', 200, now - 90 * 60_000)
+    store.capture(event({ timestamp: now - 10 * 60_000 }))
+    await store.flush()
+
+    const { previous } = await store.dashboard({ windowMs: HOUR, now })
+
+    expect(previous).toBeDefined()
+    expect(previous?.events).toBe(0)
+    expect(previous?.requests).toBe(1)
+  })
+
+  it('carries the previous failure rate', async () => {
+    store.countRequest('/api/x', 'GET', 200, now - 90 * 60_000)
+    store.countRequest('/api/x', 'GET', 500, now - 90 * 60_000)
+    store.countRequest('/api/x', 'GET', 200, now - 10 * 60_000)
+    await store.flush()
+
+    const { totals, previous } = await store.dashboard({ windowMs: HOUR, now })
+
+    expect(previous?.errorRate).toBeCloseTo(0.5)
+    expect(totals.errorRate).toBeCloseTo(0)
+  })
+})

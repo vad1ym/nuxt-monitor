@@ -10,6 +10,7 @@ import type {
 import { api } from '../api'
 import { formatCount, formatRate, formatShare } from '../chart'
 import { relativeTime } from '../format'
+import DeltaBadge from './DeltaBadge.vue'
 import HeatMap from './HeatMap.vue'
 import StatBar from './StatBar.vue'
 import TimeChart from './LazyTimeChart'
@@ -237,6 +238,19 @@ const active = computed(() =>
   ),
 )
 
+/**
+ * The window before this one, for the direction badges.
+ *
+ * Withheld entirely while a filter is on. The request counters carry no
+ * browser or group, so the two traffic tiles are never narrowed — they already
+ * say "not filtered" — and a delta on them would compare a filtered present
+ * against an unfiltered past. The error tiles *are* filtered and could show
+ * one honestly, but a row where two badges mean one thing and two mean another
+ * is worse than no badges: nothing on screen says which is which, and a
+ * comparison needing a footnote is not doing its job.
+ */
+const previous = computed(() => active.value.length ? undefined : data.value?.previous)
+
 async function load(): Promise<void> {
   loading.value = true
   error.value = ''
@@ -365,8 +379,14 @@ onMounted(load)
           <p class="flex items-center gap-1.5 text-xs text-dimmed">
             <UIcon name="i-lucide-arrow-down-up" class="size-3.5" />Requests
           </p>
-          <p class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">
+          <p class="mt-1 flex items-baseline gap-2 text-2xl font-semibold tabular-nums text-highlighted">
             {{ formatCount(totals!.requests) }}
+            <!-- Traffic rising is not a fault, so this one is never red. -->
+            <DeltaBadge
+              :current="totals!.requests"
+              :previous="previous?.requests"
+              :format="formatCount"
+            />
           </p>
           <p class="text-xs text-dimmed">
             <!-- "failed", not "answered 5xx": the rate counts the 4xx range
@@ -382,10 +402,21 @@ onMounted(load)
             <UIcon name="i-lucide-percent" class="size-3.5" />Failure rate
           </p>
           <p
-            class="mt-1 text-2xl font-semibold tabular-nums"
+            class="mt-1 flex items-baseline gap-2 text-2xl font-semibold tabular-nums"
             :class="(totals!.errorRate ?? 0) > 0.05 ? 'text-error' : 'text-highlighted'"
           >
             {{ formatRate(totals!.errorRate) }}
+            <!-- Compared in percentage points, not as a ratio of ratios: a
+                 rate going 1% → 2% is "+1 point", and calling it "+100%"
+                 would be true and unreadable. Scaled by 100 so the badge's
+                 own floor is applied to points rather than to fractions. -->
+            <DeltaBadge
+              v-if="totals!.errorRate !== undefined"
+              :current="totals!.errorRate * 100"
+              :previous="previous && previous.errorRate !== undefined ? previous.errorRate * 100 : undefined"
+              up-is-bad
+              :format="value => formatRate(value / 100)"
+            />
           </p>
           <p class="text-xs text-dimmed">
             {{ active.length ? 'not filtered' : hasTraffic ? 'of requests served' : 'nothing counted' }}
@@ -396,8 +427,14 @@ onMounted(load)
           <p class="flex items-center gap-1.5 text-xs text-dimmed">
             <UIcon name="i-lucide-bug" class="size-3.5" />Errors
           </p>
-          <p class="mt-1 text-2xl font-semibold tabular-nums text-highlighted">
+          <p class="mt-1 flex items-baseline gap-2 text-2xl font-semibold tabular-nums text-highlighted">
             {{ formatCount(totals!.events) }}
+            <DeltaBadge
+              :current="totals!.events"
+              :previous="previous?.events"
+              up-is-bad
+              :format="formatCount"
+            />
           </p>
           <p class="text-xs text-dimmed">
             across {{ formatCount(totals!.issues) }} {{ totals!.issues === 1 ? 'issue' : 'issues' }}
@@ -409,10 +446,16 @@ onMounted(load)
             <UIcon name="i-lucide-sparkle" class="size-3.5" />New issues
           </p>
           <p
-            class="mt-1 text-2xl font-semibold tabular-nums"
+            class="mt-1 flex items-baseline gap-2 text-2xl font-semibold tabular-nums"
             :class="totals!.newIssues ? 'text-warning' : 'text-highlighted'"
           >
             {{ formatCount(totals!.newIssues) }}
+            <DeltaBadge
+              :current="totals!.newIssues"
+              :previous="previous?.newIssues"
+              up-is-bad
+              :format="formatCount"
+            />
           </p>
           <p class="text-xs text-dimmed">
             {{ formatCount(totals!.affectedSessions) }} sessions affected

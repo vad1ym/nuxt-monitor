@@ -213,8 +213,8 @@ describe('what counts as a failure', () => {
     // The fragment is interpolated into SELECT lists and HAVING clauses, so a
     // drift between it and `isFailedClass` would show up as two numbers on
     // one screen disagreeing rather than as an error.
-    expect(FAILED_SUM).toContain("'4xx'")
-    expect(FAILED_SUM).toContain("'5xx'")
-    expect(FAILED_SUM).not.toContain("'excused'")
+    expect(FAILED_SUM).toContain('\'4xx\'')
+    expect(FAILED_SUM).toContain('\'5xx\'')
+    expect(FAILED_SUM).not.toContain('\'excused\'')
   })
 })

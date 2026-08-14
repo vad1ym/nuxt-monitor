@@ -66,8 +66,18 @@ export async function dashboard(db: Database, options: DashboardOptions): Promis
   const { windowMs, now = Date.now(), filter, facets = DEFAULT_FACETS } = options
   const since = now - windowMs
 
-  const [totals, trend, breakdowns, routes, overview, released] = await Promise.all([
+  /**
+   * The window immediately before this one, same length.
+   *
+   * Ends one millisecond before `since` rather than at it, so the two windows
+   * touch without overlapping — a shared edge would count the events in that
+   * instant on both sides and make a flat period look very slightly up.
+   */
+  const previousSince = since - windowMs
+
+  const [totals, previous, trend, breakdowns, routes, overview, released] = await Promise.all([
     totalsFor(db, since, now, filter),
+    previousTotals(db, previousSince, since - 1, filter),
     trendFor(db, since, now, windowMs, filter),
     Promise.all(facets.map(facet => breakdownFor(db, facet, since, filter))),
     queries.routes(db, since, 8),
@@ -90,6 +100,7 @@ export async function dashboard(db: Database, options: DashboardOptions): Promis
   return {
     windowMs,
     totals,
+    previous,
     trend,
     breakdowns,
     routes,
@@ -131,6 +142,56 @@ function deploysIn(released: MonitorRelease[], since: number, now: number): Moni
     .map(({ release, at, newIssues }) => ({ release, at, newIssues }))
 }
 
+/**
+ * The previous window's tiles, or nothing when there was no previous window.
+ *
+ * The guard is the whole point of this function existing rather than a second
+ * `totalsFor` call at the call site. A monitor installed this morning has an
+ * empty window behind it, and a zero there is not a measurement — comparing
+ * against it turns every figure into "up ∞%", which is the tool's loudest
+ * possible statement made from no evidence whatsoever. It would also fire on
+ * the very first day of every installation, so the first impression the
+ * product gives would be a false alarm.
+ *
+ * "Any data at all" is deliberately a different question from "any events".
+ * A perfectly healthy previous window has zero errors and plenty of requests,
+ * and that zero is real: errors going 0 → 40 is exactly the comparison worth
+ * drawing. Only the absence of *both* means the window was never observed.
+ */
+async function previousTotals(
+  db: Database,
+  since: number,
+  until: number,
+  filter: MonitorFacetFilter | undefined,
+): Promise<MonitorDashboard['previous']> {
+  const totals = await totalsFor(db, since, until, filter)
+  const observed = totals.events > 0 || totals.requests > 0
+
+  if (!observed) {
+    return undefined
+  }
+
+  return {
+    events: totals.events,
+    issues: totals.issues,
+    newIssues: totals.newIssues,
+    requests: totals.requests,
+    failed: totals.failed,
+    errorRate: totals.errorRate,
+    affectedSessions: totals.affectedSessions,
+  }
+}
+
+/**
+ * The tiles, for one window.
+ *
+ * Bounded at both ends rather than open-ended at `now`, which it used to be.
+ * The current window ends at the present moment so an upper bound changed
+ * nothing there — but the same function now answers for the window *before*
+ * this one, and without a ceiling that call would have counted everything
+ * since, which is to say the current window twice over and a comparison of a
+ * number against itself.
+ */
 async function totalsFor(
   db: Database,
   since: number,
@@ -143,12 +204,13 @@ async function totalsFor(
     SELECT COUNT(*) AS events,
            COUNT(DISTINCT fingerprint) AS issues,
            COUNT(DISTINCT session) AS sessions
-    FROM events WHERE ts >= ? ${scope.sql}
-  `).get(since, ...scope.params) as Record<string, unknown>
+    FROM events WHERE ts >= ? AND ts <= ? ${scope.sql}
+  `).get(since, now, ...scope.params) as Record<string, unknown>
 
   const requests = await db.prepare(`
-    SELECT class, SUM(count) AS total FROM request_stats WHERE bucket >= ? GROUP BY class
-  `).all(bucketOf(since, BUCKET_MS)) as Record<string, unknown>[]
+    SELECT class, SUM(count) AS total FROM request_stats
+    WHERE bucket >= ? AND bucket <= ? GROUP BY class
+  `).all(bucketOf(since, BUCKET_MS), now) as Record<string, unknown>[]
 
   let served = 0
   let failed = 0

@@ -851,6 +851,25 @@ export interface MonitorOverview {
   latestRelease?: { release: string, newIssues: number, events: number, lastSeen: number }
 }
 
+/**
+ * What the window before this one looked like.
+ *
+ * Only the figures a change is meaningful for. Counts and rates compare
+ * cleanly; the trend, the route table and the issue lists do not — a previous
+ * trend is a second chart rather than a delta, and drawing one behind the
+ * other says less than either alone.
+ */
+export interface MonitorPrevious {
+  requests: number
+  failed: number
+  /** Undefined when nothing was served, exactly as in the current window. */
+  errorRate?: number
+  events: number
+  issues: number
+  newIssues: number
+  affectedSessions: number
+}
+
 /** One release, and what happened while it was deployed. */
 export interface MonitorRelease {
   release: string
@@ -994,6 +1013,26 @@ export interface MonitorDashboard {
     newIssues: number
     affectedSessions: number
   }
+  /**
+   * The same figures for the window immediately before this one.
+   *
+   * Every tile on this screen was absolute, and an absolute number is close to
+   * unreadable on its own: "120 errors" is a quiet morning or a fire depending
+   * entirely on whether the day before was 15 or 400, and nothing on screen
+   * said which. A count beside its predecessor is a direction, which is what
+   * anybody opens a dashboard to find out.
+   *
+   * A nested block rather than a `previousEvents` beside every field: the
+   * comparison is one idea, and spread across seven properties half of them
+   * get added and half get forgotten.
+   *
+   * **Absent when the window before this one was never observed** — a database
+   * younger than one window has nothing behind it, and reporting "up from 0"
+   * there would be the tool's loudest statement made from no evidence. Absent
+   * is different from a window of zeroes, which is a real and useful
+   * measurement: a healthy previous day genuinely had no errors.
+   */
+  previous?: MonitorPrevious
   /** Requests and errors on one axis, so a spike in both is not read as one. */
   trend: { bucket: number, requests: number, failed: number, errors: number }[]
   breakdowns: MonitorDashboardBreakdown[]
