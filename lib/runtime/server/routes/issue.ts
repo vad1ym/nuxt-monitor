@@ -108,10 +108,17 @@ export default defineEventHandler(async (event) => {
   // a moment, and the header's list of release names cannot answer it: that an
   // issue spans 1.8.2 to 1.8.4 does not say it stopped when the last one
   // shipped. Skipped entirely when there is no line to draw them on.
+  //
+  // The end of the axis is the last bucket's start *plus its width*, not the
+  // start alone. A point's `at` labels the beginning of a bucket up to `step`
+  // wide, so bounding by it blinds the chart to everything in the final
+  // bucket — on a week-long issue that is a four-hour hole at the right-hand
+  // edge, and the deploy it hides is the most recent one, which is the one
+  // anybody opened the page to ask about.
   const deploys = trend.points.length > 1
     ? await store.deploysBetween(
         trend.points[0]!.at,
-        trend.points[trend.points.length - 1]!.at,
+        trend.points[trend.points.length - 1]!.at + trend.step,
       )
     : []
 

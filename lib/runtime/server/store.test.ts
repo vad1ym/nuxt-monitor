@@ -956,6 +956,37 @@ describe('deploys inside a span', () => {
     expect(await store.deploysBetween(base - hour, base + hour)).toEqual([])
   })
 
+  it('covers the last bucket, not just its start', async () => {
+    // A trend point labels the *start* of a bucket up to `step` wide, so a
+    // span bounded by the last point's `at` stops short of the chart's own
+    // right-hand edge. The deploy hidden in that gap is the most recent one —
+    // the one the page was opened to ask about.
+    const first = base
+    const lastOccurrence = base + 24 * hour
+
+    store.capture(makeEvent({ timestamp: first, facets: { release: '1.0.0' } }))
+    store.capture(makeEvent({ timestamp: lastOccurrence, facets: { release: '1.0.0' } }))
+    // Ships between the final bucket's start and the last occurrence.
+    store.capture(makeEvent({
+      message: 'other',
+      timestamp: lastOccurrence - 60_000,
+      facets: { release: '2.0.0' },
+    }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues.find(issue => issue.message === 'boom')!.fingerprint
+    const trend = await store.issueTrend(fp)
+    const lastPoint = trend.points.at(-1)!
+
+    // The release lands after the last bucket's label, which is what made it
+    // disappear.
+    expect(lastOccurrence - 60_000).toBeGreaterThan(lastPoint.at)
+
+    const deploys = await store.deploysBetween(trend.points[0]!.at, lastPoint.at + trend.step)
+
+    expect(deploys.map(entry => entry.release)).toContain('2.0.0')
+  })
+
   it('does not count a later reappearance as a new deploy', async () => {
     // A release ships once. Its first event is the deploy; the ones after are
     // it still running, and a marker per burst would draw a picket fence.
