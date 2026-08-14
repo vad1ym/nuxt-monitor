@@ -649,6 +649,19 @@ onMounted(load)
                   {{ issue.culprit }}
                 </span>
               </span>
+              <!-- Said here too, not only in the issue list. This screen is
+                   where somebody decides what to look at first, and a fault
+                   that outlived its own fix outranks a new one. -->
+              <UBadge
+                v-if="issue.regressedAt && !issue.resolved"
+                color="warning"
+                variant="subtle"
+                size="sm"
+                icon="i-lucide-rotate-ccw"
+                class="shrink-0"
+                label="regression"
+                title="Marked resolved, then happened again"
+              />
               <span class="shrink-0 text-xs text-dimmed">{{ relativeTime(issue.lastSeen) }}</span>
             </button>
           </li>

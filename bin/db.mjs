@@ -121,6 +121,9 @@ export const EXPORT_COLUMNS = {
     'manual',
     'level',
     'group_name',
+    'resolved_at',
+    'regressed_at',
+    'kind',
   ],
   events: [
     'id',

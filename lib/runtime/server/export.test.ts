@@ -179,3 +179,42 @@ describe('the CLI copy', () => {
     }
   })
 })
+
+/**
+ * Completeness against the schema, which the drift test above cannot see.
+ *
+ * That one compares the two hand-written lists to each other, so a column
+ * missing from *both* passes it happily — which is exactly what happened when
+ * `resolved_at` and `regressed_at` were added: stored, surfaced in the API and
+ * shown in the UI, and absent from every export with no test failing. The
+ * argument for a local-first tool is that the data is yours, and that argument
+ * is only as good as the way out.
+ */
+describe('every stored column is exportable', () => {
+  it('exports every column the issues table actually has', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'monitor-export-columns-'))
+    const store = await MonitorStore.open({
+      dir,
+      retentionDays: 14,
+      maxEventsPerIssue: 5,
+      flushSize: 1_000,
+      flushInterval: 60_000,
+    })
+
+    const stored = (await (store as unknown as { db: {
+      prepare: (sql: string) => { all: () => Promise<{ name: string }[]> }
+    } }).db.prepare('PRAGMA table_info(issues)').all()).map(column => column.name)
+
+    const exported = new Set(csvHeader('issues').trim().split(','))
+
+    // Alerting bookkeeping is deliberately internal: a cooldown timestamp says
+    // nothing about the error and everything about this module's own state.
+    const internal = new Set(['alerted_at', 'alerted_count'])
+    const missing = stored.filter(name => !exported.has(name) && !internal.has(name))
+
+    expect(missing).toEqual([])
+
+    await store.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+})

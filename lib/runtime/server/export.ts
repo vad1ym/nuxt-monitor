@@ -58,6 +58,11 @@ const COLUMNS: Record<ExportTable, string[]> = {
     'manual',
     'level',
     'group_name',
+    // On the end, as the note above requires: appended so an existing script
+    // reading this CSV by position keeps working.
+    'resolved_at',
+    'regressed_at',
+    'kind',
   ],
   events: [
     'id',
