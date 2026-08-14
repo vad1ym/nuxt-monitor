@@ -147,6 +147,9 @@ export default defineEventHandler(async (event) => {
       limit: facetLimit(getQuery(event).limit),
     }),
     sessionCount: await store.sessionCount(fingerprint, filter),
+    // The count above with a denominator. Absent for a server-side issue,
+    // where sessions do not apply at all.
+    sessionShare: await store.sessionShare(fingerprint, filter),
     // What the breakdown is a breakdown of — see `eventCount`.
     eventCount: await store.eventCount(fingerprint, filter),
     trend,

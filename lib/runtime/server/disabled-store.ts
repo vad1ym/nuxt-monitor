@@ -106,6 +106,10 @@ export class DisabledStore implements Pick<
     return undefined
   }
 
+  async sessionShare(): Promise<undefined> {
+    return undefined
+  }
+
   async overview(windowMs = 24 * 60 * 60 * 1_000): Promise<MonitorOverview> {
     return {
       windowMs,

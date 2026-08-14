@@ -1403,6 +1403,15 @@ export class MonitorStore {
     return queries.issueReleases(this.db, fp)
   }
 
+  /** Sessions on this issue against sessions seeing any error in its span. */
+  async sessionShare(
+    fp: string,
+    filter?: MonitorFacetFilter,
+  ): Promise<{ affected: number, total: number } | undefined> {
+    await this.flush()
+    return queries.sessionShare(this.db, fp, filter)
+  }
+
   /** The deploys that landed inside a span, for drawing on an issue's chart. */
   async deploysBetween(from: number, to: number): Promise<MonitorDeploy[]> {
     await this.flush()

@@ -312,6 +312,35 @@ function beforeCrash(timestamp: number, crashedAt: number): string {
   return ms < 3_600_000 ? `${Math.round(ms / 60_000)}m before` : `${Math.round(ms / 3_600_000)}h before`
 }
 
+/**
+ * How much of the damage this one issue accounts for.
+ *
+ * Shown only when it is worth a slot: a lone session says nothing about
+ * spread, and 100% of a denominator of one is a fraction pretending to be a
+ * finding. The wording says "of sessions with errors" rather than "of users",
+ * because that is what the denominator is — visitors are counted without a
+ * session id, so a share of everybody is not available and would be a
+ * confident number meaning nothing.
+ */
+const affected = computed(() => {
+  const share = detail.value?.sessionShare
+
+  // Two guards, for two different kinds of nothing. A denominator of one is
+  // not a distribution; and a share of 100% means no other issue overlapped
+  // this one's span at all, so the fraction is comparing the issue against
+  // itself. Both render as a confident percentage that carries no information,
+  // which is worse than an absent row — the reader spends attention on it.
+  if (!share || share.total < 2 || share.affected >= share.total) {
+    return undefined
+  }
+
+  return {
+    affected: share.affected,
+    total: share.total,
+    percent: Math.round((share.affected / share.total) * 100),
+  }
+})
+
 const trend = computed(() => detail.value?.trend)
 
 /**
@@ -650,6 +679,22 @@ onMounted(loadBaseline)
               <!-- The count alone cannot separate "200 times last Tuesday"
                    from "200 times a day, still going". -->
               <span v-if="rate" class="text-dimmed"> · {{ rate }}</span>
+            </dd>
+          </div>
+
+          <!-- The count above says how loud; this says how wide. Twelve
+               occurrences across one session is somebody stuck in a retry
+               loop; twelve across twelve is everybody hitting it once. -->
+          <div v-if="affected">
+            <dt class="text-xs text-dimmed">
+              Sessions
+            </dt>
+            <dd
+              class="text-toned"
+              :title="`${affected.affected} of the ${affected.total} sessions that saw any error while this issue was happening. Not a share of all visitors — page views are counted without a session id.`"
+            >
+              {{ affected.affected }}
+              <span class="text-dimmed">· {{ affected.percent }}% of those with errors</span>
             </dd>
           </div>
 

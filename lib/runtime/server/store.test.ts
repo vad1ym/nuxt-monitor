@@ -1887,3 +1887,64 @@ describe('resolving the culprit on write', () => {
     await store.close()
   })
 })
+
+/**
+ * How wide an issue is, not just how loud.
+ *
+ * The denominator is deliberately "sessions that saw any error in the same
+ * span", not "all visitors": page views are counted without a session id, so a
+ * share of everybody is not computable, and a percentage that looks like one
+ * would be worse than no percentage at all.
+ */
+describe('share of affected sessions', () => {
+  const base = 1_700_000_000_000
+
+  it('counts this issue against everyone having a bad time', async () => {
+    store.capture(makeEvent({ timestamp: base, facets: { session: 'a' } }))
+    store.capture(makeEvent({ timestamp: base + 2_000, facets: { session: 'b' } }))
+    // A different issue, inside the span this one covers — so a session having
+    // a bad time for another reason.
+    store.capture(makeEvent({ message: 'other', timestamp: base + 1_000, facets: { session: 'c' } }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues.find(issue => issue.message === 'boom')!.fingerprint
+
+    expect(await store.sessionShare(fp)).toEqual({ affected: 2, total: 3 })
+  })
+
+  it('is undefined for an issue with no sessions', async () => {
+    // A server error belongs to a request, not to a person, so the comparison
+    // is meaningless rather than merely unavailable.
+    store.capture(makeEvent({ timestamp: base }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+
+    expect(await store.sessionShare(fp)).toBeUndefined()
+  })
+
+  it('never reports more affected than total', async () => {
+    // The two halves are separate queries, and a denominator smaller than its
+    // numerator would render as "3 of 2 · 150%".
+    store.capture(makeEvent({ timestamp: base, facets: { session: 'a' } }))
+    store.capture(makeEvent({ timestamp: base + 1_000, facets: { session: 'b' } }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const share = (await store.sessionShare(fp))!
+
+    expect(share.total).toBeGreaterThanOrEqual(share.affected)
+  })
+
+  it('bounds the denominator to the issue own span', async () => {
+    // Sessions from long before this issue existed are not people it affected,
+    // and counting them would shrink every share toward zero over time.
+    store.capture(makeEvent({ message: 'old', timestamp: base, facets: { session: 'ancient' } }))
+    store.capture(makeEvent({ timestamp: base + 10 * 60 * 60 * 1_000, facets: { session: 'a' } }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues.find(issue => issue.message === 'boom')!.fingerprint
+
+    expect(await store.sessionShare(fp)).toEqual({ affected: 1, total: 1 })
+  })
+})

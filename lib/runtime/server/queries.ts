@@ -334,6 +334,54 @@ export async function sessionCount(db: Database, fp: string, filter?: MonitorFac
 }
 
 /**
+ * Sessions that saw *any* error in the same period this issue spans.
+ *
+ * The denominator for "how much of the damage is this one". Deliberately not
+ * "all sessions that visited": page views are counted as aggregates with no
+ * session attached, so a share of total visitors is not computable from what
+ * is stored — and inventing one by dividing by something else would put a
+ * confident percentage on the screen that means nothing.
+ *
+ * What this answers instead is narrower and true: of the people having a bad
+ * time, how many are having *this* bad time. 40 of 42 is one dominant fault;
+ * 40 of 900 is a corner case with a loud count.
+ *
+ * Bounded to the issue's own span rather than a dashboard window, so the two
+ * halves of the fraction cover the same stretch of time. A count from the last
+ * 24 hours over a denominator from the last week is not a share of anything.
+ */
+export async function sessionShare(
+  db: Database,
+  fp: string,
+  filter?: MonitorFacetFilter,
+): Promise<{ affected: number, total: number } | undefined> {
+  const facets = facetClause(filter)
+
+  const span = await db.prepare(`
+    SELECT MIN(ts) AS first, MAX(ts) AS last, COUNT(DISTINCT session) AS affected
+    FROM events
+    WHERE fingerprint = ? AND session IS NOT NULL ${facets.sql}
+  `).get(fp, ...facets.params) as { first: number | null, last: number | null, affected: number }
+
+  const affected = Number(span.affected ?? 0)
+
+  // No sessions at all means a server-side issue, where the comparison is not
+  // just unavailable but meaningless — a server error belongs to a request,
+  // not to a person.
+  if (!affected || span.first === null) {
+    return undefined
+  }
+
+  const total = await db.prepare(`
+    SELECT COUNT(DISTINCT session) AS n
+    FROM events
+    WHERE session IS NOT NULL AND ts >= ? AND ts <= ?
+  `).get(Number(span.first), Number(span.last)) as { n: number }
+
+  return { affected, total: Math.max(affected, Number(total.n)) }
+}
+
+/**
  * Stored occurrences of an issue, optionally narrowed by facet.
  *
  * Not the same as `issue.count`, which counts every occurrence ever seen:

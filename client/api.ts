@@ -114,6 +114,13 @@ export interface IssueDetail {
   facets: MonitorFacetCounts
   /** Distinct sessions behind the occurrences. 0 for server-side issues. */
   sessionCount: number
+  /**
+   * Those sessions against every session that saw an error in the same span.
+   *
+   * Not a share of all visitors — page views are counted without a session, so
+   * that number is not knowable from what is stored.
+   */
+  sessionShare?: { affected: number, total: number }
   /** Stored occurrences matching the filter — what the facets add up to. */
   eventCount: number
   /** When those occurrences happened, bucketed for the chart. */
