@@ -425,6 +425,18 @@ export async function issueTrend(
   fp: string,
   filter?: MonitorFacetFilter,
   buckets = 32,
+  /**
+   * Draw from here instead of from the first occurrence.
+   *
+   * Used to pull the axis back to the deploy that preceded the issue, so the
+   * quiet stretch before the first error is on the chart. Without it the line
+   * starts *at* the fault and the reader cannot see that anything changed —
+   * every issue looks like it has always been happening at this rate.
+   *
+   * Ignored when it is not actually earlier, so a caller cannot accidentally
+   * shorten the range or invert it.
+   */
+  from?: number,
 ): Promise<MonitorIssueTrend> {
   const facets = facetClause(filter)
 
@@ -433,13 +445,15 @@ export async function issueTrend(
     FROM events WHERE fingerprint = ? ${facets.sql}
   `).get(fp, ...facets.params) as { first: number | null, last: number | null, n: number }
 
-  const first = Number(range.first ?? 0)
+  const earliest = Number(range.first ?? 0)
   const last = Number(range.last ?? 0)
   const stored = Number(range.n ?? 0)
 
   if (!stored) {
     return { points: [], stored: 0, step: 0 }
   }
+
+  const first = from !== undefined && from < earliest ? from : earliest
 
   // A span of zero — every occurrence inside one millisecond, or only one of
   // them — would divide by zero below. One bucket is the honest answer.
@@ -458,11 +472,29 @@ export async function issueTrend(
     ORDER BY bucket
   `).all(first, step, step, first, fp, ...facets.params) as { bucket: number, n: number }[]
 
-  return {
-    points: rows.map(row => ({ at: Number(row.bucket), count: Number(row.n) })),
-    stored,
-    step,
+  /**
+   * Buckets with nothing in them, drawn as zero rather than left out.
+   *
+   * SQL returns no row for a bucket with no events, and the chart plots values
+   * against labels by position — so a missing bucket does not leave a gap, it
+   * closes one, and the line steps straight from the last quiet moment to the
+   * first busy one as though they were adjacent. That is precisely the shape
+   * this lead-in exists to show, and dropping the empties would draw it as a
+   * flat line at full height: an issue that has always been happening.
+   *
+   * Only up to the last bucket that has data. Padding past it would invent a
+   * quiet stretch after the most recent occurrence and make a live issue look
+   * finished.
+   */
+  const counts = new Map(rows.map(row => [Number(row.bucket), Number(row.n)]))
+  const lastBucket = Math.floor((last - first) / step) * step + first
+  const points: { at: number, count: number }[] = []
+
+  for (let at = first; at <= lastBucket; at += step) {
+    points.push({ at, count: counts.get(at) ?? 0 })
   }
+
+  return { points, stored, step }
 }
 
 /**
@@ -482,6 +514,36 @@ export async function issueTrend(
  * `unknown` is dropped, as everywhere else: it is what events carry when no
  * release is configured, and a line for it would mark when collection started.
  */
+/**
+ * The release that was already running when a moment happened.
+ *
+ * What an issue's chart needs to start from. A chart that begins at the first
+ * occurrence begins after the cause: the deploy that introduced the fault is
+ * off the left edge, and the one shape worth seeing — flat, then a release,
+ * then errors — cannot be drawn, because the flat part is not on the canvas.
+ *
+ * Returns the release's own first appearance, not the moment asked about, so
+ * the caller can extend the axis back to the deploy itself.
+ */
+export async function deployBefore(
+  db: Database,
+  moment: number,
+): Promise<MonitorDeploy | undefined> {
+  const row = await db.prepare(`
+    SELECT release, MIN(ts) AS at
+    FROM events
+    WHERE release IS NOT NULL AND release != 'unknown'
+    GROUP BY release
+    HAVING at < ?
+    ORDER BY at DESC
+    LIMIT 1
+  `).get(moment) as Record<string, number | string> | undefined
+
+  return row
+    ? { release: String(row.release), at: Number(row.at), newIssues: 0 }
+    : undefined
+}
+
 export async function deploysBetween(
   db: Database,
   from: number,

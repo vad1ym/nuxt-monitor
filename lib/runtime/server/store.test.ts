@@ -897,6 +897,77 @@ describe('issue trend', () => {
 
     expect((await store.issueTrend(fp, { browser: ['Safari'] })).stored).toBe(1)
   })
+
+  it('can start earlier than the first occurrence', async () => {
+    // So the deploy that preceded the issue is on the chart, with the quiet
+    // stretch before the first error still visible beside it.
+    const start = 1_700_000_000_000
+    const hour = 60 * 60 * 1_000
+
+    store.capture(makeEvent({ timestamp: start }))
+    store.capture(makeEvent({ timestamp: start + hour }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const trend = await store.issueTrend(fp, undefined, start - 4 * hour)
+
+    expect(trend.points[0]!.at).toBeLessThanOrEqual(start - 4 * hour + trend.step)
+    // The run-up is drawn, and it is empty.
+    expect(trend.points[0]!.count).toBe(0)
+    // Still counts only real occurrences: padding must not inflate the total.
+    expect(trend.stored).toBe(2)
+    expect(trend.points.reduce((sum, point) => sum + point.count, 0)).toBe(2)
+  })
+
+  it('ignores a start that is not actually earlier', async () => {
+    // A caller cannot shorten the range or invert the axis with it.
+    const start = 1_700_000_000_000
+
+    store.capture(makeEvent({ timestamp: start }))
+    store.capture(makeEvent({ timestamp: start + 60_000 }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const trend = await store.issueTrend(fp, undefined, start + 30_000)
+
+    expect(trend.points[0]!.at).toBe(start)
+  })
+
+  it('draws quiet buckets as zero rather than leaving them out', async () => {
+    // The chart plots values against labels by position, so a dropped bucket
+    // does not leave a gap — it closes one, and a long silence renders as
+    // though the errors either side of it were adjacent.
+    const start = 1_700_000_000_000
+    const hour = 60 * 60 * 1_000
+
+    store.capture(makeEvent({ timestamp: start }))
+    store.capture(makeEvent({ timestamp: start + 10 * hour }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const trend = await store.issueTrend(fp)
+
+    expect(trend.points.some(point => point.count === 0)).toBe(true)
+    // Evenly spaced, which is what makes the x-axis mean anything.
+    for (let i = 1; i < trend.points.length; i++) {
+      expect(trend.points[i]!.at - trend.points[i - 1]!.at).toBe(trend.step)
+    }
+  })
+
+  it('does not pad past the last occurrence', async () => {
+    // Padding to the right would invent a quiet stretch after the newest
+    // error and make a live issue look finished.
+    const start = 1_700_000_000_000
+
+    store.capture(makeEvent({ timestamp: start }))
+    store.capture(makeEvent({ timestamp: start + 60_000 }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const trend = await store.issueTrend(fp)
+
+    expect(trend.points.at(-1)!.count).toBeGreaterThan(0)
+  })
 })
 
 /**
@@ -954,6 +1025,26 @@ describe('deploys inside a span', () => {
     await store.flush()
 
     expect(await store.deploysBetween(base - hour, base + hour)).toEqual([])
+  })
+
+  it('finds the release already running before a moment', async () => {
+    store.capture(makeEvent({ timestamp: base, facets: { release: '1.0.0' } }))
+    store.capture(makeEvent({ message: 'b', timestamp: base + 5 * hour, facets: { release: '2.0.0' } }))
+    await store.flush()
+
+    // Between the two deploys: 1.0.0 is what was running.
+    expect((await store.deployBefore(base + 2 * hour))?.release).toBe('1.0.0')
+    // After both.
+    expect((await store.deployBefore(base + 9 * hour))?.release).toBe('2.0.0')
+  })
+
+  it('has no release before the first one ever seen', async () => {
+    // Nothing to draw a lead-in from, and inventing one would put a marker at
+    // a moment no deploy happened.
+    store.capture(makeEvent({ timestamp: base, facets: { release: '1.0.0' } }))
+    await store.flush()
+
+    expect(await store.deployBefore(base)).toBeUndefined()
   })
 
   it('covers the last bucket, not just its start', async () => {

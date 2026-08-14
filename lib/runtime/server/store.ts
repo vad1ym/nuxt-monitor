@@ -1301,9 +1301,19 @@ export class MonitorStore {
     return queries.eventCount(this.db, fp, filter)
   }
 
-  async issueTrend(fp: string, filter?: MonitorFacetFilter): Promise<MonitorIssueTrend> {
+  async issueTrend(
+    fp: string,
+    filter?: MonitorFacetFilter,
+    from?: number,
+  ): Promise<MonitorIssueTrend> {
     await this.flush()
-    return queries.issueTrend(this.db, fp, filter)
+    return queries.issueTrend(this.db, fp, filter, undefined, from)
+  }
+
+  /** The release already running at a moment, for starting a chart before it. */
+  async deployBefore(moment: number): Promise<MonitorDeploy | undefined> {
+    await this.flush()
+    return queries.deployBefore(this.db, moment)
   }
 
   /** Which releases one issue was first and last seen in. */

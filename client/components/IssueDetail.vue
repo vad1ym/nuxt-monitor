@@ -327,6 +327,31 @@ const trend = computed(() => detail.value?.trend)
  * and its axis no longer spans what it did, so a marker placed by absolute
  * time would sit against a line that means something narrower than it claims.
  */
+/**
+ * The release the chart was pulled back to, when it was.
+ *
+ * Only when the axis actually starts before the first occurrence — otherwise
+ * there is no run-up to explain, and a note about one would describe something
+ * not on screen. The deploy at that edge is the one it was pulled back to.
+ */
+const leadIn = computed(() => {
+  const start = trend.value?.points[0]?.at
+  const firstSeen = detail.value?.issue.firstSeen
+
+  if (start === undefined || firstSeen === undefined || start >= firstSeen) {
+    return undefined
+  }
+
+  const deploy = detail.value?.deploys?.find(entry => entry.at <= firstSeen)
+
+  return deploy
+    ? {
+        release: deploy.release,
+        title: `Drawn from ${deploy.release}, the release running when this issue first appeared — the flat stretch before the first error is not a quiet period, it is before the issue existed`,
+      }
+    : undefined
+})
+
 const deploys = computed(() =>
   isFiltered.value
     ? []
@@ -701,6 +726,13 @@ onMounted(loadBaseline)
               Occurrences over time
             </h2>
             <div class="flex items-center gap-3 text-xs text-dimmed">
+              <!-- The flat stretch on the left is not a quiet period — the
+                   issue did not exist yet. Said out loud, because an unlabelled
+                   run of zeroes reads as "it stopped happening", which is the
+                   opposite of what it means at the start of a chart. -->
+              <span v-if="leadIn" class="flex items-center gap-1.5" :title="leadIn.title">
+                <UIcon name="i-lucide-corner-left-down" class="size-3" />from {{ leadIn.release }}
+              </span>
               <span v-if="deploys.length" class="flex items-center gap-1.5">
                 <span class="h-2 w-px bg-dimmed" />deploys
               </span>

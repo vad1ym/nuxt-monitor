@@ -101,7 +101,24 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  const trend = await store.issueTrend(fingerprint, filter)
+  /**
+   * The chart starts at the deploy before the issue, not at the issue.
+   *
+   * "Did this start after a release" is the question, and it cannot be
+   * answered by a line that begins at the first error: the interesting half of
+   * the shape — quiet, then a deploy, then errors — is entirely to the left of
+   * that. Drawn from the preceding release instead, so the flat stretch is on
+   * the canvas and the marker has something to divide.
+   *
+   * Only under an unfiltered view. A filter narrows which occurrences exist,
+   * so the run-up would be quiet for a reason that has nothing to do with the
+   * deploy — it would be quiet because those events were filtered out.
+   */
+  const before = Object.keys(filter).length
+    ? undefined
+    : await store.deployBefore(issue.firstSeen)
+
+  const trend = await store.issueTrend(fingerprint, filter, before?.at)
 
   // Drawn on the issue's own chart, so bounded by that chart's axis. "Did the
   // release fix this or cause it" is a question about the shape either side of
