@@ -8,6 +8,7 @@ import { parseUserAgent } from '../shared/user-agent'
 import type { MonitorRuntimeConfig } from './context'
 import { captureSync, closeMonitorStore, countRequestSync, countTrafficSync, monitorConfig } from './context'
 import { markRequestId, requestId } from './request-id'
+import { describeRuntime } from './runtime-versions'
 import { markRequestStart, requestDuration } from './timing'
 
 /**
@@ -357,6 +358,15 @@ function requestContext(
 
   if (correlation !== undefined) {
     context.requestId = correlation
+  }
+
+  // What it was running on. One string rather than three context rows: these
+  // are read together or not at all, and three rows of version numbers would
+  // push the fields somebody actually came for off the first screen.
+  const runtime = describeRuntime(config.versions)
+
+  if (runtime) {
+    context.runtime = runtime
   }
 
   // What was sent and what came back. The response half used to be stored as

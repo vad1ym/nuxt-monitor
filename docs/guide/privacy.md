@@ -48,6 +48,8 @@ errors, 250 sessions" and identifies nobody.
 - The release.
 - The per-tab session id described above.
 - How long the failing request had been running, in milliseconds.
+- The Node, Nuxt and Nitro versions it was running on — about your server, not
+  about whoever made the request.
 - A **request id**, to line an error up with your logs and your proxy's. It is
   adopted from `x-request-id`, `x-correlation-id`, `x-amzn-trace-id` or
   `cf-ray` when one of those arrives, and generated otherwise. It is

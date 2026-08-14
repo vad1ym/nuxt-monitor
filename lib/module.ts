@@ -1,6 +1,7 @@
 import type { Nuxt } from '@nuxt/schema'
 import type { Nitro } from 'nitropack'
 import { createHash } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
 import { cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -68,6 +69,10 @@ export default defineNuxtModule<MonitorOptions>({
     // into rather than whatever the server process happens to see later.
     const release = resolveRelease(options.release)
 
+    // Stamped at build time for the same reason the release is: these describe
+    // the bundle, not the machine that later serves it.
+    const versions = resolveVersions(nuxt)
+
     nuxt.options.runtimeConfig.monitor = defu(
       nuxt.options.runtimeConfig.monitor as Record<string, unknown> | undefined,
       {
@@ -80,6 +85,7 @@ export default defineNuxtModule<MonitorOptions>({
         // app wrote to SQLite while reporting no error at all.
         databaseUrl: options.databaseUrl ?? '',
         release,
+        versions,
         retentionDays: options.retentionDays,
         maxEventsPerIssue: options.maxEventsPerIssue,
         maxIssues: options.maxIssues,
@@ -218,6 +224,41 @@ function resolveRelease(configured: string | undefined): string {
   // Long SHAs are unreadable in a facet list and the first seven identify a
   // commit perfectly well.
   return /^[0-9a-f]{40}$/i.test(candidate) ? candidate.slice(0, 7) : candidate.slice(0, 64)
+}
+
+/**
+ * What the application was built and is running on.
+ *
+ * The first question asked of a bug report from somebody else's machine, and
+ * the last thing anybody remembers to write down. A stack trace through
+ * `@vue/runtime-core` means something different on Nuxt 4.0 than on 4.5, and
+ * "works here" is usually a version difference nobody has looked up yet.
+ *
+ * The framework versions are resolved at build time because that is when they
+ * are true: the Nuxt that built the bundle is the Nuxt whose runtime is in it,
+ * and reading a version from the server process later would describe whatever
+ * happens to be installed there instead. Node is the opposite — it is the
+ * process actually executing, so it is read at runtime, where a build on one
+ * major and a deploy on another is a real and common cause of a real bug.
+ */
+function resolveVersions(nuxt: Nuxt): { nuxt: string, nitro?: string } {
+  let nitro: string | undefined
+
+  try {
+    // Resolved from the application's own tree rather than ours: in a pnpm
+    // workspace this module's `nitropack` and the one Nuxt builds with can be
+    // different copies, and reporting our own would name a version the
+    // application never ran.
+    const require = createRequire(join(nuxt.options.rootDir, 'package.json'))
+
+    nitro = require('nitropack/package.json').version
+  }
+  catch {
+    // Diagnostic decoration. A version that cannot be resolved is a field
+    // left out, never a failed build.
+  }
+
+  return { nuxt: nuxt._version, nitro }
 }
 
 /** `/_monitor/` and `_monitor` both mean `/_monitor`. */

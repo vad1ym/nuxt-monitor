@@ -22,6 +22,8 @@ export interface MonitorRuntimeConfig {
   databaseUrl: string
   /** Empty when unset — `runtimeConfig` serializes absent values as ''. */
   release: string
+  /** What the bundle was built with. Node's own version is read at runtime. */
+  versions: { nuxt?: string, nitro?: string }
   retentionDays: number
   maxEventsPerIssue: number
   maxIssues: number
