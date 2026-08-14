@@ -198,6 +198,17 @@ export async function migrate(db: Database, dialect: MonitorDialect = 'sqlite'):
     // only way to quiet noise is to mark it fixed, which makes the resolved
     // list a lie and eventually makes the open list unreadable.
     ['ignored', TYPES[dialect].int],
+    // When somebody last claimed this was fixed, and when it happened anyway.
+    //
+    // `resolved` alone is a boolean, so reopening an issue flipped it back to 0
+    // and erased the fact that a claim had ever been made — the single most
+    // valuable thing this tool can say ("somebody said this was fixed and it
+    // was not") existed for one flush inside the alerting code and nowhere
+    // else. Kept as timestamps rather than a counter because the interesting
+    // part is *when*: a regression an hour after the fix is a bad fix, one
+    // three weeks later is a different story.
+    ['resolved_at', TYPES[dialect].int],
+    ['regressed_at', TYPES[dialect].int],
     // Alerting state, on the issue rather than in memory: a cooldown that lives
     // in a process is no cooldown at all on a server that restarts on deploy,
     // and a deploy is exactly when the alerts are firing.

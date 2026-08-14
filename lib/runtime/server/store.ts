@@ -742,6 +742,11 @@ export class MonitorStore {
         'level = COALESCE(excluded.level, level)',
         'group_name = COALESCE(excluded.group_name, group_name)',
         'kind = COALESCE(excluded.kind, kind)',
+        // The moment a fix was disproved, kept before the flag that erases it.
+        // Written only when the row was actually resolved — every ordinary
+        // occurrence of an open issue runs through here too, and stamping
+        // those would make every issue look like a regression.
+        'regressed_at = CASE WHEN resolved = 1 THEN excluded.last_seen ELSE regressed_at END',
         'resolved = 0',
       ])}
     `)

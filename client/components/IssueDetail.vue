@@ -341,6 +341,55 @@ const affected = computed(() => {
   }
 })
 
+/**
+ * A fix that did not hold.
+ *
+ * The most valuable sentence this tool has, and until now it existed only
+ * inside a single alert: `resolved` is a boolean, so the occurrence that
+ * reopened the issue also erased the fact that anybody had ever called it
+ * fixed. The page then looked exactly like an issue nobody had touched.
+ *
+ * The gap is the content. An hour after the fix means the fix was wrong; three
+ * weeks later means something else broke the same way, and those are different
+ * afternoons.
+ */
+const regression = computed(() => {
+  const issue = detail.value?.issue
+  const resolvedAt = issue?.resolvedAt
+  const regressedAt = issue?.regressedAt
+
+  // Both, and in that order. A resolved issue that has not come back is not a
+  // regression, and a `regressedAt` without its claim has nothing to measure
+  // the gap against.
+  if (!issue || issue.resolved || !resolvedAt || !regressedAt || regressedAt <= resolvedAt) {
+    return undefined
+  }
+
+  return {
+    at: regressedAt,
+    resolvedAt,
+    gap: describeGap(regressedAt - resolvedAt),
+    title: `Marked resolved ${absoluteTime(resolvedAt)}, happened again ${absoluteTime(regressedAt)}`,
+  }
+})
+
+/** "2 hours" / "3 days" — the distance between the claim and its refutation. */
+function describeGap(ms: number): string {
+  const minutes = Math.round(ms / 60_000)
+
+  if (minutes < 60) {
+    return `${Math.max(1, minutes)} ${minutes === 1 ? 'minute' : 'minutes'}`
+  }
+
+  const hours = Math.round(minutes / 60)
+
+  if (hours < 48) {
+    return `${hours} ${hours === 1 ? 'hour' : 'hours'}`
+  }
+
+  return `${Math.round(hours / 24)} days`
+}
+
 const trend = computed(() => detail.value?.trend)
 
 /**
@@ -392,6 +441,51 @@ const deploys = computed(() =>
           : `${deploy.release} — nothing new appeared`,
       })),
 )
+
+/**
+ * Everything drawn as a vertical line: deploys, and the fix that did not hold.
+ *
+ * The two moments belong on the same axis for the same reason a deploy does —
+ * "it went quiet, then it came back" is a statement about the shape either
+ * side of an instant, and no sentence above the chart lets anybody see that.
+ * Together they answer the question the banner only asserts.
+ *
+ * Only when they fall inside the drawn span. A resolve from before the oldest
+ * surviving occurrence has no x-position here and would be pinned to the left
+ * edge, marking the start of the axis rather than a moment on it.
+ */
+const markers = computed(() => {
+  const points = trend.value?.points ?? []
+  const start = points[0]?.at
+  const end = points.at(-1)?.at
+
+  if (start === undefined || end === undefined) {
+    return deploys.value
+  }
+
+  const span = end + (trend.value?.step ?? 0)
+  const inside = (at: number): boolean => at >= start && at <= span
+  const moments = [...deploys.value]
+  const issue = detail.value?.issue
+
+  if (!isFiltered.value && issue?.resolvedAt && inside(issue.resolvedAt)) {
+    moments.push({
+      at: issue.resolvedAt,
+      label: 'resolved',
+      title: `Marked resolved ${absoluteTime(issue.resolvedAt)}`,
+    })
+  }
+
+  if (!isFiltered.value && issue?.regressedAt && inside(issue.regressedAt)) {
+    moments.push({
+      at: issue.regressedAt,
+      label: 'came back',
+      title: `Happened again ${absoluteTime(issue.regressedAt)}, after being marked resolved`,
+    })
+  }
+
+  return moments.sort((a, b) => a.at - b.at)
+})
 
 const trendSeries = computed(() => [{
   name: 'occurrences',
@@ -745,6 +839,24 @@ onMounted(loadBaseline)
         </dl>
       </header>
 
+      <!-- The one thing on this page that contradicts a person on the record.
+           Loud enough to be read before the stack, because it changes what the
+           stack means: this is not a new bug, it is the same bug outliving a
+           fix, and the interesting question moved from "what breaks" to "why
+           did the fix not hold". -->
+      <div
+        v-if="regression"
+        class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm"
+        :title="regression.title"
+      >
+        <UIcon name="i-lucide-rotate-ccw" class="size-4 shrink-0 text-warning" />
+        <span class="font-medium text-warning">Regression</span>
+        <span class="text-toned">
+          marked resolved {{ relativeTime(regression.resolvedAt) }}, happened again
+          {{ regression.gap }} later
+        </span>
+      </div>
+
       <!-- The conclusion only. One line, and it frames the stack below it —
            the table it used to drag along now sits at the foot of the page. -->
       <IssueBreakdown
@@ -793,7 +905,7 @@ onMounted(loadBaseline)
           <TimeChart
             :at="trend.points.map(point => point.at)"
             :series="trendSeries"
-            :markers="deploys"
+            :markers="markers"
             height="h-32"
           />
         </section>

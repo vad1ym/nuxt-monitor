@@ -34,6 +34,10 @@ export function toIssue(row: Record<string, unknown>): MonitorIssue {
     firstSeen: Number(row.first_seen),
     lastSeen: Number(row.last_seen),
     resolved: Number(row.resolved) === 1,
+    // Absent rather than zero when nothing was ever claimed: `0` is a real
+    // timestamp — the epoch — and would render as 1970 rather than as nothing.
+    resolvedAt: row.resolved_at ? Number(row.resolved_at) : undefined,
+    regressedAt: row.regressed_at ? Number(row.regressed_at) : undefined,
     ignored: Number(row.ignored) === 1,
     culprit: (row.culprit as string | null) ?? undefined,
     route: (row.route as string | null) ?? undefined,

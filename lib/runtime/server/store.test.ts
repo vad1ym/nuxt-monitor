@@ -2097,3 +2097,101 @@ describe('secrets in an error message', () => {
     expect(events[0]!.message).not.toContain('4eC39H')
   })
 })
+
+/**
+ * A fix that did not hold.
+ *
+ * `resolved` is a boolean, so the occurrence that reopens an issue also erased
+ * the fact that anybody had ever called it fixed — the most valuable statement
+ * this tool makes existed for one flush inside the alerting code and nowhere
+ * else. These two timestamps are what let the page say it afterwards.
+ */
+describe('regression is remembered, not just alerted on', () => {
+  it('records when a fix was claimed and when it failed', async () => {
+    store.capture(makeEvent())
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+
+    await store.setResolved(fp, true)
+    store.capture(makeEvent())
+    await store.flush()
+
+    const issue = (await store.listIssues()).issues[0]!
+
+    expect(issue.resolved).toBe(false)
+    expect(issue.resolvedAt).toBeGreaterThan(0)
+    expect(issue.regressedAt).toBeGreaterThanOrEqual(issue.resolvedAt!)
+  })
+
+  it('leaves both unset for an issue nobody ever resolved', async () => {
+    // Every ordinary occurrence runs through the same upsert. Stamping those
+    // would make every issue in the list look like a regression.
+    store.capture(makeEvent())
+    store.capture(makeEvent())
+    await store.flush()
+
+    const issue = (await store.listIssues()).issues[0]!
+
+    expect(issue.resolvedAt).toBeUndefined()
+    expect(issue.regressedAt).toBeUndefined()
+  })
+
+  it('keeps the claim after the issue reopens', async () => {
+    // The gap between the two is the whole content: an hour after the fix
+    // means the fix was wrong, three weeks means something else broke.
+    store.capture(makeEvent())
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+
+    await store.setResolved(fp, true)
+    const resolvedAt = (await store.listIssues({ resolved: true })).issues[0]!.resolvedAt
+
+    store.capture(makeEvent())
+    await store.flush()
+
+    expect((await store.listIssues()).issues[0]!.resolvedAt).toBe(resolvedAt)
+  })
+
+  it('clears both when somebody reopens it by hand', async () => {
+    // Pressing Reopen withdraws the claim; it does not report that the issue
+    // happened again. Leaving the stamps would show a regression that no
+    // occurrence ever caused.
+    store.capture(makeEvent())
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+
+    await store.setResolved(fp, true)
+    store.capture(makeEvent())
+    await store.flush()
+
+    await store.setResolved(fp, false)
+
+    const issue = (await store.listIssues()).issues[0]!
+
+    expect(issue.resolvedAt).toBeUndefined()
+    expect(issue.regressedAt).toBeUndefined()
+  })
+
+  it('does not restamp the regression on every later occurrence', async () => {
+    // Once reopened the row is no longer resolved, so the CASE stops firing —
+    // the moment it came back must stay the moment it came back.
+    store.capture(makeEvent())
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+
+    await store.setResolved(fp, true)
+    store.capture(makeEvent())
+    await store.flush()
+
+    const first = (await store.listIssues()).issues[0]!.regressedAt
+
+    store.capture(makeEvent())
+    await store.flush()
+
+    expect((await store.listIssues()).issues[0]!.regressedAt).toBe(first)
+  })
+})

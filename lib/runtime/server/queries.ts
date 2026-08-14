@@ -1087,9 +1087,22 @@ export async function setCulprit(db: Database, fp: string, culprit: string): Pro
   return changesOf(result) > 0
 }
 
-export async function setResolved(db: Database, fp: string, resolved: boolean): Promise<boolean> {
-  const result = await db.prepare('UPDATE issues SET resolved = ? WHERE fingerprint = ?')
-    .run(resolved ? 1 : 0, fp)
+export async function setResolved(
+  db: Database,
+  fp: string,
+  resolved: boolean,
+  at = Date.now(),
+): Promise<boolean> {
+  // `resolved_at` is stamped on the way in and left alone on the way out, so
+  // an issue that comes back still knows when the claim was made — that gap is
+  // the whole content of a regression. Reopening by hand clears `regressed_at`
+  // instead: somebody pressing Reopen is not reporting that it happened again,
+  // they are withdrawing the claim that it was fixed.
+  const result = resolved
+    ? await db.prepare('UPDATE issues SET resolved = 1, resolved_at = ?, regressed_at = NULL WHERE fingerprint = ?')
+        .run(at, fp)
+    : await db.prepare('UPDATE issues SET resolved = 0, resolved_at = NULL, regressed_at = NULL WHERE fingerprint = ?')
+        .run(fp)
 
   return changesOf(result) > 0
 }

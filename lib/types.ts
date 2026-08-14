@@ -1111,6 +1111,23 @@ export interface MonitorIssue {
   lastSeen: number
   resolved: boolean
   /**
+   * When somebody last claimed this was fixed. Absent if nobody ever has.
+   *
+   * Kept after the issue reopens, which is the point: `resolved` is a boolean
+   * and flipping it back to false erased the fact that a claim was made at
+   * all — so the most valuable thing this tool can say, that a fix did not
+   * hold, was invisible everywhere outside a single alert.
+   */
+  resolvedAt?: number
+  /**
+   * When it happened again after being resolved. Absent unless it did.
+   *
+   * With `resolvedAt`, this is the whole story: a regression an hour after the
+   * fix is a bad fix, one three weeks later is a different problem wearing the
+   * same fingerprint.
+   */
+  regressedAt?: number
+  /**
    * Put aside as not worth acting on — an extension, a bot, someone else's
    * problem. Separate from `resolved`, which claims a fix that was made.
    */

@@ -208,6 +208,21 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
             : `In the ${issue.group} group`"
         />
 
+        <!-- A fix that did not hold, said in the list as well as on the issue.
+             This is the row somebody should open first: it is not a new fault
+             competing for attention, it is one that was already judged worth
+             fixing and came back anyway. -->
+        <UBadge
+          v-if="issue.regressedAt && !issue.resolved"
+          color="warning"
+          variant="subtle"
+          size="sm"
+          icon="i-lucide-rotate-ccw"
+          class="mt-0.5 shrink-0"
+          label="regression"
+          title="Marked resolved, then happened again"
+        />
+
         <div class="shrink-0 text-right">
           <div class="text-sm font-medium tabular-nums" :title="`${issue.count} occurrences`">
             {{ issue.count }}
