@@ -737,8 +737,13 @@ onMounted(loadBaseline)
 </script>
 
 <template>
-  <div class="space-y-6">
+  <div class="space-y-5">
+    <!-- Only while there is nothing else to attach it to. Once the issue has
+         loaded the same link rides along the badge row, where it costs no
+         vertical space of its own — but a load that is still running or has
+         failed still needs a way back to the list. -->
     <UButton
+      v-if="!detail || loading"
       variant="link"
       color="neutral"
       size="sm"
@@ -766,6 +771,19 @@ onMounted(loadBaseline)
         <div class="flex items-start gap-3">
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2 text-xs">
+              <!-- On the badge row rather than on a line of its own above it.
+                   Alone it claimed a full row plus the gap under it to hold
+                   two words, and the row it now shares was half empty. -->
+              <UButton
+                variant="link"
+                color="neutral"
+                size="xs"
+                icon="i-lucide-arrow-left"
+                label="All issues"
+                class="ps-0 -ms-0.5"
+                @click="emit('back')"
+              />
+
               <UBadge
                 :color="detail.issue.side === 'client' ? 'info' : 'warning'"
                 variant="subtle"
@@ -1007,35 +1025,57 @@ onMounted(loadBaseline)
         </div>
       </header>
 
-      <!-- The one thing on this page that contradicts a person on the record.
-           Loud enough to be read before the stack, because it changes what the
-           stack means: this is not a new bug, it is the same bug outliving a
-           fix, and the interesting question moved from "what breaks" to "why
-           did the fix not hold". -->
-      <div
-        v-if="regression"
-        class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm"
-        :title="regression.title"
-      >
-        <UIcon name="i-lucide-rotate-ccw" class="size-4 shrink-0 text-warning" />
-        <span class="font-medium text-warning">Regression</span>
-        <span class="text-toned">
-          marked resolved {{ relativeTime(regression.resolvedAt) }}, happened again
-          {{ regression.gap }} later
-        </span>
-      </div>
+      <!-- The two one-line findings, side by side on a wide screen.
+           Each is a single sentence in a bordered strip, and stacked they made
+           two full-width rules across the page before the reader reached
+           anything they came for. They are also read together: "this came back
+           after a fix" and "72% of it is on one release" are the same
+           question — what changed — answered from two directions. -->
+      <!-- Flex rather than grid, and `empty:hidden`.
+           Either child may be absent — there is often no regression, and the
+           breakdown renders nothing when it has no finding to state — and an
+           empty grid still takes the page's vertical rhythm with it, leaving a
+           gap where a banner was not. Flex lets each present child take half
+           the row and the whole of it when it is alone. -->
+      <div class="flex flex-col gap-3 empty:hidden lg:flex-row [&>*]:flex-1 [&>*]:min-w-0">
+        <!-- The one thing on this page that contradicts a person on the
+             record. Loud enough to be read before the stack, because it
+             changes what the stack means: this is not a new bug, it is the
+             same bug outliving a fix, and the interesting question moved from
+             "what breaks" to "why did the fix not hold". -->
+        <div
+          v-if="regression"
+          class="flex items-start gap-2.5 rounded-lg border border-warning/40 bg-warning/5 px-3 py-2.5"
+          :title="regression.title"
+        >
+          <UIcon name="i-lucide-rotate-ccw" class="mt-0.5 size-4 shrink-0 text-warning" />
 
-      <!-- The conclusion only. One line, and it frames the stack below it —
-           the table it used to drag along now sits at the foot of the page. -->
-      <IssueBreakdown
-        v-model:filter="filter"
-        finding-only
-        :facets="detail.facets"
-        :baseline="baseline"
-        :session-count="detail.sessionCount"
-        :event-count="detail.eventCount"
-        :loading="loading"
-      />
+          <!-- One paragraph rather than three flex items. As separate items
+               the sentence broke between them, so "Regression" sat alone on a
+               line above its own explanation while the panel beside it stayed
+               one line — two boxes of visibly different height saying one
+               sentence each. -->
+          <p class="text-sm text-toned">
+            <strong class="font-semibold text-warning">Regression</strong>
+            <span class="text-dimmed">
+              · marked resolved {{ relativeTime(regression.resolvedAt) }}, happened again
+              {{ regression.gap }} later
+            </span>
+          </p>
+        </div>
+
+        <!-- The conclusion only. One line, and it frames the stack below it —
+             the table it used to drag along now sits at the foot of the page. -->
+        <IssueBreakdown
+          v-model:filter="filter"
+          finding-only
+          :facets="detail.facets"
+          :baseline="baseline"
+          :session-count="detail.sessionCount"
+          :event-count="detail.eventCount"
+          :loading="loading"
+        />
+      </div>
 
       <div v-if="!detail.events.length" class="py-10 text-center">
         <p class="text-sm text-muted">

@@ -83,8 +83,13 @@ const finding = computed(() => {
 <template>
   <!-- A flex column so the panel can be told to fill a fixed-height card and
        scroll inside it. As a plain block the list simply overflowed the card
-       it was placed in. -->
-  <div class="flex min-h-0 flex-col gap-4">
+       it was placed in.
+
+       Absent entirely when asked for a finding there is none of: an empty
+       element still takes its parent's gap, so a page laying this out beside
+       something else got a phantom column and the row it sat in was spaced
+       for content that never rendered. -->
+  <div v-if="!findingOnly || finding" class="flex min-h-0 flex-col gap-4">
     <!-- The conclusion, in a sentence. Only shown when there is one. -->
     <div
       v-if="!panelOnly && finding === 'dominant' && dominant"
