@@ -128,7 +128,7 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
           :class="issue.resolved
             ? 'bg-success/60'
             : issue.manual ? 'bg-primary' : issue.side === 'client' ? 'bg-info' : 'bg-warning'"
-          :title="`${issue.manual ? 'reported' : issue.side}${issue.resolved ? ', resolved' : ''}`"
+          :title="`${issue.manual ? 'exception()' : issue.side}${issue.resolved ? ', resolved' : ''}`"
         />
 
         <div class="min-w-0 flex-1">
@@ -202,9 +202,9 @@ function statusColor(status: number): 'error' | 'warning' | 'neutral' {
           size="sm"
           :icon="issue.manual ? 'i-lucide-flag' : 'i-lucide-tag'"
           class="mt-0.5 shrink-0"
-          :label="issue.group || 'reported'"
+          :label="issue.group || 'exception()'"
           :title="issue.manual
-            ? `Reported by exception()${issue.level ? `, ${issue.level}` : ''}`
+            ? `Raised by exception(), not thrown${issue.level ? ` · ${issue.level}` : ''}`
             : `In the ${issue.group} group`"
         />
 

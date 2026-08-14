@@ -72,7 +72,7 @@ Groups do three things:
   fingerprint, so the same sentence reported under `payments` and under
   `data-integrity` is two issues. Naming one is exactly the claim that they are
   different concerns. (A group assigned by a rule is not — see below.)
-- **Filter the list.** `?group=payments`, and *Reported by hand* under the
+- **Filter the list.** `?group=payments`, and *Raised by exception()* under the
   origin filter.
 - **Route alerts.** This is the one that pays for the other two.
 
@@ -157,7 +157,7 @@ single issue.
 ## In the dashboard
 
 Manual reports sit in the same list as everything else and are marked with a
-flag, coloured by level. **Reported by hand**, under the origin filter, shows
+flag, coloured by level. **Raised by exception()**, under the origin filter, shows
 only them — it sits beside Server and Browser because it answers the same kind
 of question: not what anybody decided about the issue, but how it reached us.
 

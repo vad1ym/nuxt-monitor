@@ -75,17 +75,24 @@ const KINDS: Record<string, { label: string, icon: string, value: Scope }> = {
 /**
  * Where the code ran, and how we found out.
  *
- * `Reported` belongs here rather than among the statuses, which is where it
- * used to sit and where it made no sense: it is not something anybody decided
- * about the issue, it is how the issue arrived — somebody called `exception()`
- * instead of the code throwing. That is the same kind of fact as "this ran on
- * the server", and it is asked as often.
+ * The `exception()` option belongs here rather than among the statuses, which
+ * is where it used to sit and where it made no sense: it is not something
+ * anybody decided about the issue, it is how the issue arrived — somebody
+ * called `exception()` instead of the code throwing. That is the same kind of
+ * fact as "this ran on the server", and it is asked as often.
+ *
+ * Named after the call rather than described in prose. Every English word for
+ * this — "reported", "manual", "captured" — is a word the reader has to guess
+ * the meaning of, and the guesses are all plausible and mostly wrong: reported
+ * to whom, captured by what, manual as opposed to which automatic thing. The
+ * function's own name is the one label that cannot be misread by anybody who
+ * would ever use the filter, because they are the person who wrote the call.
  */
 const ORIGINS: Record<string, { label: string, icon: string, value: Scope }> = {
   any: { label: 'Anywhere', icon: 'i-lucide-globe', value: {} },
   server: { label: 'Server', icon: 'i-lucide-server', value: { side: 'server' } },
   client: { label: 'Browser', icon: 'i-lucide-monitor', value: { side: 'client' } },
-  manual: { label: 'Reported by hand', icon: 'i-lucide-flag', value: { manual: true } },
+  manual: { label: 'Raised by exception()', icon: 'i-lucide-flag', value: { manual: true } },
 }
 
 /**

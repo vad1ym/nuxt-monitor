@@ -484,8 +484,8 @@ onMounted(loadBaseline)
                 icon="i-lucide-flag"
                 :label="detail.issue.group
                   ? `${detail.issue.group}${detail.issue.level ? ` · ${detail.issue.level}` : ''}`
-                  : `reported${detail.issue.level ? ` · ${detail.issue.level}` : ''}`"
-                title="Raised by exception(), not caught"
+                  : `exception()${detail.issue.level ? ` · ${detail.issue.level}` : ''}`"
+                title="Raised by exception(), not thrown"
               />
 
               <span v-else class="font-medium text-muted">{{ detail.issue.type }}</span>
