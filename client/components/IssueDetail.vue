@@ -101,8 +101,34 @@ const request = computed(() => {
     // `$fetch` would be a third unrelated number.
     method: onClient ? undefined : typeof context.method === 'string' ? context.method : undefined,
     status: onClient ? undefined : typeof context.statusCode === 'number' ? context.statusCode : undefined,
+    // How long it ran before it broke. Beside the status because the two are
+    // read together: a 500 in 3ms is a rejected input, the same 500 after 30s
+    // is something downstream timing out.
+    duration: onClient
+      ? undefined
+      : typeof context.durationMs === 'number'
+        ? formatDuration(context.durationMs)
+        : undefined,
   }
 })
+
+/**
+ * A duration as somebody would say it.
+ *
+ * Milliseconds up to a second, because that is the range where the digits
+ * carry the meaning — 3ms and 900ms are different stories. Past that the
+ * precision stops mattering and the magnitude starts: nobody investigating a
+ * 31-second request needs to know it was 31,402.
+ */
+function formatDuration(ms: number): string {
+  if (ms < 1_000) {
+    return `${Math.round(ms)} ms`
+  }
+
+  const seconds = ms / 1_000
+
+  return seconds < 10 ? `${seconds.toFixed(1)} s` : `${Math.round(seconds)} s`
+}
 
 /**
  * What was sent and what came back.
@@ -139,6 +165,7 @@ const contextEntries = computed(() => {
     'url',
     'method',
     'statusCode',
+    'durationMs',
     'headers',
     'userAgent',
     'requestBody',
@@ -531,6 +558,11 @@ onMounted(loadBaseline)
             <dd class="font-mono text-toned">
               <span v-if="request.method" class="text-muted">{{ request.method }} </span>{{ request.url }}
               <span v-if="request.status" class="text-muted">→ {{ request.status }}</span>
+              <span
+                v-if="request.duration"
+                class="text-dimmed"
+                title="How long the request had been running when it failed"
+              > · {{ request.duration }}</span>
             </dd>
           </div>
 

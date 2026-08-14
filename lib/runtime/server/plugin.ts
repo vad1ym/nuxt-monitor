@@ -7,6 +7,7 @@ import { scrub, scrubUrl } from '../shared/scrub'
 import { parseUserAgent } from '../shared/user-agent'
 import type { MonitorRuntimeConfig } from './context'
 import { captureSync, closeMonitorStore, countRequestSync, countTrafficSync, monitorConfig } from './context'
+import { markRequestStart, requestDuration } from './timing'
 
 /**
  * Server-side collection.
@@ -18,6 +19,25 @@ import { captureSync, closeMonitorStore, countRequestSync, countTrafficSync, mon
  */
 export default defineNitroPlugin((nitroApp) => {
   const config = monitorConfig()
+
+  /**
+   * Starts the clock on every request.
+   *
+   * Unconditional and about as cheap as a hook gets — one `Date.now()` and one
+   * property write — because there is no way to know at this point which
+   * requests are going to fail, and the measurement has to begin before the
+   * one that does. Nothing is stored for a request that succeeds.
+   */
+  nitroApp.hooks.hook('request', (event: H3Event) => {
+    try {
+      if (!isMonitorRoute(event, config.route)) {
+        markRequestStart(event)
+      }
+    }
+    catch {
+      // A clock reading must never interfere with serving.
+    }
+  })
 
   /**
    * Snapshots the request body while the request is still in hand.
@@ -317,6 +337,16 @@ function requestContext(
 
   if (typeof statusCode === 'number') {
     context.statusCode = statusCode
+  }
+
+  // How long it had been running. Absent rather than zero when the request
+  // never passed the hook that starts the clock — a process-level rejection
+  // has no request behind it, and "0 ms" would describe one that failed
+  // instantly, which is a different and wrong claim.
+  const duration = requestDuration(event)
+
+  if (duration !== undefined) {
+    context.durationMs = duration
   }
 
   // What was sent and what came back. The response half used to be stored as
