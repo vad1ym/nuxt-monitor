@@ -12,7 +12,7 @@ import { formatCount, formatRate, formatShare } from '../chart'
 import { relativeTime } from '../format'
 import HeatMap from './HeatMap.vue'
 import StatBar from './StatBar.vue'
-import TimeChart from './TimeChart.vue'
+import TimeChart from './LazyTimeChart'
 
 /**
  * Traffic and errors, on one screen, always together.

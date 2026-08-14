@@ -8,7 +8,7 @@ import { absoluteTime, relativeTime } from '../format'
 import { primaryFrame, shortLocation } from '../frames'
 import IssueBreakdown from './IssueBreakdown.vue'
 import StackTrace from './StackTrace.vue'
-import TimeChart from './TimeChart.vue'
+import TimeChart from './LazyTimeChart'
 
 const props = defineProps<{ fingerprint: string }>()
 const emit = defineEmits<{ back: [], changed: [] }>()
