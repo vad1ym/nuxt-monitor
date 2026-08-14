@@ -59,24 +59,41 @@ const locationMapped = computed(() =>
 )
 
 /**
- * What tells this occurrence apart from its neighbours.
+ * Every occurrence, described well enough to choose between them.
  *
  * Time alone did not: a run of occurrences seconds apart all render as
  * "5m ago", so the picker offered twenty identical labels. Browser, status and
  * time together are what actually vary, and the first two are also what makes
  * one occurrence worth opening over another.
+ *
+ * Built for the whole list rather than only the selected one, because stepping
+ * through with arrows is the wrong control when the interesting occurrence is
+ * the fifth: it has to be walked to blind, one render at a time, with no way to
+ * see from the first that the fifth is the one that failed differently. The
+ * same labels drive both — the arrows and the list — so they cannot disagree
+ * about what an occurrence is called.
  */
-const occurrenceLabel = computed(() => {
-  const event = current.value
+const occurrences = computed(() =>
+  (detail.value?.events ?? []).map((event, index) => {
+    const status = typeof event.context?.statusCode === 'number'
+      ? String(event.context.statusCode)
+      : undefined
 
-  if (!event) {
-    return ''
-  }
+    return {
+      index,
+      time: relativeTime(event.timestamp),
+      absolute: absoluteTime(event.timestamp),
+      browser: event.facets?.browser,
+      status,
+      // The one line the arrows show. Same parts, same order.
+      label: [event.facets?.browser, status, relativeTime(event.timestamp)]
+        .filter(Boolean)
+        .join(' · '),
+    }
+  }),
+)
 
-  const status = typeof event.context?.statusCode === 'number' ? String(event.context.statusCode) : undefined
-
-  return [event.facets?.browser, status, relativeTime(event.timestamp)].filter(Boolean).join(' · ')
-})
+const occurrenceLabel = computed(() => occurrences.value[selected.value]?.label ?? '')
 
 /**
  * Request details are promoted out of the context list: route, method and
@@ -740,11 +757,12 @@ onMounted(loadBaseline)
         />
       </div>
 
-      <!-- Stepped through, not picked from a row of buttons.
-           Twenty-two of them read "5m ago", eighteen identically: a control
-           whose labels do not distinguish its options cannot be used to
-           choose. The label now leads with what actually differs between
-           occurrences, and the arrows carry the position. -->
+      <!-- Arrows to walk, a list to jump.
+           The arrows alone made the fifth occurrence expensive to reach and
+           impossible to aim for: each step is a render, and nothing on screen
+           said which of the twenty was the one that failed differently. The
+           list shows every label at once, so the odd one out can be picked
+           rather than found. -->
       <div v-else-if="detail.events.length > 1" class="flex flex-wrap items-center gap-2">
         <UButtonGroup size="xs">
           <UButton
@@ -765,10 +783,46 @@ onMounted(loadBaseline)
           />
         </UButtonGroup>
 
-        <span class="text-sm text-toned">
-          <span class="tabular-nums">{{ selected + 1 }} of {{ detail.events.length }}</span>
-          <span v-if="occurrenceLabel" class="text-dimmed"> · {{ occurrenceLabel }}</span>
-        </span>
+        <UPopover>
+          <UButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            trailing-icon="i-lucide-chevron-down"
+            class="px-1"
+          >
+            <span class="text-sm text-toned">
+              <span class="tabular-nums">{{ selected + 1 }} of {{ detail.events.length }}</span>
+              <span v-if="occurrenceLabel" class="text-dimmed"> · {{ occurrenceLabel }}</span>
+            </span>
+          </UButton>
+
+          <template #content>
+            <!-- Capped in height rather than in length: an issue with two
+                 hundred stored occurrences should still offer all of them,
+                 and a list that silently stopped at ten would hide exactly
+                 the outlier this control exists to find. -->
+            <ul class="max-h-80 w-72 overflow-auto p-1">
+              <li v-for="item in occurrences" :key="item.index">
+                <button
+                  type="button"
+                  class="w-full flex items-center gap-2 rounded px-2 py-1 text-left text-xs transition-colors cursor-pointer"
+                  :class="item.index === selected
+                    ? 'text-highlighted bg-elevated/60'
+                    : 'text-toned hover:bg-elevated/40'"
+                  :aria-pressed="item.index === selected"
+                  :title="item.absolute"
+                  @click="selected = item.index"
+                >
+                  <span class="w-6 shrink-0 text-end tabular-nums text-dimmed">{{ item.index + 1 }}</span>
+                  <span class="truncate">{{ item.browser }}</span>
+                  <span v-if="item.status" class="shrink-0 font-mono text-dimmed">{{ item.status }}</span>
+                  <span class="ms-auto shrink-0 text-dimmed">{{ item.time }}</span>
+                </button>
+              </li>
+            </ul>
+          </template>
+        </UPopover>
 
         <UButton
           v-if="selected !== 0"
