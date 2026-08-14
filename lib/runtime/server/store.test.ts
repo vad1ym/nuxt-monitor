@@ -2050,3 +2050,50 @@ describe('ignoring an issue stops storing it', () => {
     expect(await store.eventCount(other.fingerprint)).toBe(2)
   })
 })
+
+/**
+ * A credential in an error message never reaches the database.
+ *
+ * Scrubbed before the fingerprint, which is the ordering that matters: the
+ * message *is* the identity of an issue, so cleaning it afterwards would leave
+ * the hash keyed on the secret — two occurrences of one bug carrying different
+ * tokens would become two issues, each titled with a live credential.
+ */
+describe('secrets in an error message', () => {
+  // Assembled, not written out: a string shaped like a credential is one a
+  // secret scanner rejects on push, which is how these fixtures blocked a
+  // branch the first time. See the note in `scrub.test.ts`.
+  const token = `sk_${'live_4eC39HqLyjWDarjtT1zdp7dc'}`
+  const otherToken = `sk_${'live_9zZ11QqRrSsTtUuVvWwXxYy2'}`
+
+  it('stores the message with the credential removed', async () => {
+    store.capture(makeEvent({ message: `Invalid token: ${token}` }))
+    await store.flush()
+
+    const issue = (await store.listIssues()).issues[0]!
+
+    expect(issue.message).toBe('Invalid token: [redacted key]')
+    expect(issue.message).not.toContain('4eC39H')
+  })
+
+  it('groups two occurrences carrying different tokens as one issue', async () => {
+    store.capture(makeEvent({ message: `Invalid token: ${token}` }))
+    store.capture(makeEvent({ message: `Invalid token: ${otherToken}` }))
+    await store.flush()
+
+    const issues = (await store.listIssues()).issues
+
+    expect(issues).toHaveLength(1)
+    expect(issues[0]!.count).toBe(2)
+  })
+
+  it('keeps the credential out of the stored event too', async () => {
+    store.capture(makeEvent({ message: `Invalid token: ${token}` }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const events = await store.getEvents(fp, 1)
+
+    expect(events[0]!.message).not.toContain('4eC39H')
+  })
+})

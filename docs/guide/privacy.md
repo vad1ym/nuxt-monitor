@@ -23,11 +23,39 @@ monitor: { scrubKeys: ['ssn', 'iban', 'internal-user-ref'] }
 Query strings in captured URLs are scrubbed by the same rules, so
 `?token=abc` does not survive in a route.
 
+## Credentials inside the text itself
+
+A key-based rule cannot help when the secret is in a sentence — and error
+messages are full of them: `Invalid token: sk_live_4eC39H…` is something
+applications write all the time. That text is not just a column, it is the
+issue's title, its search text and the body of every alert about it, so a leak
+there travels furthest.
+
+Anything matching a known credential format is replaced with a marker naming
+what went — `[redacted key]`, `[redacted token]`, `[redacted jwt]` — in
+messages, in bodies and in any string under any key. Recognised today: Stripe
+and lookalike `sk_live_`/`pk_test_` keys, GitHub `ghp_`/`github_pat_` tokens,
+Slack `xox*` tokens, AWS access key ids, `sk-` API keys, JWTs, and
+`Bearer <token>`.
+
+The patterns are deliberately narrow. "Long and random" also describes commit
+hashes, uuids and stack offsets, and a redacted error nobody can debug is its
+own kind of failure — so only shapes that are a credential and nothing else are
+matched.
+
+This happens **before** the fingerprint is taken, so two occurrences of one bug
+carrying different tokens still group into a single issue rather than splitting
+into one issue per secret.
+
 ## What is deliberately not collected
 
 **IP addresses.** The one thing here that would be personal data outright.
 Addresses are used in memory for rate-limiting the intake endpoint and are
-never written to the database.
+never written to the database — not raw and not hashed. A hashed address is
+still personal data: the whole IPv4 space can be hashed on a laptop, so the
+digest identifies its subject exactly as well as the address did. Every "how
+many people" question on the dashboard is answered by the per-tab session id
+instead, which is random and identifies nobody.
 
 **User identity.** No user id, no email, no account, and no way to attach one —
 a `setUser(email)` field would turn a local debugging tool into a personal data

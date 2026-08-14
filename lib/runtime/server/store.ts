@@ -33,6 +33,7 @@ import type { DashboardOptions } from './dashboard'
 import { dashboard } from './dashboard'
 import type { CompiledIgnore } from '../shared/ignore'
 import { compileIgnore, shouldIgnore } from '../shared/ignore'
+import { scrubSecrets } from '../shared/scrub'
 import type { CompiledGroup } from '../shared/groups'
 import { compileGroups, findGroup, groupFor } from '../shared/groups'
 import { fingerprint } from '../shared/fingerprint'
@@ -353,6 +354,23 @@ export class MonitorStore {
       return ''
     }
 
+    /**
+     * Credentials out of the message before anything else touches it.
+     *
+     * Before the fingerprint, deliberately. The message is the identity of an
+     * issue, so scrubbing it afterwards would leave the hash keyed on the
+     * secret: two occurrences of one bug carrying different tokens would
+     * become two issues, and the raw value would live on in the stored
+     * message that produced the hash.
+     *
+     * This is also the one place worth doing it. A message is not just a
+     * column — it is the title in the list, the text of every alert about the
+     * issue, and a search term. A token there leaks further than one anywhere
+     * else in the payload.
+     */
+    const safe = scrubSecrets(event.message)
+    const cleaned = safe === event.message ? event : { ...event, message: safe }
+
     // The hash is taken from the event as it arrived, before a rule can put a
     // group on it. That ordering is the whole guarantee: a group assigned by a
     // rule is derived from a path, so folding it into the identity would
@@ -362,7 +380,7 @@ export class MonitorStore {
     // A group set by `exception()` is already on the event here, and does
     // belong in the hash — there it is a statement by the author that two
     // reports are different concerns.
-    const fp = fingerprint(event)
+    const fp = fingerprint(cleaned)
 
     /**
      * Ignoring an issue stops storing it, not just alerting about it.
@@ -379,7 +397,7 @@ export class MonitorStore {
       return fp
     }
 
-    const labelled = this.label(event)
+    const labelled = this.label(cleaned)
 
     // Admission control, before the event is copied into the buffer. A route
     // failing on every request would otherwise pay the full cost of recording
