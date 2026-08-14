@@ -473,7 +473,26 @@ export async function issueTrend(
  * traffic it served — and "1.4.0 introduced 7 issues", which is a statement
  * about the deploy and the first thing anyone asks after one.
  */
-export async function releases(db: Database, limit = 50): Promise<MonitorRelease[]> {
+export async function releases(
+  db: Database,
+  limit = 50,
+  since?: number,
+): Promise<MonitorRelease[]> {
+  /**
+   * Activity is windowed; "introduced" is not.
+   *
+   * The two halves of this answer different questions and must not share a
+   * window. How much a release is doing right now is only meaningful against
+   * the period being looked at — beside a tile counting one hour, a lifetime
+   * event count is a different measurement wearing the same clothes. Whether
+   * a release *introduced* an issue is a fact about the deploy: an issue that
+   * first appeared in 1.3.0 was not introduced by 1.4.0 because the reader
+   * picked a one-hour window, and scoping `origin` would say exactly that —
+   * every issue would look introduced by whatever shipped most recently.
+   */
+  const windowed = since !== undefined ? 'WHERE ts >= ?' : ''
+  const bindings = since !== undefined ? [since, limit] : [limit]
+
   const rows = await db.prepare(`
     WITH per_release AS (
       SELECT
@@ -484,6 +503,7 @@ export async function releases(db: Database, limit = 50): Promise<MonitorRelease
         MIN(ts)                      AS first_seen,
         MAX(ts)                      AS last_seen
       FROM events
+      ${windowed}
       GROUP BY release, fingerprint
     ),
     -- Where each issue was seen first. An issue already present in 1.3.0 is
@@ -511,7 +531,7 @@ export async function releases(db: Database, limit = 50): Promise<MonitorRelease
     GROUP BY p.release
     ORDER BY last_seen DESC
     LIMIT ?
-  `).all(limit) as Record<string, number | string>[]
+  `).all(...bindings) as Record<string, number | string>[]
 
   return rows.map(row => ({
     release: String(row.release),
@@ -811,13 +831,19 @@ export async function overview(db: Database, windowMs = 24 * 60 * 60 * 1_000, no
   `).get(since) as Record<string, number> | undefined
 
   /**
-   * The newest release that introduced something.
+   * The newest release that introduced something, within the window.
    *
    * Reusing `releases()` rather than repeating its window function: the
    * definition of "introduced" is subtle enough that two copies of it would
    * drift, and this is the same question the releases table answers.
+   *
+   * Windowed, because this line sits directly beneath tiles that count the
+   * selected period. Unwindowed it reported a release's lifetime events and
+   * last-seen next to figures for the last hour — two scales, one row, nothing
+   * saying which was which. A release with nothing in the window now drops out
+   * of the line entirely rather than being described by numbers from last week.
    */
-  const deployed = (await releases(db, 20))
+  const deployed = (await releases(db, 20, since))
     .find(release => release.newIssues > 0 && release.release !== 'unknown')
 
   const recent = await db.prepare(`

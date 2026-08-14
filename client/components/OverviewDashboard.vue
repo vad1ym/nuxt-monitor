@@ -426,7 +426,14 @@ onMounted(load)
 
       <!-- Whether the last deploy brought anything with it — a first-screen
            question, answered by what *first appeared* in that release rather
-           than by how much happened while it was out. -->
+           than by how much happened while it was out.
+
+           "release" is said out loud. The value is a version or a commit sha,
+           but it is also whatever `NUXT_MONITOR_RELEASE` happens to hold — on
+           a dev machine, the word `dev`. "first appeared in dev" then reads as
+           an environment, and the sentence appears to be about staging versus
+           production rather than about a deploy. Naming the noun costs three
+           words and removes the only reading that is wrong. -->
       <section
         v-if="data!.latestRelease"
         class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-default p-3 text-sm"
@@ -434,11 +441,14 @@ onMounted(load)
         <UIcon name="i-lucide-git-commit-horizontal" class="size-4 shrink-0 text-dimmed" />
         <span class="text-toned">
           <strong class="text-highlighted">{{ data!.latestRelease.newIssues }}</strong>
-          {{ data!.latestRelease.newIssues === 1 ? 'issue' : 'issues' }} first appeared in
+          {{ data!.latestRelease.newIssues === 1 ? 'issue' : 'issues' }} first appeared in release
           <span class="font-mono text-primary/90">{{ data!.latestRelease.release }}</span>
         </span>
+        <!-- Both figures are for the selected window, like the tiles above.
+             They used to be lifetime totals sitting inches from hourly ones,
+             with nothing on screen to say the two were measured differently. -->
         <span class="text-xs text-dimmed">
-          · {{ formatCount(data!.latestRelease.events) }} events · last seen
+          · {{ formatCount(data!.latestRelease.events) }} events in this window · last seen
           {{ relativeTime(data!.latestRelease.lastSeen) }}
         </span>
 

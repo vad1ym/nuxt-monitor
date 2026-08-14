@@ -78,6 +78,12 @@ export async function dashboard(db: Database, options: DashboardOptions): Promis
     // Reused rather than re-derived: "which release introduced this issue" is
     // a window function over every event, subtle enough that a second copy
     // would drift from the first.
+    //
+    // Deliberately *not* windowed, unlike the release line on the same screen.
+    // `deploysIn` decides what counts as a deploy by comparing each release's
+    // true `firstSeen` against the window edge, and a windowed query clamps
+    // that value to the edge — so every release still running would report
+    // first appearing just now and draw a marker it never earned.
     queries.releases(db, RELEASES),
   ])
 

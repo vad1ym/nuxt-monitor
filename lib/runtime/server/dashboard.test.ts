@@ -253,3 +253,60 @@ describe('deploys', () => {
     expect(deploys.map(entry => entry.release)).toEqual(['new'])
   })
 })
+
+/**
+ * The release line under the tiles.
+ *
+ * It sits inches below figures for the selected window, so its own figures
+ * have to be for that window too. They were not: the counts came from a
+ * lifetime query, and the screen showed one hour's errors beside a release's
+ * entire history with nothing marking the difference.
+ */
+describe('the latest release line', () => {
+  it('counts only events inside the window', async () => {
+    const now = Date.now()
+
+    store.capture(event({ timestamp: now - 3 * HOUR, facets: { release: '2.0.0' } }))
+    store.capture(event({ timestamp: now - 2 * HOUR, facets: { release: '2.0.0' } }))
+    store.capture(event({ timestamp: now - 60_000, facets: { release: '2.0.0' } }))
+    await store.flush()
+
+    const { latestRelease } = await store.dashboard({ windowMs: HOUR, now })
+
+    // Three occurrences exist; one happened in the last hour.
+    expect(latestRelease?.release).toBe('2.0.0')
+    expect(latestRelease?.events).toBe(1)
+  })
+
+  it('still credits the release that introduced the issue', async () => {
+    // "Introduced" is a fact about the deploy, not about the window. Scoping
+    // it would hand every issue to whatever shipped most recently, so a
+    // one-hour window would report the newest release as the cause of
+    // everything still happening under it.
+    const now = Date.now()
+
+    store.capture(event({ timestamp: now - 5 * HOUR, facets: { release: '1.0.0' } }))
+    store.capture(event({ timestamp: now - 60_000, facets: { release: '2.0.0' } }))
+    await store.flush()
+
+    const { latestRelease } = await store.dashboard({ windowMs: HOUR, now })
+
+    // The issue first appeared in 1.0.0, which is outside the window, so 2.0.0
+    // introduced nothing and the line has nothing to report.
+    expect(latestRelease).toBeUndefined()
+  })
+
+  it('drops a release with nothing in the window', async () => {
+    // Otherwise a release that last ran yesterday is described by yesterday's
+    // numbers on a screen showing the last hour.
+    const now = Date.now()
+
+    store.capture(event({ timestamp: now - 5 * HOUR, facets: { release: '1.0.0' } }))
+    await store.flush()
+
+    expect((await store.dashboard({ windowMs: HOUR, now })).latestRelease).toBeUndefined()
+    // The same data over a window that contains it does report.
+    expect((await store.dashboard({ windowMs: 24 * HOUR, now })).latestRelease?.release)
+      .toBe('1.0.0')
+  })
+})
