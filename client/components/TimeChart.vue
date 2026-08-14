@@ -47,7 +47,20 @@ const props = defineProps<{
    * line against how much after. A separate list of deploy times leaves the
    * reader to do that comparison from memory.
    */
-  markers?: { at: number, label: string, title?: string }[]
+  markers?: {
+    at: number
+    label: string
+    title?: string
+    /**
+     * Colour role, so a marker can say what kind of moment it is.
+     *
+     * Deploys are the neutral default. A resolve and the regression that
+     * refuted it are the two moments on this chart somebody acted on, and
+     * drawing them in the same grey as a deploy makes the chart's most
+     * loaded pair of lines the least visible thing on it.
+     */
+    tone?: 'neutral' | 'success' | 'warning'
+  }[]
   /**
    * Tailwind height class for the plot.
    *
@@ -130,13 +143,98 @@ function markLineSeries(): Record<string, unknown>[] {
     return []
   }
 
-  const primary = cssColor('--ui-text-dimmed', '#71717a')
+  const neutral = cssColor('--ui-text-dimmed', '#71717a')
+  const tones: Record<string, string> = {
+    neutral,
+    success: cssColor('--ui-success', '#22c55e'),
+    warning: cssColor('--ui-warning', '#f59e0b'),
+  }
 
-  const data = markers
+  const located = markers
     .map(marker => ({ marker, column: columnFor(marker.at) }))
     .filter((entry): entry is { marker: typeof markers[number], column: number } =>
       entry.column !== undefined)
-    .map(({ marker, column }) => ({
+    .sort((a, b) => a.column - b.column)
+
+  /**
+   * Markers sharing a column, merged into one.
+   *
+   * Two moments inside the same bucket are the same vertical line — there is
+   * no x-position that separates them. Drawn as two, ECharts stacks them at
+   * one point and only the last label survives, which on a resolve followed
+   * seconds later by the regression that refuted it silently hides half of
+   * the most important pair on the chart. One line labelled "resolved · came
+   * back" says what actually happened: both, too close together for this
+   * chart to separate.
+   *
+   * The tone of the last one wins, because these read as a sequence and the
+   * last is where it ended up — an issue resolved and then regressed is
+   * currently a regression.
+   */
+  const placed = located.reduce<{ column: number, marker: typeof markers[number] }[]>((into, entry) => {
+    const last = into.at(-1)
+
+    if (last?.column !== entry.column) {
+      into.push({ column: entry.column, marker: entry.marker })
+      return into
+    }
+
+    last.marker = {
+      ...entry.marker,
+      label: `${last.marker.label} · ${entry.marker.label}`,
+      title: [last.marker.title, entry.marker.title].filter(Boolean).join('\n'),
+    }
+
+    return into
+  }, [])
+
+  if (!placed.length) {
+    return []
+  }
+
+  /**
+   * How far apart two labels have to be before they can share a line.
+   *
+   * Measured in columns, because that is the only unit available here — a
+   * label's pixel width is not knowable until ECharts lays it out. Roughly
+   * the width of a trimmed release name at this font size against the span
+   * the chart draws, floored at 2 so a short chart still staggers neighbours.
+   */
+  const clearance = Math.max(2, Math.ceil(props.at.length / 8))
+
+  // The vertical slot each label sits in.
+  //
+  // Two markers a minute apart land in the same column, and `insideEndTop`
+  // put both labels at the same point — they overprinted into an unreadable
+  // smear, which on an issue that was resolved and immediately regressed is
+  // exactly the pair you most need to read. Stepping a colliding label down
+  // by a line costs a little vertical room and makes both legible.
+  //
+  // Each label is pushed below the lowest one it still overlaps, rather than
+  // simply alternating: three markers in a cluster need three slots, and
+  // alternating would collide the first with the third.
+  const rows: number[] = []
+  let lastColumn = Number.NEGATIVE_INFINITY
+  let row = 0
+
+  for (const { column } of placed) {
+    row = column - lastColumn < clearance ? row + 1 : 0
+    rows.push(row)
+    lastColumn = column
+  }
+
+  const data = placed.map(({ marker, column }, index) => {
+    // A label near the right edge has to grow inward.
+    //
+    // Labels are drawn to the right of their line, so one on the last few
+    // columns runs straight off the plot and is clipped mid-word — and the
+    // markers that land there are the recent ones, which is where a resolve
+    // and the regression that followed it invariably sit. Flipping the
+    // alignment puts the text on the other side of the same line.
+    const atEnd = column > props.at.length - 1 - clearance
+    const color = tones[marker.tone ?? 'neutral'] ?? neutral
+
+    return {
       // The index into `xAxis.data` — see `columnFor`.
       xAxis: column,
       // Carried through so the label formatter can reach it — ECharts hands
@@ -145,11 +243,17 @@ function markLineSeries(): Record<string, unknown>[] {
       // What the line cannot say by itself: whether the deploy brought
       // anything with it. Read by the tooltip formatter below.
       value: marker.title ?? marker.label,
-    }))
-
-  if (!data.length) {
-    return []
-  }
+      lineStyle: { color },
+      label: {
+        color,
+        align: atEnd ? 'right' : 'left',
+        // One text line per slot, plus the gap the label already had. The
+        // horizontal half flips sign with the alignment, so the gap stays on
+        // the outside of the line either way.
+        distance: [atEnd ? -2 : 2, 4 + rows[index]! * 13],
+      },
+    }
+  })
 
   return [{
     type: 'line',
@@ -163,25 +267,37 @@ function markLineSeries(): Record<string, unknown>[] {
     markLine: {
       symbol: 'none',
       silent: false,
-      lineStyle: { color: primary, type: 'dashed', width: 1, opacity: 0.9 },
+      lineStyle: { color: neutral, type: 'dashed', width: 1, opacity: 0.9 },
       label: {
         show: true,
         position: 'insideEndTop',
-        color: primary,
+        color: neutral,
         fontSize: 10,
         // Horizontal, explicitly. ECharts rotates a vertical `markLine`'s
         // label to run along the line, which puts the release name on its
         // side — legible only to somebody willing to tilt their head.
         rotate: 0,
-        // Clear of the line itself, and of the chart's top edge.
+        // Clear of the line itself, and of the chart's top edge. Overridden
+        // per marker above, to step colliding labels apart.
         distance: [2, 4],
         align: 'left',
         verticalAlign: 'top',
+        // Painted so a label crossing the plot line stays readable. Without
+        // it a name drawn over the series is two colours fighting in the same
+        // pixels, which is half of why the overlapping pair was a smear.
+        backgroundColor: cssColor('--ui-bg', '#09090b'),
+        padding: [1, 3],
+        borderRadius: 2,
         // The release name, trimmed. A commit SHA is 40 characters and would
         // cover the chart it is annotating; the first seven are what people
         // paste to each other anyway.
+        //
+        // Only for a single unbroken token, which is what a SHA is. A label
+        // built from several words — "resolved · came back", where two
+        // moments shared a column — is long because it says more, and cutting
+        // it to seven characters would throw away the half that was merged in.
         formatter: ({ name }: { name: string }) =>
-          name.length > 12 ? `${name.slice(0, 7)}…` : name,
+          name.length > 12 && !name.includes(' ') ? `${name.slice(0, 7)}…` : name,
       },
       emphasis: { disabled: true },
       // The axis tooltip cannot reach a `markLine` — it reports the series
