@@ -87,7 +87,10 @@ method and a status class, and never a body or a header. They give the error
 count a denominator: ten failures out of ten requests and ten out of a million
 are different situations.
 
-Every 4xx is ignored by default; see [`ignore`](../config/#ignore).
+Only `404` and `429` are ignored by default; see [`ignore`](../config/#ignore).
+Everything else is recorded, because a status code is a claim an application
+makes about itself and applications make it inconsistently — plenty of APIs
+answer `400` or `422` for "your own frontend sent nonsense", which is a bug.
 
 ## Where the data goes
 

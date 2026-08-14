@@ -5,12 +5,32 @@ import type { MonitorEvent, MonitorIgnoreOptions } from '../../types'
  *
  * Filtering on the way in rather than on the way out: noise that is stored
  * still costs disk, still has to be paged past, and still dilutes the counts
- * that tell you which fault is spreading. A 404 is the usual case — it says a
- * client asked for something absent, which is not a fault in the application.
+ * that tell you which fault is spreading.
+ *
+ * The bias is deliberately towards recording. A missed error costs an
+ * afternoon; an extra row costs one click on Ignore — and the tool cannot know
+ * which is which, because a status code is a claim the application makes about
+ * itself and applications make it inconsistently. Plenty of APIs answer 400 or
+ * 422 for "your own frontend sent nonsense", which is exactly a bug, and some
+ * answer 200 with `{ error: true }`. Silence by default is the wrong default
+ * for a monitoring tool.
  */
 
-/** 4xx by default: client mistakes, not application faults. */
-const DEFAULT_STATUSES = [400, 401, 402, 403, 404, 405, 406, 408, 409, 410, 422, 429]
+/**
+ * The two statuses that are never the application's fault.
+ *
+ * `404` says a client asked for something absent — a stale link, a bot, a
+ * scanner — and on a public site it is most of the 4xx traffic there is.
+ * `429` is the rate limiter working: it fired because it was configured to,
+ * and recording it as a fault would make the defence look like the failure.
+ *
+ * Everything else is recorded, **including the rest of the 4xx range**. It
+ * used to hold all of them, and that hid real bugs: a 422 raised by a page's
+ * own `$fetch` — `manufacturer_slug=null` reaching an API that rejects it —
+ * takes the page down with "Something went wrong" and never appears here. That
+ * is not a client mistake, it is a null that should never have been sent.
+ */
+const DEFAULT_STATUSES = [404, 429]
 
 export interface CompiledIgnore {
   statuses: Set<number>

@@ -559,11 +559,21 @@ export interface MonitorDelivery {
 
 export interface MonitorIgnoreOptions {
   /**
-   * HTTP statuses to skip. Defaults to every 4xx: a 404 says a client asked
-   * for something that is not there, which is not a fault in the application
-   * and would otherwise bury the errors that are.
+   * HTTP statuses to skip. Default: `[404, 429]`.
    *
-   * Set to `[]` to record them.
+   * Only the two that are never the application's own fault — a stale link or
+   * a bot, and the rate limiter doing its job. Everything else is recorded,
+   * **including the rest of the 4xx range**.
+   *
+   * That default used to be every 4xx, and it hid real bugs. A status code is
+   * a claim an application makes about itself and applications make it
+   * inconsistently: plenty of APIs answer `400` or `422` for "your own
+   * frontend sent nonsense". A 422 raised by a page's own `$fetch` — a `null`
+   * reaching an API that rejects it — takes the page down with an error screen
+   * and never appeared here at all. The bias is towards recording, because a
+   * missed error costs an afternoon and an extra row costs one click on Ignore.
+   *
+   * Set to `[]` to record even those two.
    */
   statuses?: number[]
   /** Messages to skip, as substrings or `/regex/` strings. */

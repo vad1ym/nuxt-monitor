@@ -8,6 +8,7 @@ import { parseUserAgent } from '../shared/user-agent'
 import type { MonitorRuntimeConfig } from './context'
 import { captureSync, closeMonitorStore, countRequestSync, countTrafficSync, monitorConfig } from './context'
 import { markRequestId, requestId } from './request-id'
+import { statusOf } from './status'
 import { describeRuntime } from './runtime-versions'
 import { markRequestStart, requestDuration } from './timing'
 
@@ -75,7 +76,7 @@ export default defineNitroPlugin((nitroApp) => {
       // failures — the only ones the rate is about — would all be missing
       // from the denominator.
       if (context.event) {
-        countOnce(context.event, statusOf(error, context.event))
+        countOnce(context.event, statusOf(error, getResponseStatus(context.event)))
       }
 
       if (isDuplicate(error, context.event)) {
@@ -189,25 +190,6 @@ function countOnce(event: H3Event, status: number): void {
   if (routeKind(path, getRequestHeader(event, 'accept')) === 'page') {
     countTrafficSync(parseUserAgent(getRequestHeader(event, 'user-agent')))
   }
-}
-
-/**
- * The status a failed request ended with.
- *
- * `createError({ statusCode })` carries its own; anything else that escaped a
- * handler became a 500 by the time the client saw it.
- */
-function statusOf(error: Error, event: H3Event): number {
-  const declared = (error as { statusCode?: number }).statusCode
-
-  if (typeof declared === 'number' && declared >= 100 && declared <= 599) {
-    return declared
-  }
-
-  // The response may not be written yet, in which case h3 reports 200.
-  const written = getResponseStatus(event)
-
-  return written && written >= 400 ? written : 500
 }
 
 /**
@@ -334,13 +316,16 @@ function requestContext(
     headers: scrub(getRequestHeaders(event), options),
   }
 
-  // `createError({ statusCode })` is the normal way to signal an HTTP failure,
-  // and the code is the first thing you want to see.
-  const statusCode = (error as { statusCode?: number }).statusCode
-
-  if (typeof statusCode === 'number') {
-    context.statusCode = statusCode
-  }
+  // What the *visitor* got, not what an inner call reported.
+  //
+  // `createError({ statusCode })` is the normal way to signal an HTTP failure
+  // and its code is the first thing anybody wants to see — but a `FetchError`
+  // from the page's own `$fetch` carries the upstream API's status instead.
+  // Reading it blindly attributed a page that died with 500 in the browser to
+  // whatever the inner request happened to answer, and the ignore rules then
+  // filtered on that borrowed number: a crashed render disappeared behind a
+  // 404 or a 422 that was never sent to anyone.
+  context.statusCode = statusOf(error, getResponseStatus(event))
 
   // How long it had been running. Absent rather than zero when the request
   // never passed the hook that starts the clock — a process-level rejection

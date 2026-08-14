@@ -15,10 +15,21 @@ function makeEvent(overrides: Partial<MonitorEvent> = {}): MonitorEvent {
 describe('default rules', () => {
   const rules = compileIgnore(undefined)
 
-  it('drops 4xx, which are client mistakes rather than application faults', () => {
+  it('drops the two statuses that are never the application failing', () => {
+    // A stale link or a bot, and the rate limiter doing its job.
     expect(shouldIgnore(makeEvent({ context: { statusCode: 404 } }), rules)).toBe(true)
-    expect(shouldIgnore(makeEvent({ context: { statusCode: 401 } }), rules)).toBe(true)
-    expect(shouldIgnore(makeEvent({ context: { statusCode: 422 } }), rules)).toBe(true)
+    expect(shouldIgnore(makeEvent({ context: { statusCode: 429 } }), rules)).toBe(true)
+  })
+
+  it('keeps the rest of the 4xx range, which used to be dropped wholesale', () => {
+    // A status code is a claim an application makes about itself, and they are
+    // made inconsistently: plenty of APIs answer 400 or 422 for "your own
+    // frontend sent nonsense", which is a bug and not a client mistake. A
+    // missed error costs an afternoon; an extra row costs one click on Ignore.
+    expect(shouldIgnore(makeEvent({ context: { statusCode: 422 } }), rules)).toBe(false)
+    expect(shouldIgnore(makeEvent({ context: { statusCode: 400 } }), rules)).toBe(false)
+    expect(shouldIgnore(makeEvent({ context: { statusCode: 401 } }), rules)).toBe(false)
+    expect(shouldIgnore(makeEvent({ context: { statusCode: 403 } }), rules)).toBe(false)
   })
 
   it('keeps 5xx, which are the application failing', () => {

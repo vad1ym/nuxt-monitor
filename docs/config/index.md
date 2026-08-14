@@ -191,13 +191,20 @@ stored still costs disk and still dilutes the counts.
 
 | Option | Type | Default |
 | --- | --- | --- |
-| `ignore.statuses` | `number[]` | every 4xx |
+| `ignore.statuses` | `number[]` | `[404, 429]` |
 | `ignore.messages` | `string[]` | `[]` |
 | `ignore.routes` | `string[]` | `[]` |
 | `ignore.types` | `string[]` | `[]` |
 
-A 404 says a client asked for something that is not there, which is not a fault
-in your application — set `statuses: []` to record them anyway. Messages and
+A 404 says a client asked for something that is not there, and a 429 is your
+rate limiter working — neither is a fault in your application. Set
+`statuses: []` to record them anyway.
+
+The rest of the 4xx range **is** recorded. It used to be dropped wholesale, and
+that hid real bugs: a 422 raised by a page's own `$fetch` — a `null` reaching an
+API that rejects it — takes the page down and never appears here. The bias is
+towards recording, because a missed error costs an afternoon and an extra row
+costs one click on Ignore. Messages and
 routes match as substrings or `/regex/` strings.
 
 ```ts
