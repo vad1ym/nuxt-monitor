@@ -179,6 +179,7 @@ async function previousTotals(
     failed: totals.failed,
     errorRate: totals.errorRate,
     affectedSessions: totals.affectedSessions,
+    sessions: totals.sessions,
   }
 }
 
@@ -233,6 +234,10 @@ async function totalsFor(
     WHERE first_seen >= ? AND first_seen <= ? AND (ignored IS NULL OR ignored = 0)
   `).get(since, now) as { n: number }
 
+  // What `affectedSessions` is out of. Without it that figure is a numerator
+  // with no total, which is the one number on this screen nobody could read.
+  const sessions = await queries.sessionTotal(db, since)
+
   return {
     requests: served,
     failed,
@@ -243,6 +248,7 @@ async function totalsFor(
     issues: Number(events.issues ?? 0),
     newIssues: Number(appeared.n ?? 0),
     affectedSessions: Number(events.sessions ?? 0),
+    sessions,
   }
 }
 

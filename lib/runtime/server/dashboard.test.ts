@@ -385,3 +385,58 @@ describe('the window before this one', () => {
     expect(totals.errorRate).toBeCloseTo(0)
   })
 })
+
+describe('the session denominator', () => {
+  /**
+   * The number `affectedSessions` was missing. "5 sessions saw an error" is an
+   * outage out of 20 and a rounding error out of 200,000, and before this the
+   * dashboard only ever had the numerator: a browser spoke to the server only
+   * once something had already gone wrong.
+   */
+  it('counts sessions that visited without anything breaking', async () => {
+    store.countSession('a')
+    store.countSession('b')
+    store.countSession('c')
+    await store.flush()
+
+    const { totals } = await store.dashboard({ windowMs: HOUR })
+
+    expect(totals.sessions).toBe(3)
+    expect(totals.affectedSessions).toBe(0)
+  })
+
+  it('counts a session once however often it says hello', async () => {
+    // A single-page app says hello on every page load, and the client posts
+    // its session with every batch of errors as well.
+    for (let i = 0; i < 20; i++) {
+      store.countSession('a')
+    }
+
+    await store.flush()
+
+    expect((await store.dashboard({ windowMs: HOUR })).totals.sessions).toBe(1)
+  })
+
+  it('reports zero where nothing ever said hello', async () => {
+    // A database predating session counting, or an app whose client collector
+    // is not running. Zero has to read as "no baseline" rather than as "nobody
+    // visited", which is why the tile withholds the share instead of showing
+    // 0%.
+    store.capture(event())
+    await store.flush()
+
+    expect((await store.dashboard({ windowMs: HOUR })).totals.sessions).toBe(0)
+  })
+
+  it('does not confuse sessions with the facet breakdowns', async () => {
+    // Sessions ride in `traffic_facets` under their own facet name. If that
+    // name leaked into the breakdown list it would appear as a browser.
+    store.countSession('a')
+    store.countTraffic(agent('Chrome'))
+    await store.flush()
+
+    const { breakdowns } = await store.dashboard({ windowMs: HOUR })
+
+    expect(breakdowns.flatMap(b => b.slices.map(s => s.value))).not.toContain('total')
+  })
+})

@@ -109,6 +109,16 @@ const MAX_PENDING_EVENTS = 1_000
 const MAX_PENDING_COUNTERS = 10_000
 
 /**
+ * Session ids remembered for de-duplication.
+ *
+ * The key includes a value the client supplies, so this needs a ceiling: a
+ * burst of forged ids would otherwise be an unbounded set living in the
+ * monitored application's memory. Generous enough that a real audience never
+ * reaches it within a bucket.
+ */
+const MAX_TRACKED_SESSIONS = 50_000
+
+/**
  * How long the request path stops flushing after a failed write.
  *
  * Long enough that a lock contended by the dashboard clears on its own, short
@@ -212,6 +222,11 @@ export class MonitorStore {
   private ignored = new Set<string>()
   /** Occurrences of ignored issues, counted but not stored. Drained per flush. */
   private ignoredCounts = new Map<string, number>()
+  /**
+   * `bucket\0session` for sessions already counted, so a page load that says
+   * hello a dozen times counts once. Bounded; see `countSession`.
+   */
+  private seenSessions = new Set<string>()
 
   /**
    * Opens a store, ready to use.
@@ -491,6 +506,61 @@ export class MonitorStore {
     // meets something it cannot collapse. Not awaited, for the same reason as
     // in `capture` — this runs on every request.
     if (this.counters.size > 5_000) {
+      void this.flushCounters()
+    }
+  }
+
+  /**
+   * Counts a browser session, once, as the denominator for client errors.
+   *
+   * The number "5 sessions saw an error" is uninterpretable without it: that
+   * is a catastrophe out of 20 sessions and a rounding error out of 200,000,
+   * and until now the dashboard only ever had the numerator — a browser spoke
+   * to the server only when something had already broken.
+   *
+   * Deduplicated in memory rather than by writing a row per report, because
+   * the client says hello on every page load and a single-page app can produce
+   * a dozen of those per visit. What is stored is a count per bucket, never a
+   * session id: the id exists to group one tab's events for a few minutes, and
+   * writing it into the traffic table would turn a counter into a log of who
+   * was on the site and when.
+   *
+   * Sessions already seen are dropped silently, so this is idempotent per
+   * bucket — which is what makes it safe to call from an endpoint that takes
+   * no credentials and can be posted to repeatedly.
+   */
+  countSession(session: string, at = Date.now()): void {
+    if (this.closed) {
+      return
+    }
+
+    const bucket = bucketOf(at, BUCKET_MS)
+
+    // Keyed by bucket as well as id, so a session spanning two buckets counts
+    // in both — the same way a visitor spanning two hours is present in both
+    // hours of a traffic chart, rather than only the one they arrived in.
+    const key = `${bucket}${KEY_SEPARATOR}${session}`
+
+    if (this.seenSessions.has(key)) {
+      return
+    }
+
+    this.seenSessions.add(key)
+
+    // Bounded, because the key includes an id the caller supplies: without a
+    // ceiling a burst of forged ids is an unbounded set in the monitored
+    // application's memory. Cleared wholesale rather than by age — the cost of
+    // forgetting is one session counted twice in the next bucket, which is far
+    // cheaper than tracking insertion times for every entry.
+    if (this.seenSessions.size > MAX_TRACKED_SESSIONS) {
+      this.seenSessions.clear()
+    }
+
+    const counterKey = [bucket, 'session', 'total'].join(KEY_SEPARATOR)
+
+    this.trafficCounters.set(counterKey, (this.trafficCounters.get(counterKey) ?? 0) + 1)
+
+    if (this.trafficCounters.size > 5_000) {
       void this.flushCounters()
     }
   }

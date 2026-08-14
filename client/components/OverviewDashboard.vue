@@ -458,7 +458,14 @@ onMounted(load)
             />
           </p>
           <p class="text-xs text-dimmed">
-            {{ formatCount(totals!.affectedSessions) }} sessions affected
+            <!-- Out of how many, whenever that is known. A bare "5 sessions
+                 affected" is an outage out of 20 and a rounding error out of
+                 200,000, and the tile could not say which. Falls back to the
+                 bare count where no baseline exists — an app without the
+                 client collector running, or a database older than it —
+                 because "5 of 0" would be worse than saying less. -->
+            {{ formatCount(totals!.affectedSessions) }}
+            {{ totals!.sessions ? `of ${formatCount(totals!.sessions)} sessions` : 'sessions affected' }}
           </p>
         </div>
       </div>

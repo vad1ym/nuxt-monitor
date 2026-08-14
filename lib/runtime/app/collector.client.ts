@@ -46,8 +46,28 @@ export default defineNuxtPlugin({
     const MAX_BREADCRUMBS = 30
 
     const queue = new EventQueue({
-      send: events => post(endpoint, events),
+      send: events => post(endpoint, events, sessionId()),
     })
+
+    /**
+     * Says "a session exists", once, so client error counts have a denominator.
+     *
+     * Without it the server hears from a browser only when something has
+     * already gone wrong, which means the dashboard has a numerator and no
+     * total: "5 sessions saw an error" is an outage out of 20 sessions and
+     * noise out of 200,000, and nothing on the screen could tell them apart.
+     *
+     * Sent once per page load rather than per navigation. A single-page app
+     * changes route without reloading, and counting those would measure how
+     * much somebody browsed rather than that they were here — the same
+     * reasoning that keeps `$fetch` calls out of the server's page counter.
+     * The server de-duplicates per bucket anyway, so a repeat is harmless.
+     *
+     * Deliberately not awaited and deliberately ignored on failure: this is a
+     * denominator, and no page should be slower or noisier because a counter
+     * did not arrive.
+     */
+    post(endpoint, [], sessionId())
 
     const record = (crumb: MonitorBreadcrumb): void => {
       breadcrumbs.push(crumb)
@@ -255,8 +275,13 @@ function strip(url: string): string {
  * `sendBeacon` survives page unload, which is exactly when the last errors
  * tend to happen. It refuses oversized payloads, so fall back to `fetch`.
  */
-function post(endpoint: string, events: ClientEvent[]): boolean {
-  const body = JSON.stringify({ events })
+function post(endpoint: string, events: ClientEvent[], session?: string): boolean {
+  // The session rides on every post rather than only the first. It is what the
+  // server counts as one visitor, and a batch that arrives after a page load
+  // whose hello was lost — offline at the time, a beacon refused — would
+  // otherwise be an error from a session that, as far as the totals are
+  // concerned, never existed.
+  const body = JSON.stringify({ events, session })
 
   try {
     if (navigator.sendBeacon?.(endpoint, new Blob([body], { type: 'application/json' }))) {

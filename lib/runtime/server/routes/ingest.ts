@@ -72,17 +72,39 @@ export default defineEventHandler(async (event) => {
   const body = parseJson(raw)
   const incoming = Array.isArray(body?.events) ? body.events.slice(0, MAX_BATCH) : []
 
-  if (incoming.length === 0) {
-    setResponseStatus(event, 204)
-    return null
-  }
-
   const store = await useMonitorStore()
   const options = { extraKeys: config.scrubKeys }
 
   // Parsed once per batch rather than per event: every event in one post came
   // from the same browser by definition.
   const agent = parseUserAgent(getRequestHeader(event, 'user-agent'))
+
+  /**
+   * The session behind this post, counted whether or not it carries errors.
+   *
+   * This is the denominator client-side error counts never had. "5 sessions
+   * saw an error" is a catastrophe out of 20 and a rounding error out of
+   * 200,000, and the dashboard could not tell the difference — it counted the
+   * numerator only, because the only time a browser spoke to the server was
+   * when something had already gone wrong.
+   *
+   * Counted here rather than by a route of its own so it rides the same
+   * defences: same-origin, rate limit, bounded body. A second endpoint would
+   * be a second thing to protect, and this one already parses exactly the
+   * field needed.
+   */
+  const session = identifier((body as { session?: unknown } | null)?.session, MAX_SESSION)
+
+  if (session) {
+    store.countSession(session)
+  }
+
+  if (incoming.length === 0) {
+    // 204 rather than 202: nothing was accepted for storage. A hello carrying
+    // no errors takes this path on every page load, which is the common case.
+    setResponseStatus(event, 204)
+    return null
+  }
   let accepted = 0
 
   for (const candidate of incoming) {

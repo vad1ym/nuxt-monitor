@@ -302,6 +302,28 @@ describe('client intake', () => {
     expect(response.accepted).toBe(0)
   })
 
+  it('counts a session that reports no errors at all', async () => {
+    // The denominator. Without it "5 sessions saw an error" has no total, and
+    // the dashboard cannot tell an outage from a rounding error. A hello
+    // carries no events, so it must be accepted rather than rejected as an
+    // empty batch.
+    const response = await raw('/_monitor/api/ingest', {
+      method: 'POST',
+      body: { events: [], session: 'e2e-quiet-session' },
+    })
+
+    // 204: nothing was stored, which is exactly right — a visit is a counter,
+    // not an event.
+    expect(response.status).toBe(204)
+
+    const { totals } = await $fetch<{ totals: { sessions: number } }>(
+      '/_monitor/api/dashboard',
+      { headers: { cookie } },
+    )
+
+    expect(totals.sessions).toBeGreaterThan(0)
+  })
+
   it('ignores a batch posted from another origin', async () => {
     const response = await raw('/_monitor/api/ingest', {
       method: 'POST',

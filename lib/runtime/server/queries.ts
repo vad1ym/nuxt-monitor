@@ -1224,6 +1224,32 @@ export async function trafficFacets(db: Database, windowMs: number, now = Date.n
 }
 
 /**
+ * Sessions that visited in the window, whether or not anything broke for them.
+ *
+ * The denominator client-side error counts never had. "5 sessions saw an
+ * error" is an outage out of 20 and a rounding error out of 200,000, and the
+ * dashboard could only ever count the numerator: before this, a browser spoke
+ * to the server only once something had already gone wrong.
+ *
+ * Read from `traffic_facets` under its own facet name rather than from a table
+ * of its own, because it is exactly what that table is for — a count per
+ * bucket with no identity attached. No session id is stored anywhere; the
+ * de-duplication happens in memory before the counter is incremented.
+ *
+ * Returns 0 for a database that predates this, which reads correctly as "no
+ * baseline" wherever a share is computed against it.
+ */
+export async function sessionTotal(db: Database, since: number): Promise<number> {
+  const row = await db.prepare(`
+    SELECT COALESCE(SUM(count), 0) AS total
+    FROM traffic_facets
+    WHERE bucket >= ? AND facet = 'session'
+  `).get(bucketOf(since, BUCKET_MS)) as { total: number | null }
+
+  return Number(row?.total ?? 0)
+}
+
+/**
  * The delivery log, newest first.
  *
  * Suppressed and failed attempts included, because the question this table

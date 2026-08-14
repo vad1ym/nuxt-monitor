@@ -898,6 +898,7 @@ export interface MonitorPrevious {
   issues: number
   newIssues: number
   affectedSessions: number
+  sessions: number
 }
 
 /** One release, and what happened while it was deployed. */
@@ -1042,6 +1043,15 @@ export interface MonitorDashboard {
     issues: number
     newIssues: number
     affectedSessions: number
+    /**
+     * Sessions that visited at all — what `affectedSessions` is out of.
+     *
+     * Zero on a database that predates session counting, and on one whose
+     * client collector is not running. Both read correctly as "no baseline",
+     * which is why a share against this must be withheld rather than shown as
+     * 0% when it is zero.
+     */
+    sessions: number
   }
   /**
    * The same figures for the window immediately before this one.
