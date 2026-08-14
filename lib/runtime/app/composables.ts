@@ -23,10 +23,40 @@ import {
  */
 export function useMonitor(): {
   exception: (message: string, options?: MonitorExceptionOptions) => void
+  identify: (id: string | undefined) => void
 } {
   const nuxtApp = useNuxtApp()
 
   return {
+    /**
+     * Attaches an opaque account identifier to this tab's errors.
+     *
+     * The one piece of personal data this module will hold, and only because
+     * the application chose to hand it over. Nothing here collects it: the
+     * session id everything else uses is random, per-tab and joinable to
+     * nothing, which is what keeps the default outside the definition of
+     * tracking. This is the escape hatch for the question that identity
+     * genuinely answers and anonymity cannot — *how many customers*, not how
+     * many tabs. Three affected sessions is one developer with three windows
+     * open or three people who cannot check out, and only the application
+     * knows which.
+     *
+     * Opaque on purpose. Pass an account id, not an email or a name: it lands
+     * in a database whose whole selling point is that it lives on your own
+     * disk with no processor agreement behind it, and the value only has to be
+     * stable enough to count distinct people and to find one who complained.
+     * Anything more identifying is a liability the feature does not need.
+     *
+     * `undefined` clears it, which is what a sign-out must call. Not persisted
+     * anywhere — it lives in memory for the life of the tab, so it cannot
+     * outlive the session it describes or be read back on a later visit.
+     */
+    identify(id: string | undefined): void {
+      const setter = nuxtApp.$monitorIdentify as ((value: string | undefined) => void) | undefined
+
+      setter?.(typeof id === 'string' && id.trim() ? id.trim().slice(0, 64) : undefined)
+    },
+
     exception(message: string, options: MonitorExceptionOptions = {}): void {
       // An empty message would produce an issue nobody can act on or even
       // describe — and, since the message is part of the fingerprint, every

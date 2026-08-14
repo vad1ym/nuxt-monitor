@@ -84,6 +84,11 @@ const COLUMNS: Record<ExportTable, string[]> = {
     'manual',
     'level',
     'group_name',
+    // Appended, like the ones on `issues`: a script reading this CSV by
+    // position keeps working when a column is added at the end.
+    'kind',
+    'request_id',
+    'user_id',
   ],
 }
 

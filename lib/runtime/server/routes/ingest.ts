@@ -249,6 +249,10 @@ function facetsOf(raw: unknown, agent: ParsedUserAgent, release: string): Monito
 
   return {
     session: identifier(claimed.session, MAX_SESSION),
+    // Only ever present because the application called `identify()`. Held to
+    // the same identifier shape as everything else that arrives from a browser
+    // and lands in a column.
+    user: identifier(claimed.user, MAX_SESSION),
     browser: agent.browser,
     browserVersion: agent.browserVersion,
     os: agent.os,

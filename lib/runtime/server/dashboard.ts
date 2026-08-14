@@ -184,6 +184,7 @@ async function previousTotals(
     errorRate: totals.errorRate,
     affectedSessions: totals.affectedSessions,
     sessions: totals.sessions,
+    affectedUsers: totals.affectedUsers,
   }
 }
 
@@ -208,7 +209,11 @@ async function totalsFor(
   const events = await db.prepare(`
     SELECT COUNT(*) AS events,
            COUNT(DISTINCT fingerprint) AS issues,
-           COUNT(DISTINCT session) AS sessions
+           COUNT(DISTINCT session) AS sessions,
+           -- People rather than tabs, and only for applications that chose to
+           -- say who anybody is. Zero everywhere else, which is the default
+           -- and reads correctly as "not known" beside the session count.
+           COUNT(DISTINCT user_id) AS users
     FROM events WHERE ts >= ? AND ts <= ? ${scope.sql}
   `).get(since, now, ...scope.params) as Record<string, unknown>
 
@@ -253,6 +258,7 @@ async function totalsFor(
     newIssues: Number(appeared.n ?? 0),
     affectedSessions: Number(events.sessions ?? 0),
     sessions,
+    affectedUsers: Number(events.users ?? 0),
   }
 }
 

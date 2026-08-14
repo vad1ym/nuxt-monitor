@@ -292,6 +292,9 @@ export async function migrate(db: Database, dialect: MonitorDialect = 'sqlite'):
     ['level', TYPES[dialect].key(16)],
     ['group_name', TYPES[dialect].key(64)],
     ['kind', TYPES[dialect].key(16)],
+    // An opaque account id, present only when the application called
+    // `identify()`. Nothing here collects it; see `MonitorFacets.user`.
+    ['user_id', TYPES[dialect].key(64)],
     // The correlation id, promoted out of the context JSON.
     //
     // It was always captured, and it was useless where it sat: a value inside

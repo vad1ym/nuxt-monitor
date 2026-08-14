@@ -191,7 +191,15 @@ describe('the CLI copy', () => {
  * is only as good as the way out.
  */
 describe('every stored column is exportable', () => {
-  it('exports every column the issues table actually has', async () => {
+  /**
+   * Both tables, not just `issues`.
+   *
+   * The single-table version of this test is how `kind` and `request_id` were
+   * stored on `events`, surfaced in the API and left out of every export with
+   * nothing failing — the same drift the comment above describes, in the table
+   * the test did not happen to name.
+   */
+  it.each(['issues', 'events'] as const)('exports every column the %s table actually has', async (table) => {
     const dir = mkdtempSync(join(tmpdir(), 'monitor-export-columns-'))
     const store = await MonitorStore.open({
       dir,
@@ -203,9 +211,9 @@ describe('every stored column is exportable', () => {
 
     const stored = (await (store as unknown as { db: {
       prepare: (sql: string) => { all: () => Promise<{ name: string }[]> }
-    } }).db.prepare('PRAGMA table_info(issues)').all()).map(column => column.name)
+    } }).db.prepare(`PRAGMA table_info(${table})`).all()).map(column => column.name)
 
-    const exported = new Set(csvHeader('issues').trim().split(','))
+    const exported = new Set(csvHeader(table).trim().split(','))
 
     // Alerting bookkeeping is deliberately internal: a cooldown timestamp says
     // nothing about the error and everything about this module's own state.

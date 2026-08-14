@@ -57,9 +57,29 @@ digest identifies its subject exactly as well as the address did. Every "how
 many people" question on the dashboard is answered by the per-tab session id
 instead, which is random and identifies nobody.
 
-**User identity.** No user id, no email, no account, and no way to attach one —
-a `setUser(email)` field would turn a local debugging tool into a personal data
-store you have obligations about.
+**User identity, unless you ask for it.** Nothing here collects an identity on
+its own: there is no user id, no email and no account on any event by default,
+and no way for one to appear by accident.
+
+There is one deliberate escape hatch, `identify()`, because anonymity cannot
+answer the question that decides priority — three affected sessions is one
+developer with three tabs open or three customers who cannot check out. It is
+opt-in, off until you call it, and what you pass should be an **opaque account
+id**, never an email or a name:
+
+```ts
+const { identify } = useMonitor()
+
+identify(user.value?.id)   // on sign-in
+identify(undefined)        // on sign-out
+```
+
+Calling it changes what this tool is. The value lands in a database on your own
+disk with no processor agreement behind it, so pass the least identifying thing
+that still counts distinct people, and treat the database as holding personal
+data from then on. It is held in memory for the life of the tab and never
+persisted in the browser, so it cannot outlive the session it describes or be
+read back on a later visit.
 
 **Session ids that mean anything.** The `session` facet is random, per browser
 tab, kept in `sessionStorage`. It separates "250 errors, 3 sessions" from "250

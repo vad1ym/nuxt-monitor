@@ -781,6 +781,17 @@ export interface MonitorFacets {
   deviceType?: string
   /** Application version, from `monitor.release`. */
   release?: string
+  /**
+   * An opaque account id, only ever present because the application called
+   * `useMonitor().identify()`.
+   *
+   * The one field here that is personal, and the only one nothing in this
+   * module collects on its own. It exists because anonymity cannot answer the
+   * question that decides priority: three affected sessions is one developer
+   * with three tabs open or three customers who cannot check out, and no
+   * amount of random session ids can tell those apart.
+   */
+  user?: string
 }
 
 /** The facet dimensions that can be counted and filtered on. */
@@ -899,6 +910,7 @@ export interface MonitorPrevious {
   newIssues: number
   affectedSessions: number
   sessions: number
+  affectedUsers: number
 }
 
 /**
@@ -1081,6 +1093,16 @@ export interface MonitorDashboard {
      * 0% when it is zero.
      */
     sessions: number
+    /**
+     * Distinct people, for applications that call `identify()`.
+     *
+     * Zero everywhere else, and that zero is the default rather than a
+     * failure — nothing here collects an identity on its own. Where it is
+     * present it answers the question sessions cannot: three affected
+     * sessions is one developer with three tabs or three customers who
+     * cannot check out.
+     */
+    affectedUsers: number
   }
   /**
    * The same figures for the window immediately before this one.

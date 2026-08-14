@@ -56,6 +56,16 @@ export default defineNuxtPlugin({
      */
     let lastFailedRequestId: string | undefined
 
+    /**
+     * An opaque account id, if the application chose to supply one.
+     *
+     * Nothing here collects it — see `identify()` in the composable. Held in a
+     * variable rather than in storage so it dies with the tab and cannot be
+     * read back on a later visit, which keeps it a label on this session
+     * rather than a way to recognise somebody across them.
+     */
+    let userId: string | undefined
+
     const queue = new EventQueue({
       send: events => post(endpoint, events, sessionId()),
     })
@@ -101,7 +111,7 @@ export default defineNuxtPlugin({
         // Browser and OS are not sent from here: the request carries a
         // `User-Agent` header anyway, and parsing it on the server keeps the
         // parser — and its size — out of the application bundle.
-        normalized.facets = { session: sessionId(), release }
+        normalized.facets = { session: sessionId(), release, user: userId }
         queue.add(normalized)
       }
     }
@@ -277,8 +287,19 @@ export default defineNuxtPlugin({
          * particular exists to survive a loop — a loop calling `exception()`
          * is no less a loop.
          */
+        /**
+         * Sets or clears the opaque account id for this tab.
+         *
+         * Lives here rather than in the composable because this is where the
+         * events are assembled — a value the composable held would have to be
+         * read across a module boundary on every capture.
+         */
+        monitorIdentify: (id: string | undefined): void => {
+          userId = id
+        },
+
         monitorReport: (event: ClientEvent): void => {
-          event.facets = { session: sessionId(), release }
+          event.facets = { session: sessionId(), release, user: userId }
           event.breadcrumbs ??= breadcrumbs.slice()
           queue.add(event)
         },

@@ -179,7 +179,7 @@ export class DisabledStore implements Pick<
   async dashboard(): Promise<MonitorDashboard> {
     return {
       windowMs: 0,
-      totals: { requests: 0, failed: 0, events: 0, issues: 0, newIssues: 0, affectedSessions: 0, sessions: 0 },
+      totals: { requests: 0, failed: 0, events: 0, issues: 0, newIssues: 0, affectedSessions: 0, sessions: 0, affectedUsers: 0 },
       latency: { requests: 0, routes: [] },
       trend: [],
       breakdowns: [],

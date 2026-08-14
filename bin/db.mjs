@@ -145,6 +145,9 @@ export const EXPORT_COLUMNS = {
     'manual',
     'level',
     'group_name',
+    'kind',
+    'request_id',
+    'user_id',
   ],
 }
 

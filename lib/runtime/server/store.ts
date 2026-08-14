@@ -926,9 +926,9 @@ export class MonitorStore {
       INSERT INTO events (
         fingerprint, ts, stack, context, breadcrumbs, tags, message,
         session, browser, browser_version, os, os_version, device_type, \`release\`, route,
-        manual, level, group_name, kind, request_id
+        manual, level, group_name, kind, request_id, user_id
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
 
     await this.db.exec('BEGIN')
@@ -983,6 +983,7 @@ export class MonitorStore {
           // renders, the column is what a search and a join can reach, and
           // dropping either would break one of the two.
           typeof context.requestId === 'string' ? context.requestId.slice(0, 200) : null,
+          facets.user ?? null,
         )
       }
 

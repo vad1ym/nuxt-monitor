@@ -522,8 +522,18 @@ onMounted(load)
                  bare count where no baseline exists — an app without the
                  client collector running, or a database older than it —
                  because "5 of 0" would be worse than saying less. -->
-            {{ formatCount(totals!.affectedSessions) }}
-            {{ hasSessionBaseline ? `of ${formatCount(totals!.sessions)} sessions` : 'sessions affected' }}
+            <!-- People when the application says who anybody is, tabs
+                 otherwise. `identify()` is opt-in and off by default, so this
+                 falls back rather than showing a zero that would read as
+                 "nobody affected". -->
+            <template v-if="totals!.affectedUsers">
+              {{ formatCount(totals!.affectedUsers) }}
+              {{ totals!.affectedUsers === 1 ? 'person affected' : 'people affected' }}
+            </template>
+            <template v-else>
+              {{ formatCount(totals!.affectedSessions) }}
+              {{ hasSessionBaseline ? `of ${formatCount(totals!.sessions)} sessions` : 'sessions affected' }}
+            </template>
           </p>
         </div>
       </div>
