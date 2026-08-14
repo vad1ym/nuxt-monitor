@@ -1,5 +1,6 @@
 import type { Database } from 'db0'
 import type { MonitorUptimeDay, MonitorUptimeSummary } from '../../types'
+import { isFailedClass } from '../shared/route'
 
 /**
  * Was the day calm?
@@ -104,9 +105,11 @@ export async function uptime(db: Database, options: UptimeOptions = {}): Promise
 
     entry.requests += count
 
-    // 5xx only. A 404 is a client asking for something absent, which says
-    // nothing about whether the application was working.
-    if (row.class === '5xx') {
+    // The same definition of "failed" the error rate uses, from one place.
+    // A 404 or a 429 is not counted — those are written under their own class
+    // precisely so they can be excluded here without losing the request from
+    // the denominator.
+    if (isFailedClass(String(row.class))) {
       entry.failed += count
     }
   }

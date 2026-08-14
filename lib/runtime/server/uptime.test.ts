@@ -140,14 +140,28 @@ describe('a bad day', () => {
     expect(await stateOf(yesterday)).toBe('bad')
   })
 
-  it('does not count 4xx against the application', async () => {
-    // A 404 is a client asking for something absent.
+  it('does not count 404s and rate limits against the application', async () => {
+    // Written under their own class precisely so a day of scanner traffic
+    // cannot look like an outage.
     const yesterday = today() - DAY
 
     await serve(yesterday, '2xx', 500)
-    await serve(yesterday, '4xx', 500)
+    await serve(yesterday, 'excused', 500)
 
     expect(await stateOf(yesterday)).toBe('calm')
+  })
+
+  it('counts the rest of the 4xx range as failures', async () => {
+    // The other half of the same rule: a backend that answers 400 or 422 for
+    // its own frontend's impossible request is failing, and a day of that is
+    // not a calm day just because the status did not start with a 5.
+    const yesterday = today() - DAY
+
+    await serve(yesterday, '2xx', 700)
+    await serve(yesterday, '4xx', 300)
+    await issue(yesterday)
+
+    expect(await stateOf(yesterday)).toBe('bad')
   })
 })
 

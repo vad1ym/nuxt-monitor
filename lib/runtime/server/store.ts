@@ -37,7 +37,7 @@ import { scrubSecrets } from '../shared/scrub'
 import type { CompiledGroup } from '../shared/groups'
 import { compileGroups, findGroup, groupFor } from '../shared/groups'
 import { fingerprint } from '../shared/fingerprint'
-import { bucketOf, normalizeRoute, statusClass } from '../shared/route'
+import { FAILED_SUM, bucketOf, countedClass, normalizeRoute } from '../shared/route'
 import { culpritOf, toIssue } from './rows'
 import * as queries from './queries'
 import { BUCKET_MS, migrate } from './schema'
@@ -476,7 +476,7 @@ export class MonitorStore {
       bucketOf(at, BUCKET_MS),
       normalizeRoute(route),
       method.toUpperCase().slice(0, 10),
-      statusClass(status),
+      countedClass(status),
     ].join(KEY_SEPARATOR)
 
     this.counters.set(key, (this.counters.get(key) ?? 0) + 1)
@@ -1186,7 +1186,7 @@ export class MonitorStore {
     const counts = await this.db.prepare(`
       SELECT
         COALESCE(SUM(count), 0)                                     AS total,
-        COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0)     AS failed
+        ${FAILED_SUM} AS failed
       FROM request_stats WHERE bucket >= ?
     `).get(since) as { total: number | null, failed: number | null }
 

@@ -20,9 +20,11 @@ import type {
 } from '../../types'
 import { FACET_NAMES, facetClause, facetColumn } from './facets'
 import { escapeLike, parseJson, toFacets, toIssue } from './rows'
-import { bucketOf } from '../shared/route'
+import { FAILED_SUM, bucketOf, isFailedClass } from '../shared/route'
 import { BUCKET_MS } from './schema'
 import { changesOf } from './db'
+
+const HOUR_MS = 60 * 60 * 1_000
 
 /**
  * Reads.
@@ -736,7 +738,7 @@ export async function routes(db: Database, since: number, limit = 100): Promise<
     SELECT
       route,
       SUM(count)                                              AS total,
-      COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0) AS failed
+      ${FAILED_SUM} AS failed
     FROM request_stats
     WHERE bucket >= ?
     GROUP BY route
@@ -837,7 +839,7 @@ export async function traffic(db: Database, windowMs: number, now = Date.now()):
     SELECT
       CAST(bucket / ? AS INTEGER) * ?                          AS slot,
       SUM(count)                                              AS total,
-      COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0) AS failed
+      ${FAILED_SUM} AS failed
     FROM request_stats
     WHERE bucket >= ?
     -- Repeated rather than aliased: Postgres resolves GROUP BY before the
@@ -853,7 +855,8 @@ export async function traffic(db: Database, windowMs: number, now = Date.now()):
   }
 
   const total = Object.values(classes).reduce((sum, count) => sum + count, 0)
-  const failed = classes['5xx'] ?? 0
+  const failed = Object.entries(classes)
+    .reduce((sum, [name, count]) => isFailedClass(name) ? sum + count : sum, 0)
 
   return {
     total,
@@ -953,7 +956,7 @@ export async function overview(db: Database, windowMs = 24 * 60 * 60 * 1_000, no
   const requests = await db.prepare(`
     SELECT
       COALESCE(SUM(count), 0) AS total,
-      COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0) AS failed
+      ${FAILED_SUM} AS failed
     FROM request_stats
     WHERE bucket >= ?
   `).get(sinceBucket) as Record<string, number>
@@ -979,14 +982,14 @@ export async function overview(db: Database, windowMs = 24 * 60 * 60 * 1_000, no
     SELECT
       route,
       SUM(count) AS total,
-      COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0) AS failed
+      ${FAILED_SUM} AS failed
     FROM request_stats
     WHERE bucket >= ?
     GROUP BY route
     -- Repeated rather than referring to the alias: Postgres resolves HAVING
     -- before the select list, so an alias there is an unknown column. ORDER BY
     -- does see aliases, in every engine, so that one stays short.
-    HAVING COALESCE(SUM(CASE WHEN class = '5xx' THEN count END), 0) > 0
+    HAVING ${FAILED_SUM} > 0
     ORDER BY failed DESC
     LIMIT 5
   `).all(sinceBucket) as Record<string, number | string>[]
@@ -1165,8 +1168,6 @@ export async function heatmap(db: Database, since: number): Promise<MonitorHeatC
     .map(([at, count]) => ({ at, count }))
     .sort((a, b) => a.at - b.at)
 }
-
-const HOUR_MS = 60 * 60 * 1_000
 
 /**
  * What the traffic looked like, as facet shares.

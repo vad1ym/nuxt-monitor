@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { bucketOf, isAssetPath, normalizeRoute, routeKind, statusClass } from './route'
+import { FAILED_SUM, bucketOf, countedClass, isAssetPath, isFailedClass, normalizeRoute, routeKind, statusClass } from './route'
 
 describe('normalizeRoute', () => {
   it('collapses numeric ids so one endpoint is one row', () => {
@@ -169,5 +169,52 @@ describe('routeKind', () => {
   it('does not let the header override an obvious endpoint', () => {
     // A browser navigating straight to an API URL is still an API failure.
     expect(routeKind('/api/orders', 'text/html')).toBe('api')
+  })
+})
+
+describe('what counts as a failure', () => {
+  it('counts the 4xx range, not only 5xx', () => {
+    // The rule the whole module was changed for: backends do not follow the
+    // conventions, and a 422 answered to a page's own `$fetch` is a bug on
+    // the page. Counting only 5xx made the issue list show it as a problem
+    // while the error rate beside it read 0%.
+    expect(isFailedClass('5xx')).toBe(true)
+    expect(isFailedClass('4xx')).toBe(true)
+    expect(isFailedClass('2xx')).toBe(false)
+    expect(isFailedClass('3xx')).toBe(false)
+  })
+
+  it('does not count the excused statuses', () => {
+    // A 404 is a stale link or a scanner, a 429 is the rate limiter working.
+    // Neither is recorded as an issue, so counting them here would make the
+    // rate disagree with the list it sits above.
+    expect(countedClass(404)).toBe('excused')
+    expect(countedClass(429)).toBe('excused')
+    expect(isFailedClass('excused')).toBe(false)
+  })
+
+  it('keeps the rest of the 4xx range apart from the excused ones', () => {
+    // Why this happens at write time: the counter table stores the class and
+    // not the status, so once a 404 and a 422 are both `4xx` in one row no
+    // read-time query can separate them again.
+    expect(countedClass(422)).toBe('4xx')
+    expect(countedClass(400)).toBe('4xx')
+    expect(countedClass(500)).toBe('5xx')
+    expect(countedClass(200)).toBe('2xx')
+  })
+
+  it('excludes a status outside the valid range', () => {
+    // `unknown` is a bookkeeping artefact, not a response anybody received.
+    expect(countedClass(0)).toBe('unknown')
+    expect(isFailedClass('unknown')).toBe(false)
+  })
+
+  it('names every failing class in the SQL fragment', () => {
+    // The fragment is interpolated into SELECT lists and HAVING clauses, so a
+    // drift between it and `isFailedClass` would show up as two numbers on
+    // one screen disagreeing rather than as an error.
+    expect(FAILED_SUM).toContain("'4xx'")
+    expect(FAILED_SUM).toContain("'5xx'")
+    expect(FAILED_SUM).not.toContain("'excused'")
   })
 })

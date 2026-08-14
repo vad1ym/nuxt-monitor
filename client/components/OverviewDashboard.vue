@@ -369,7 +369,11 @@ onMounted(load)
             {{ formatCount(totals!.requests) }}
           </p>
           <p class="text-xs text-dimmed">
-            {{ active.length ? 'not filtered' : `${formatCount(totals!.failed)} answered 5xx` }}
+            <!-- "failed", not "answered 5xx": the rate counts the 4xx range
+                 too, since a backend answering 422 to its own frontend is a
+                 fault. Naming one class here would describe a smaller number
+                 than the one shown. -->
+            {{ active.length ? 'not filtered' : `${formatCount(totals!.failed)} failed` }}
           </p>
         </div>
 

@@ -1734,18 +1734,24 @@ describe('sorting the issue list', () => {
 })
 
 describe('traffic', () => {
-  it('separates the caller\'s mistakes from the application\'s faults', async () => {
+  it('counts a 4xx as a failure, but not a 404', async () => {
     store.countRequest('/api/x', 'GET', 200)
     store.countRequest('/api/x', 'GET', 500)
-    store.countRequest('/api/y', 'POST', 404)
+    // The case the old rule hid: a page's own `$fetch` sending something the
+    // API rejects is a bug on the page, whatever the status says.
+    store.countRequest('/api/x', 'POST', 422)
+    store.countRequest('/api/y', 'GET', 404)
+    store.countRequest('/api/y', 'GET', 429)
     await store.flush()
 
     const traffic = await store.traffic(60 * 60 * 1_000)
 
-    expect(traffic.total).toBe(3)
-    // 4xx is somebody else's problem and must not count as a failure.
-    expect(traffic.failed).toBe(1)
-    expect(traffic.classes).toMatchObject({ '2xx': 1, '4xx': 1, '5xx': 1 })
+    // Everything served, including the excused ones: they were answered
+    // correctly, so removing them would shrink the denominator and inflate
+    // the very rate this is meant to keep honest.
+    expect(traffic.total).toBe(5)
+    expect(traffic.failed).toBe(2)
+    expect(traffic.classes).toMatchObject({ '2xx': 1, '4xx': 1, '5xx': 1, excused: 2 })
   })
 
   it('reports the methods a route was called with', async () => {

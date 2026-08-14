@@ -878,7 +878,13 @@ export interface MonitorRouteStat {
   rate: number
   /** Methods seen on this route, busiest first — `GET`, `POST`, … */
   methods?: string[]
-  /** Requests per status class, keyed `2xx` / `3xx` / `4xx` / `5xx`. */
+  /**
+   * Requests per status class, keyed `2xx` / `3xx` / `4xx` / `5xx`, plus
+   * `excused` for the statuses that are counted but never treated as failures
+   * — `404` and `429`. They are kept apart at write time because this table
+   * stores the class and not the status, so once they joined `4xx` no query
+   * could separate them again.
+   */
   classes?: Record<string, number>
 }
 

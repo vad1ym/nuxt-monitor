@@ -163,6 +163,80 @@ export function statusClass(status: number): string {
   return `${Math.floor(status / 100)}xx`
 }
 
+/**
+ * Which status classes count as the application failing.
+ *
+ * `4xx` is in the list, and that is the whole point of the list existing.
+ * Backends do not follow the conventions: plenty answer 400 or 422 for "your
+ * own frontend sent something impossible", which is a bug on the page, not a
+ * caller mistake — the same reasoning that put the 4xx range back into
+ * `ignore.ts`. Counting only 5xx meant the issue list showed a 422 as a
+ * problem while the error rate beside it read 0%, two numbers on one screen
+ * disagreeing about whether anything was wrong.
+ *
+ * `unknown` is excluded: it is a status outside 100–599, which is a
+ * bookkeeping artefact rather than a response anybody received.
+ */
+export const FAILED_CLASSES = ['4xx', '5xx']
+
+/**
+ * The counted statuses that are *not* the application's fault.
+ *
+ * Mirrors `ignore.ts`'s defaults, and for the same reasons: a 404 is a stale
+ * link or a scanner, a 429 is the rate limiter doing its job. Neither is
+ * recorded as an issue, so counting them as failures would make the rate
+ * disagree with the list it sits above — the exact fault this is fixing.
+ */
+export const EXCUSED_STATUSES = [404, 429]
+
+/**
+ * The class a request is counted under.
+ *
+ * Excused statuses get a class of their own instead of joining `4xx`, because
+ * the counter table stores the class and not the status — once a 404 and a 422
+ * are both `4xx` in the same row, no read-time query can tell them apart
+ * again, and now that 4xx counts as a failure that difference is the whole
+ * question. Bucketing them apart at write time is the only place the
+ * information still exists.
+ *
+ * A named class rather than dropping the row: these still belong in the
+ * denominator. A 404 is a request the application served, and served
+ * correctly; deleting it would shrink the total and inflate the very rate this
+ * is meant to keep honest.
+ *
+ * Rows written before this change keep counting excused statuses as `4xx`, so
+ * a database that predates it reads slightly pessimistically for one retention
+ * window and then corrects itself. Not migrated: rewriting historical counters
+ * to a definition they were not recorded under is a worse lie than a week of
+ * knowing they are approximate.
+ */
+export function countedClass(status: number): string {
+  return EXCUSED_STATUSES.includes(status) ? 'excused' : statusClass(status)
+}
+
+/**
+ * SQL summing the requests that failed, for a query grouping `request_stats`.
+ *
+ * A fragment rather than eight copies of `CASE WHEN class = '5xx'`. There were
+ * eight, spread over the overview, the route table, the traffic page, the
+ * uptime strip and the alert trigger, and they are why the definition could
+ * drift in the first place: changing what "failed" means is one edit here or
+ * eight edits done consistently, and the second kind never stays consistent.
+ *
+ * Literal rather than parameterised because it is interpolated into `SELECT`
+ * lists and `HAVING` clauses where placeholders would have to be threaded
+ * through every caller's bind list in the right order. The values are
+ * module-level constants, never user input.
+ */
+export const FAILED_SUM = `COALESCE(SUM(CASE WHEN class IN (${
+  FAILED_CLASSES.map(name => `'${name}'`).join(', ')
+}) THEN count END), 0)`
+
+/** Whether a status class is one the rate treats as a failure. */
+export function isFailedClass(value: string): boolean {
+  return FAILED_CLASSES.includes(value)
+}
+
 /** Start of the bucket a timestamp belongs to. */
 export function bucketOf(timestamp: number, bucketMs: number): number {
   return Math.floor(timestamp / bucketMs) * bucketMs

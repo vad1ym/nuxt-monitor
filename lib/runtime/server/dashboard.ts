@@ -10,7 +10,7 @@ import type {
 } from '../../types'
 import { facetClause, facetColumn } from './facets'
 import { BUCKET_MS } from './schema'
-import { bucketOf } from '../shared/route'
+import { bucketOf, isFailedClass } from '../shared/route'
 import * as queries from './queries'
 
 /**
@@ -158,7 +158,7 @@ async function totalsFor(
 
     served += count
 
-    if (row.class === '5xx') {
+    if (isFailedClass(String(row.class))) {
       failed += count
     }
   }
@@ -232,7 +232,7 @@ async function trendFor(
 
     slot.requests += count
 
-    if (row.class === '5xx') {
+    if (isFailedClass(String(row.class))) {
       slot.failed += count
     }
   }
