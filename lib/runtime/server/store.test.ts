@@ -1795,3 +1795,95 @@ describe('which releases an issue spans', () => {
     expect(await store.issueReleases(fp)).toBeUndefined()
   })
 })
+
+/**
+ * The name an issue carries in the list.
+ *
+ * Resolution is injected and runs after the write commits — never inside it,
+ * where parsing a map would hold a write lock across disk reads. What is worth
+ * testing is that the better name actually replaces the raw-stack guess, and
+ * that it costs one resolve per issue rather than one per occurrence.
+ */
+describe('resolving the culprit on write', () => {
+  let calls: string[]
+  let resolved: MonitorStore
+
+  beforeEach(async () => {
+    calls = []
+    resolved = await MonitorStore.open({
+      dir: mkdtempSync(join(tmpdir(), 'monitor-culprit-')),
+      retentionDays: 14,
+      maxEventsPerIssue: 5,
+      flushSize: 1_000,
+      flushInterval: 60_000,
+      resolveCulprit: async (stack) => {
+        calls.push(stack ?? '')
+        return 'server/api/orders.ts:5'
+      },
+    })
+  })
+
+  afterEach(async () => {
+    await resolved.close()
+  })
+
+  it('replaces the built-file guess with the source location', async () => {
+    resolved.capture(makeEvent())
+    await resolved.flush()
+
+    const issue = (await resolved.listIssues()).issues[0]!
+
+    expect(issue.culprit).toBe('server/api/orders.ts:5')
+  })
+
+  it('resolves once per issue, not once per occurrence', async () => {
+    // Re-parsing a map for every event would make a flush cost grow with the
+    // size of the burst it exists to absorb.
+    for (let i = 0; i < 5; i++) {
+      resolved.capture(makeEvent())
+    }
+
+    await resolved.flush()
+
+    expect(calls).toHaveLength(1)
+  })
+
+  it('leaves the stored name alone when nothing resolves', async () => {
+    // No map for this frame. The raw-stack guess is worse, but it is what
+    // there is, and blanking it would trade a poor name for none.
+    const store = await MonitorStore.open({
+      dir: mkdtempSync(join(tmpdir(), 'monitor-culprit-none-')),
+      retentionDays: 14,
+      maxEventsPerIssue: 5,
+      flushSize: 1_000,
+      flushInterval: 60_000,
+      resolveCulprit: async () => undefined,
+    })
+
+    store.capture(makeEvent())
+    await store.flush()
+
+    const issue = (await store.listIssues()).issues[0]!
+
+    expect(issue.culprit).toBe('api/x.ts:3')
+    await store.close()
+  })
+
+  it('does not fail the flush when resolution throws', async () => {
+    // A name is downstream of collection. The events are written either way.
+    const store = await MonitorStore.open({
+      dir: mkdtempSync(join(tmpdir(), 'monitor-culprit-throw-')),
+      retentionDays: 14,
+      maxEventsPerIssue: 5,
+      flushSize: 1_000,
+      flushInterval: 60_000,
+      resolveCulprit: async () => { throw new Error('no maps here') },
+    })
+
+    store.capture(makeEvent())
+    await expect(store.flush()).resolves.toBeUndefined()
+
+    expect((await store.listIssues()).issues).toHaveLength(1)
+    await store.close()
+  })
+})

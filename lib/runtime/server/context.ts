@@ -11,6 +11,8 @@ import type {
 } from '../../types'
 import type { ParsedUserAgent } from '../shared/user-agent'
 import { DisabledStore } from './disabled-store'
+import { culpritOfFrames } from './rows'
+import { SourcemapResolver } from './sourcemap'
 import { MonitorStore } from './store'
 import type { ResolvedAuth } from './session'
 import { hasValidSession, resolveAuth } from './session'
@@ -93,6 +95,42 @@ export async function useMonitorStore(): Promise<MonitorCollector> {
   return store
 }
 
+/**
+ * One resolver per process, built on first use.
+ *
+ * Held here rather than passed in because it caches parsed maps, which is the
+ * whole cost of resolution — a fresh one per flush would re-read and re-parse
+ * every map for every batch.
+ */
+let culpritResolver: SourcemapResolver | undefined
+
+/**
+ * The source location for an issue's name, resolved from the maps on disk.
+ *
+ * Kept out of the store so that stays storage-only, and out of the request
+ * path so a flush never blocks a response. Failure is silent by design: the
+ * name is a convenience, the raw-stack guess is already stored, and the issue
+ * page resolves the stack again when somebody opens it.
+ */
+async function culpritFromMaps(
+  config: MonitorRuntimeConfig,
+  stack: string | undefined,
+  options: { trusted: boolean, release?: string },
+): Promise<string | undefined> {
+  culpritResolver ??= new SourcemapResolver({
+    mapsDir: config.mapsDir,
+    serverDir: config.serverDir,
+    archiveDir: config.archiveDir,
+    baseURL: config.baseURL,
+    cdnURL: config.cdnURL,
+    dev: import.meta.dev,
+  })
+
+  const frames = await culpritResolver.resolveStackAsync(stack, options)
+
+  return culpritOfFrames(frames)
+}
+
 async function openStore(): Promise<MonitorCollector> {
   const config = monitorConfig()
 
@@ -110,6 +148,7 @@ async function openStore(): Promise<MonitorCollector> {
       notifications: config.notifications,
       sampling: config.sampling,
       groups: config.groups,
+      resolveCulprit: (stack, options) => culpritFromMaps(config, stack, options),
     })
   }
   catch (error) {

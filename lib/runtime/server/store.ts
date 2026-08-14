@@ -63,6 +63,23 @@ export interface StoreOptions {
   sampling?: SamplingOptions
   /** Rules that name parts of the application. */
   groups?: MonitorGroupOptions
+  /**
+   * Turns a stack into the source location to show in the list.
+   *
+   * Injected rather than imported so the store stays storage-only: resolution
+   * reads sourcemaps off disk, and a store that owns a filesystem dependency
+   * cannot be opened by the CLI or pointed at an external database without
+   * dragging one along.
+   *
+   * Called **after** the write transaction commits, never inside it. Parsing a
+   * map is the expensive part of this module, and doing it between BEGIN and
+   * COMMIT would hold a write lock open across disk reads — during an error
+   * storm, which is exactly when the buffer is fullest.
+   */
+  resolveCulprit?: (
+    stack: string | undefined,
+    options: { trusted: boolean, release?: string },
+  ) => Promise<string | undefined>
   /** Events buffered before an early flush. */
   flushSize?: number
   /** Milliseconds between periodic flushes. */
@@ -751,6 +768,17 @@ export class MonitorStore {
     // That is how a spike of fifty came out as two.
     await this.drainSampled()
 
+    // Also after the commit, and for the same reason as the two around it: the
+    // row has to exist before an UPDATE can name it.
+    try {
+      await this.resolveCulprits(batch)
+    }
+    catch (error) {
+      // A name is a convenience; the events are written either way, and the
+      // issue page resolves the stack again when somebody opens it.
+      console.error('[monitor] failed to resolve culprits', error)
+    }
+
     // After the commit, never before: an alert about an issue that a rolled-back
     // transaction did not write points at a fingerprint the dashboard does not
     // have, and the link in the message leads to a 404.
@@ -774,6 +802,59 @@ export class MonitorStore {
       // The events are safely written; only the cap was not applied. Retention
       // and the next flush will both try again.
       console.error('[monitor] failed to trim events', error)
+    }
+  }
+
+  /**
+   * Replaces the built-file guess with the source location, once per issue.
+   *
+   * The list is where a person decides what to open, and `dev/index.mjs:8484`
+   * is not a decision anybody can make. Until now the better name appeared
+   * only after somebody opened the issue — so a new issue looked worst exactly
+   * when it was seen first, and searching for `server/api/orders.ts` did not
+   * find it until an unrelated visit had happened.
+   *
+   * Only for fingerprints new to this batch, and only when the stored name
+   * still looks unresolved. A repeat occurrence of a known issue has nothing
+   * to add: the name is already right, and re-parsing a map per event would
+   * turn a cheap flush into a proportional one.
+   */
+  private async resolveCulprits(batch: (MonitorEvent & { fingerprint: string })[]): Promise<void> {
+    const resolve = this.options.resolveCulprit
+
+    if (!resolve) {
+      return
+    }
+
+    // One event per fingerprint — the first, which is the one whose stack the
+    // issue's name should come from.
+    const first = new Map<string, MonitorEvent & { fingerprint: string }>()
+
+    for (const event of batch) {
+      if (!first.has(event.fingerprint)) {
+        first.set(event.fingerprint, event)
+      }
+    }
+
+    for (const [fingerprint, event] of first) {
+      const culprit = await resolve(event.stack, {
+        // Client stacks arrive through unauthenticated ingest, so the file
+        // they name is the sender's choice: they may only resolve against
+        // published build assets, never an arbitrary path on disk.
+        trusted: event.side === 'server',
+        release: event.facets?.release,
+      })
+
+      if (!culprit) {
+        continue
+      }
+
+      // `COALESCE` is wrong here: the stored value is the raw-stack guess, and
+      // the whole point is to overwrite it. Guarded on inequality instead, so
+      // an unchanged name costs no write.
+      await this.db
+        .prepare('UPDATE issues SET culprit = ? WHERE fingerprint = ? AND (culprit IS NULL OR culprit != ?)')
+        .run(culprit, fingerprint, culprit)
     }
   }
 
