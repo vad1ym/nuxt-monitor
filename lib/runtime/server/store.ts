@@ -193,6 +193,18 @@ export class MonitorStore {
   private readonly groups: CompiledGroup[]
   /** When the application-wide rate alert last fired. See `raiseErrorRate`. */
   private rateAlertedAt = 0
+  /**
+   * Fingerprints somebody has marked as not worth attention.
+   *
+   * In memory because `capture` is synchronous by design — it runs on the
+   * request path and may not touch the database — so the flag has to be
+   * readable without a query. Refreshed on every flush, which means a newly
+   * ignored issue keeps being stored for at most one flush interval. That is
+   * the right trade: the alternative is a read per captured event.
+   */
+  private ignored = new Set<string>()
+  /** Occurrences of ignored issues, counted but not stored. Drained per flush. */
+  private ignoredCounts = new Map<string, number>()
 
   /**
    * Opens a store, ready to use.
@@ -351,6 +363,22 @@ export class MonitorStore {
     // belong in the hash — there it is a statement by the author that two
     // reports are different concerns.
     const fp = fingerprint(event)
+
+    /**
+     * Ignoring an issue stops storing it, not just alerting about it.
+     *
+     * "Not worth attention" was previously a statement about the list only:
+     * every occurrence still cost a buffer slot, a row and its share of the
+     * byte ceiling, and an issue is ignored precisely *because* it is noisy —
+     * so the loudest thing in the database was the thing nobody wanted. The
+     * count still advances, through the same path sampling uses, because "we
+     * stopped looking" and "it stopped happening" must not look identical.
+     */
+    if (this.ignored.has(fp)) {
+      this.ignoredCounts.set(fp, (this.ignoredCounts.get(fp) ?? 0) + 1)
+      return fp
+    }
+
     const labelled = this.label(event)
 
     // Admission control, before the event is copied into the buffer. A route
@@ -637,6 +665,14 @@ export class MonitorStore {
   private async runFlush(): Promise<void> {
     await this.flushCounters()
 
+    // Before the early return below, because an ignored issue puts nothing in
+    // the buffer: its occurrences would otherwise never be attributed, and the
+    // list would show a noisy issue frozen at the count it had when somebody
+    // silenced it — which reads as "it stopped", the one conclusion this must
+    // not invite.
+    await this.drainIgnored()
+    await this.refreshIgnored()
+
     if (this.closed || this.buffer.length === 0) {
       // Still drained: a spike that is entirely sampled out after its burst
       // puts nothing in the buffer, and attributing the skipped occurrences
@@ -814,6 +850,48 @@ export class MonitorStore {
       // and the next flush will both try again.
       console.error('[monitor] failed to trim events', error)
     }
+  }
+
+  /**
+   * Adds up the occurrences of ignored issues without storing any of them.
+   *
+   * The same bargain sampling makes, for the same reason: an issue may stop
+   * being *stored* but must never stop being *counted*. "Ignored, 12
+   * occurrences" three weeks after somebody silenced a route that has failed
+   * forty thousand times since would be a lie the list told quietly, and
+   * un-ignoring it would appear to resurrect a dead issue.
+   *
+   * `last_seen` moves too, so the row still says when it last happened.
+   */
+  private async drainIgnored(): Promise<void> {
+    if (!this.ignoredCounts.size) {
+      return
+    }
+
+    const owed = [...this.ignoredCounts]
+    this.ignoredCounts.clear()
+
+    const now = Date.now()
+
+    for (const [fp, count] of owed) {
+      await this.db
+        .prepare('UPDATE issues SET count = count + ?, last_seen = ? WHERE fingerprint = ?')
+        .run(count, now, fp)
+    }
+  }
+
+  /**
+   * Re-reads which issues are ignored, so `capture` can check without a query.
+   *
+   * Bounded by the same ceiling as the issue table, and in practice tiny: this
+   * is the set somebody has explicitly clicked away, not every issue.
+   */
+  private async refreshIgnored(): Promise<void> {
+    const rows = await this.db
+      .prepare('SELECT fingerprint FROM issues WHERE ignored = 1')
+      .all() as { fingerprint: string }[]
+
+    this.ignored = new Set(rows.map(row => String(row.fingerprint)))
   }
 
   /**
@@ -1609,7 +1687,20 @@ export class MonitorStore {
   }
 
   async setIgnored(fp: string, ignored: boolean): Promise<boolean> {
-    return queries.setIgnored(this.db, fp, ignored)
+    const result = await queries.setIgnored(this.db, fp, ignored)
+
+    // Applied to the in-memory set now rather than at the next flush. Both
+    // directions matter and the second one more: somebody who un-ignores an
+    // issue is about to watch for it, and a minute of continued silence looks
+    // exactly like the button not working.
+    if (ignored) {
+      this.ignored.add(fp)
+    }
+    else {
+      this.ignored.delete(fp)
+    }
+
+    return result
   }
 
   async close(): Promise<void> {

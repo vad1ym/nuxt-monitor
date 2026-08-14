@@ -1948,3 +1948,105 @@ describe('share of affected sessions', () => {
     expect(await store.sessionShare(fp)).toEqual({ affected: 1, total: 1 })
   })
 })
+
+/**
+ * What ignoring an issue actually does.
+ *
+ * It used to mean "hide it from the list": every occurrence still cost a
+ * buffer slot, a row and its share of the byte ceiling. An issue is ignored
+ * precisely *because* it is noisy, so the loudest thing in the database was
+ * the thing nobody wanted to see.
+ */
+describe('ignoring an issue stops storing it', () => {
+  it('records no further events once ignored', async () => {
+    store.capture(makeEvent())
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    await store.setIgnored(fp, true)
+
+    for (let i = 0; i < 5; i++) {
+      store.capture(makeEvent())
+    }
+
+    await store.flush()
+
+    // One stored event: the one from before it was ignored.
+    expect(await store.eventCount(fp)).toBe(1)
+  })
+
+  it('still counts them, so the issue does not look finished', async () => {
+    // The bargain sampling already makes. "Ignored, 1 occurrence" three weeks
+    // after silencing a route that has failed thousands of times would be a
+    // lie the list tells quietly.
+    store.capture(makeEvent())
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    await store.setIgnored(fp, true)
+
+    for (let i = 0; i < 5; i++) {
+      store.capture(makeEvent())
+    }
+
+    await store.flush()
+
+    const issue = (await store.listIssues({ ignored: true })).issues[0]!
+
+    expect(issue.count).toBe(6)
+  })
+
+  it('moves last_seen, so the row still says when it last happened', async () => {
+    store.capture(makeEvent({ timestamp: 1_700_000_000_000 }))
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+    const before = (await store.listIssues()).issues[0]!.lastSeen
+
+    await store.setIgnored(fp, true)
+    store.capture(makeEvent())
+    await store.flush()
+
+    const after = (await store.listIssues({ ignored: true })).issues[0]!.lastSeen
+
+    expect(after).toBeGreaterThan(before)
+  })
+
+  it('resumes storing the moment it is un-ignored', async () => {
+    // Somebody who un-ignores an issue is about to watch for it, and a minute
+    // of continued silence looks exactly like the button not working.
+    store.capture(makeEvent())
+    await store.flush()
+
+    const fp = (await store.listIssues()).issues[0]!.fingerprint
+
+    await store.setIgnored(fp, true)
+    store.capture(makeEvent())
+    await store.flush()
+
+    await store.setIgnored(fp, false)
+    store.capture(makeEvent())
+    await store.flush()
+
+    expect(await store.eventCount(fp)).toBe(2)
+  })
+
+  it('leaves other issues alone', async () => {
+    store.capture(makeEvent())
+    store.capture(makeEvent({ message: 'other' }))
+    await store.flush()
+
+    const issues = await store.listIssues()
+    const noisy = issues.issues.find(issue => issue.message === 'boom')!
+
+    await store.setIgnored(noisy.fingerprint, true)
+
+    store.capture(makeEvent())
+    store.capture(makeEvent({ message: 'other' }))
+    await store.flush()
+
+    const other = issues.issues.find(issue => issue.message === 'other')!
+
+    expect(await store.eventCount(other.fingerprint)).toBe(2)
+  })
+})

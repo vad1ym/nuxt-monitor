@@ -114,3 +114,10 @@ that it is not worth acting on, and a bar that turns amber over dismissed noise
 is a bar people stop reading. Grey is not green for the same kind of reason —
 "no errors" and "no data" look identical in the database and mean opposite
 things.
+
+Ignoring also stops **storing** it. An issue is ignored because it is noisy, so
+leaving it to fill the database with occurrences nobody will read is the wrong
+way round — after the next flush its events stop being written. The count and
+`last seen` keep advancing, so the row still says how often it is happening:
+"we stopped looking" and "it stopped happening" must not look the same. Un-ignore
+it and storage resumes immediately.
