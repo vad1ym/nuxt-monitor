@@ -201,15 +201,18 @@ function countOnce(event: H3Event, status: number): void {
   }
 
   // The same request, counted a second way: which browser and device it came
-  // from. That is what turns "90% of these errors are on iOS" into a finding
-  // or a tautology — without a traffic baseline the sentence only restates the
-  // shape of the audience.
+  // from, and which page they asked for. The first turns "90% of these errors
+  // are on iOS" into a finding or a tautology — without a traffic baseline the
+  // sentence only restates the shape of the audience. The second says which
+  // pages the traffic is actually on, which is what ranks them for testing and
+  // tells you what a break would cost.
   //
   // Pages only. A page view drags a dozen `$fetch` calls behind it, and
   // counting those would weight one visitor by how chatty the page is rather
-  // than by their being one visitor.
+  // than by their being one visitor — and would bury the pages themselves
+  // under the endpoints they call.
   if (routeKind(path, getRequestHeader(event, 'accept')) === 'page') {
-    countTrafficSync(parseUserAgent(getRequestHeader(event, 'user-agent')))
+    countTrafficSync(parseUserAgent(getRequestHeader(event, 'user-agent')), path)
   }
 }
 

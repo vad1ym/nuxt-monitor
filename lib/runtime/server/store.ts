@@ -602,13 +602,13 @@ export class MonitorStore {
   }
 
   /**
-   * Counts one page view's browser and device.
+   * Counts one page view's browser, device and page.
    *
    * The baseline every breakdown is judged against. Aggregated in memory and
    * written with everything else, for the same reason request counters are: a
    * write per request is the opposite of what a monitoring tool should cost.
    */
-  countTraffic(agent: ParsedUserAgent, at = Date.now()): void {
+  countTraffic(agent: ParsedUserAgent, route?: string, at = Date.now()): void {
     if (this.closed) {
       return
     }
@@ -618,12 +618,21 @@ export class MonitorStore {
     // Only the dimensions a breakdown can be taken by. `release` is absent on
     // purpose: it describes the build serving the page, not the visitor, so a
     // deploy would make every earlier release look like a vanished audience.
+    //
+    // `route` is which page was viewed, and it is the one dimension here that
+    // is not about the visitor at all. It earns its place by answering a
+    // question the rest of this table cannot: which pages carry the traffic —
+    // and therefore which are worth testing, and which breakage would be felt.
+    // Normalised for the same reason the request counters are: the raw path
+    // would key this table by id and grow it with traffic rather than with the
+    // size of the application.
     const dimensions: [string, string | undefined][] = [
       ['browser', agent.browser],
       ['browserVersion', agent.browserVersion],
       ['os', agent.os],
       ['osVersion', agent.osVersion],
       ['deviceType', agent.deviceType],
+      ['route', route === undefined ? undefined : normalizeRoute(route)],
     ]
 
     for (const [facet, value] of dimensions) {

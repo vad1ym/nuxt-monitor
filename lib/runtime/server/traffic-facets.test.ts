@@ -91,13 +91,73 @@ describe('counting', () => {
   })
 
   it('is bounded by the window', async () => {
-    store.countTraffic(agent('Chrome'), Date.now() - 8 * 24 * 60 * 60 * 1_000)
+    store.countTraffic(agent('Chrome'), undefined, Date.now() - 8 * 24 * 60 * 60 * 1_000)
     store.countTraffic(agent('Safari'))
     await store.flush()
 
     const recent = await store.trafficFacets(24 * 60 * 60 * 1_000)
 
     expect(recent.browser.values.map(value => value.value)).toEqual(['Safari'])
+  })
+})
+
+describe('which page the traffic was on', () => {
+  it('counts a page view against its route', async () => {
+    store.countTraffic(agent('Chrome'), '/checkout')
+    store.countTraffic(agent('Chrome'), '/checkout')
+    store.countTraffic(agent('Chrome'), '/about')
+    await store.flush()
+
+    const routes = (await store.trafficFacets(60_000)).route.values
+
+    // The ranking is the whole point: it says which page carries the traffic,
+    // and therefore which one is worth a test and which breakage would be felt.
+    expect(routes.map(value => value.value)).toEqual(['/checkout', '/about'])
+    expect(routes[0]?.count).toBe(2)
+  })
+
+  it('collapses variable segments into one route', async () => {
+    // Otherwise the busiest page in the application is split across a row per
+    // id, and reads as a hundred rare pages instead of one popular one.
+    store.countTraffic(agent('Chrome'), '/posts/1')
+    store.countTraffic(agent('Chrome'), '/posts/2')
+    await store.flush()
+
+    const routes = (await store.trafficFacets(60_000)).route.values
+
+    expect(routes).toHaveLength(1)
+    expect(routes[0]).toMatchObject({ value: '/posts/:id', count: 2 })
+  })
+
+  it('drops the query string, which is per request and not the page', async () => {
+    store.countTraffic(agent('Chrome'), '/search?q=hello')
+    store.countTraffic(agent('Chrome'), '/search?q=goodbye')
+    await store.flush()
+
+    expect((await store.trafficFacets(60_000)).route.values[0])
+      .toMatchObject({ value: '/search', count: 2 })
+  })
+
+  it('counts the visitor even when no route was given', async () => {
+    // The browser dimensions are the older contract and must not start
+    // depending on a route the caller may not have.
+    store.countTraffic(agent('Chrome'))
+    await store.flush()
+
+    const facets = await store.trafficFacets(60_000)
+
+    expect(facets.browser.values).toHaveLength(1)
+    expect(facets.route.values).toEqual([])
+  })
+
+  it('shares are against page views, not against every dimension written', async () => {
+    store.countTraffic(agent('Chrome'), '/checkout')
+    store.countTraffic(agent('Chrome'), '/about')
+    await store.flush()
+
+    // Half the traffic was on /checkout — the number a decision about testing
+    // is actually made on.
+    expect((await store.trafficFacets(60_000)).route.values[0]?.share).toBeCloseTo(0.5)
   })
 })
 
@@ -127,7 +187,7 @@ describe('what it is for', () => {
 
 describe('retention', () => {
   it('drops counts past the window the request counters use', async () => {
-    store.countTraffic(agent('Chrome'), Date.now() - 60 * 24 * 60 * 60 * 1_000)
+    store.countTraffic(agent('Chrome'), undefined, Date.now() - 60 * 24 * 60 * 60 * 1_000)
     store.countTraffic(agent('Safari'))
     await store.flush()
     await store.purge()

@@ -262,29 +262,29 @@ export function countLatencySync(route: string, ms: number): void {
 }
 
 /** Page views counted before the database finished opening. */
-const pendingTraffic: ParsedUserAgent[] = []
+const pendingTraffic: [agent: ParsedUserAgent, route: string | undefined][] = []
 
 /**
- * Counts one page view's browser and device, without waiting.
+ * Counts one page view's browser, device and page, without waiting.
  *
  * Queued rather than dropped while the store opens, for the same reason
  * request counts are: on a quiet application the requests served during that
  * window are all of them, and a baseline missing its first minutes would
  * understate exactly the audience a breakdown is compared against.
  */
-export function countTrafficSync(agent: ParsedUserAgent): void {
+export function countTrafficSync(agent: ParsedUserAgent, route?: string): void {
   if (store) {
-    store.countTraffic(agent)
+    store.countTraffic(agent, route)
     return
   }
 
   if (pendingTraffic.length < MAX_PENDING_BEFORE_OPEN) {
-    pendingTraffic.push(agent)
+    pendingTraffic.push([agent, route])
   }
 
   void useMonitorStore().then((ready) => {
-    for (const queued of pendingTraffic.splice(0)) {
-      ready.countTraffic(queued)
+    for (const [queuedAgent, queuedRoute] of pendingTraffic.splice(0)) {
+      ready.countTraffic(queuedAgent, queuedRoute)
     }
   })
 }
