@@ -1,7 +1,7 @@
 import type { H3Event } from 'h3'
 import { defineNitroPlugin, getRequestHeader, getRequestHeaders, getResponseHeader, getResponseStatus, setResponseHeader } from '#imports'
 import type { MonitorEvent, MonitorFacets } from '../../types'
-import { isAssetPath, routeKind } from '../shared/route'
+import { isAssetPath, isToolingRoute, routeKind } from '../shared/route'
 import { captureBodies, snapshotRequestBody } from './bodies'
 import { scrub, scrubUrl } from '../shared/scrub'
 import { parseUserAgent } from '../shared/user-agent'
@@ -150,6 +150,10 @@ export default defineNitroPlugin((nitroApp) => {
  */
 function isMonitorRoute(event: H3Event, route: string): boolean {
   const path = event.path ?? ''
+
+  if (isToolingRoute(path)) {
+    return true
+  }
 
   if (!path.startsWith(route)) {
     return false

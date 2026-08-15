@@ -168,6 +168,8 @@ export default defineNuxtModule<MonitorOptions>({
       from: resolver.resolve('./runtime/server/exception'),
     }])
 
+    registerDevtoolsTab(nuxt, route)
+
     // Ingest stays outside the auth check — the browser posts to it.
     addServerHandler({
       route: `${route}/api/ingest`,
@@ -706,4 +708,54 @@ function registerDashboard(
       handler: resolver.resolve('./runtime/server/routes/ui'),
     })
   }
+}
+
+/**
+ * The dashboard, as a tab inside Nuxt DevTools.
+ *
+ * The dashboard already exists and is already served at `route`; this points
+ * DevTools at it in an iframe rather than building a second UI. That is the
+ * whole feature — during development the errors from the app you are running
+ * belong in the panel you already have open, not behind a URL you have to
+ * remember and a tab you have to keep.
+ *
+ * Development only, by construction: `devtools:customTabs` is not emitted in a
+ * production build, and there is no DevTools there to receive it.
+ *
+ * Typed locally rather than by depending on `@nuxt/devtools-kit`. The payload
+ * is four fields that have been stable for the life of the API, and taking a
+ * build dependency — one that pulls a large tree — to describe them would cost
+ * every consumer of this module something, in exchange for nothing at runtime.
+ */
+interface DevtoolsTab {
+  name: string
+  title: string
+  icon: string
+  view: { type: 'iframe', src: string }
+}
+
+function registerDevtoolsTab(nuxt: Nuxt, route: string): void {
+  if (!nuxt.options.dev) {
+    return
+  }
+
+  // Cast for the same reason the Nitro hooks below are: the hook is contributed
+  // by DevTools, so it is absent from the schema unless that package's types
+  // are installed — which they need not be for the module to build.
+  const hook = nuxt.hook as unknown as (
+    name: 'devtools:customTabs',
+    fn: (tabs: DevtoolsTab[]) => void,
+  ) => void
+
+  hook('devtools:customTabs', (tabs) => {
+    tabs.push({
+      name: 'monitor',
+      title: 'Monitor',
+      // Matches the module's own logo mark closely enough to be recognisable
+      // in a strip of icons, and ships with DevTools rather than as an asset
+      // this would otherwise have to serve.
+      icon: 'carbon:warning-alt',
+      view: { type: 'iframe', src: route },
+    })
+  })
 }

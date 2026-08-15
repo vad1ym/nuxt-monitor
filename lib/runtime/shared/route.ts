@@ -87,6 +87,27 @@ function normalizeAsset(segment: string): string {
  * Decided on the path, before normalisation, because that is where the build
  * prefix is still intact.
  */
+/**
+ * Development tooling that serves itself over the application's own port.
+ *
+ * Nuxt DevTools answers on `/__nuxt_devtools__` and polls constantly, so
+ * without this it lands in "busiest endpoints" and "slowest endpoints" and
+ * pushes the application's own routes off both. That was always true; opening
+ * the dashboard as a DevTools tab is what made it obvious, because the panel
+ * then shows its own traffic back to the reader as though it were the app's.
+ *
+ * Excluded outright rather than merely ranked lower: this is not the
+ * application, so every number here — including the request count that error
+ * rates are divided by — is more honest without it.
+ */
+export function isToolingRoute(path: string | undefined): boolean {
+  if (!path) {
+    return false
+  }
+
+  return path.startsWith('/__nuxt_devtools__') || path.startsWith('/__nuxt_island')
+}
+
 export function isAssetPath(path: string | undefined): boolean {
   if (!path) {
     return false

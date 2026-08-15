@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { FAILED_SUM, bucketOf, countedClass, isAssetPath, isFailedClass, normalizeRoute, routeKind, statusClass } from './route'
+import { FAILED_SUM, bucketOf, countedClass, isAssetPath, isFailedClass, isToolingRoute, normalizeRoute, routeKind, statusClass } from './route'
 
 describe('normalizeRoute', () => {
   it('collapses numeric ids so one endpoint is one row', () => {
@@ -216,5 +216,23 @@ describe('what counts as a failure', () => {
     expect(FAILED_SUM).toContain('\'4xx\'')
     expect(FAILED_SUM).toContain('\'5xx\'')
     expect(FAILED_SUM).not.toContain('\'excused\'')
+  })
+})
+
+describe('isToolingRoute', () => {
+  it('recognises the DevTools endpoints', () => {
+    expect(isToolingRoute('/__nuxt_devtools__/client/')).toBe(true)
+    expect(isToolingRoute('/__nuxt_devtools__/rpc')).toBe(true)
+    expect(isToolingRoute('/__nuxt_island/Foo')).toBe(true)
+  })
+
+  it('leaves the application alone', () => {
+    // Including the near-misses: an app is free to own a route that merely
+    // starts the same way, and dropping its traffic would understate the
+    // denominator every error rate is measured against.
+    expect(isToolingRoute('/')).toBe(false)
+    expect(isToolingRoute('/api/orders')).toBe(false)
+    expect(isToolingRoute('/__nuxt')).toBe(false)
+    expect(isToolingRoute(undefined)).toBe(false)
   })
 })
