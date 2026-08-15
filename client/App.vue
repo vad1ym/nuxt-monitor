@@ -11,6 +11,7 @@ import IssueList from './components/IssueList.vue'
 import LoginView from './components/LoginView.vue'
 import MonitorLogo from './components/MonitorLogo.vue'
 import NotificationsView from './components/NotificationsView.vue'
+import UsageView from './components/UsageView.vue'
 import OverviewDashboard from './components/OverviewDashboard.vue'
 
 /**
@@ -116,6 +117,10 @@ const NAV: { view: View, label: string, icon: string }[] = [
   // So they are the overview, and the list of issues is where you go next.
   { view: 'overview', label: 'Overview', icon: 'i-lucide-layout-dashboard' },
   { view: 'issues', label: 'Issues', icon: 'i-lucide-inbox' },
+  // Between what broke and who was told, because it answers the question that
+  // comes before both: what this application is actually used for, and
+  // therefore what a failure would cost.
+  { view: 'usage', label: 'Usage', icon: 'i-lucide-mouse-pointer-click' },
   // Last, and deliberately not beside the screens that answer "what broke":
   // this one answers "who was told", which is a question asked once at setup
   // and then only when something did not arrive.
@@ -519,7 +524,7 @@ onMounted(async () => {
                lines are hard to read edge to edge. -->
           <!-- The overview is tiles and charts, which a reading-width column
                starves; the issue screens are prose-shaped and keep the cap. -->
-          <div :class="view === 'overview' ? 'max-w-7xl' : 'max-w-5xl'">
+          <div :class="view === 'overview' || view === 'usage' ? 'max-w-7xl' : 'max-w-5xl'">
             <!-- Above every screen, not on one of its own: a collector that
                  stopped recording makes every other number on the page a lie,
                  so it cannot be somewhere you have to think to look. -->
@@ -531,6 +536,8 @@ onMounted(async () => {
               @select="openIssue"
               @browse="(facet, value) => { view = 'issues'; filter = { [facet]: [value] } }"
             />
+
+            <UsageView v-else-if="view === 'usage'" :hours="hours" />
 
             <NotificationsView v-else-if="view === 'notifications'" />
 

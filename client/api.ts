@@ -18,6 +18,7 @@ import type {
   MonitorTriggerOptions,
   MonitorUptimeSummary,
   MonitorHeatCell,
+  MonitorInteraction,
 } from '../lib/types'
 
 /**
@@ -272,6 +273,31 @@ export const api = {
     }
 
     return request<MonitorDashboard>(`/dashboard?${query}`)
+  },
+
+  /**
+   * What people press, ranked, optionally within one page.
+   *
+   * Its own call rather than a field on `stats`: it is read after a page has
+   * been picked out of the ranking, not alongside it, so folding it in would
+   * make every stats fetch pay for an aggregate usually nobody looks at.
+   */
+  interactions: (hours = 24, route?: string, limit?: number) => {
+    const query = new URLSearchParams({ window: String(hours * 60 * 60 * 1_000) })
+
+    if (route) {
+      query.set('route', route)
+    }
+
+    if (limit) {
+      query.set('limit', String(limit))
+    }
+
+    return request<{
+      windowMs: number
+      route?: string
+      interactions: MonitorInteraction[]
+    }>(`/interactions?${query}`)
   },
 
   /** The uptime bar. Not windowed like the rest — see the route. */
