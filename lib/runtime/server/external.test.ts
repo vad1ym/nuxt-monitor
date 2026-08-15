@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MonitorStore } from './store'
+import { openDatabase } from './db'
+import { migrate } from './schema'
 import type { MonitorEvent } from '../../types'
 
 /**
@@ -207,6 +209,57 @@ for (const [name, url] of TARGETS) {
       expect(health.bytes).toBe(0)
       expect(health.issues).toBe(1)
       expect(health.events).toBe(1)
+
+      await store.close()
+    })
+
+    /**
+     * Widening a column that an older database created narrow.
+     *
+     * The one migration here that alters a column rather than adding one, and
+     * the only place a route longer than 64 characters can be lost: MySQL
+     * truncates such a write and Postgres rejects it, so a page would be
+     * counted under a shortened name shared with another page. The column also
+     * takes part in the primary key, which is what makes the statement worth
+     * running against a real server rather than trusting to documentation.
+     */
+    it('widens a narrow traffic_facets.value and keeps long routes whole', async () => {
+      // Put the table back the way a database made before routes were counted
+      // would have it, then migrate over the top exactly as a boot does.
+      const connection = openDatabase({ dir: '/tmp/monitor-external-unused', url })
+
+      await connection.db.exec('DROP TABLE IF EXISTS traffic_facets')
+      await connection.db.exec(`CREATE TABLE traffic_facets (
+        bucket BIGINT NOT NULL,
+        facet VARCHAR(32) NOT NULL,
+        value VARCHAR(64) NOT NULL,
+        count BIGINT NOT NULL DEFAULT 0,
+        PRIMARY KEY (bucket, facet, value)
+      )`)
+
+      await migrate(connection.db, name)
+      await connection.close()
+
+      // Opened after the narrow table exists, so its own `migrate` is the one
+      // under test on a table it did not create.
+      const store = await open()
+
+      const route = `/${Array.from({ length: 8 }, (_, i) => `department${i}`).join('/')}/checkout`
+
+      expect(route.length).toBeGreaterThan(64)
+
+      store.countTraffic(
+        { browser: 'Chrome', browserVersion: '120', os: 'macOS', osVersion: '14', deviceType: 'desktop' },
+        route,
+      )
+      await store.flush()
+
+      const [stored] = (await store.trafficFacets(60_000)).route.values
+
+      // Whole, not a 64-character prefix: the prefix would silently merge this
+      // page with every other one under the same department.
+      expect(stored?.value).toBe(route)
+      expect(stored?.count).toBe(1)
 
       await store.close()
     })

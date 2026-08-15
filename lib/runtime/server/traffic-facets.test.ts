@@ -150,6 +150,40 @@ describe('which page the traffic was on', () => {
     expect(facets.route.values).toEqual([])
   })
 
+  it('keeps a long route whole rather than cutting it to a prefix', async () => {
+    // The column is sized for a route, so a long one is stored as it is. A
+    // narrower column would be the worst outcome available: two distinct pages
+    // sharing a prefix would collapse into one row, and the counter would then
+    // report their combined traffic under one of their names.
+    // Many real segments rather than one long one: `normalizeRoute` replaces a
+    // segment over 40 characters with `:value`, so length has to come from
+    // depth to survive normalisation the way a real deep route does.
+    const prefix = Array.from({ length: 8 }, (_, i) => `department${i}`).join('/')
+    const first = `/${prefix}/checkout`
+    const second = `/${prefix}/basket`
+
+    store.countTraffic(agent('Chrome'), first)
+    store.countTraffic(agent('Chrome'), second)
+    await store.flush()
+
+    const routes = (await store.trafficFacets(60_000)).route.values
+
+    expect(routes).toHaveLength(2)
+    expect(routes.map(value => value.value).sort()).toEqual([second, first].sort())
+  })
+
+  it('does not let a forged user agent exceed the column', async () => {
+    // Every other dimension comes from a header, which is attacker-controlled
+    // and bounded by nothing.
+    store.countTraffic({ ...agent('C'.repeat(400)), browserVersion: undefined, os: undefined, osVersion: undefined, deviceType: undefined })
+    await store.flush()
+
+    const [browser] = (await store.trafficFacets(60_000)).browser.values
+
+    expect(browser?.count).toBe(1)
+    expect(browser?.value.length).toBeLessThanOrEqual(200)
+  })
+
   it('shares are against page views, not against every dimension written', async () => {
     store.countTraffic(agent('Chrome'), '/checkout')
     store.countTraffic(agent('Chrome'), '/about')

@@ -43,7 +43,7 @@ import { FAILED_SUM, bucketOf, countedClass, normalizeRoute } from '../shared/ro
 import { bucketFor, labelFor } from '../shared/latency'
 import { culpritOf, toIssue } from './rows'
 import * as queries from './queries'
-import { BUCKET_MS, migrate } from './schema'
+import { BUCKET_MS, ROUTE_VALUE, migrate } from './schema'
 import { changesOf, openDatabase, pick, upsertClause } from './db'
 import type { MonitorDatabase } from './db'
 import type { ParsedUserAgent } from '../shared/user-agent'
@@ -640,7 +640,12 @@ export class MonitorStore {
         continue
       }
 
-      const key = [bucket, facet, value].join(KEY_SEPARATOR)
+      // Cut to what the column holds. A route cannot reach this — it arrives
+      // from `normalizeRoute`, which bounds a path at exactly this width — so
+      // the guard is for the dimensions that come from a user agent, where a
+      // long or forged browser string would otherwise become a write that
+      // MySQL truncates and Postgres rejects outright.
+      const key = [bucket, facet, value.slice(0, ROUTE_VALUE)].join(KEY_SEPARATOR)
 
       this.trafficCounters.set(key, (this.trafficCounters.get(key) ?? 0) + 1)
     }

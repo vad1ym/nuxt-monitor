@@ -19,6 +19,19 @@ import type { MonitorDialect } from './db'
  *   `AUTOINCREMENT` is a syntax error rather than a no-op.
  */
 
+/**
+ * Width of `traffic_facets.value`.
+ *
+ * Set by the longest thing that facet holds, which is a route rather than a
+ * browser name: `normalizeRoute` bounds a path at 200 characters, so this is
+ * the width at which no page view is ever recorded under a truncated name.
+ *
+ * Exported because the store checks values against it before buffering them —
+ * a value too long for the column is better dropped at the edge than carried
+ * to a flush that fails.
+ */
+export const ROUTE_VALUE = 200
+
 /** Column types that differ by engine. */
 interface Types {
   /** Auto-incrementing primary key for `events`. */
@@ -186,10 +199,18 @@ function tables(dialect: MonitorDialect): string[] {
     // deliberately absent — this answers "what does our traffic look like",
     // not "what does traffic to /checkout look like", and the first question
     // is the one a baseline needs.
+    // `value` holds a browser name, a version, a device — and, since page
+    // views are counted by page too, a normalised route. Sized for the route,
+    // which is far longer than any of the others: `normalizeRoute` bounds a
+    // path at 200 characters, and a narrower column would silently truncate
+    // the long ones so that two different pages sharing a prefix became one
+    // row — the counter would then be confidently wrong rather than missing.
+    // Widened on existing databases by `widenColumns`, since `IF NOT EXISTS`
+    // leaves an older table exactly as it was.
     `CREATE TABLE IF NOT EXISTS traffic_facets (
   bucket  ${t.int} NOT NULL,
   facet   ${t.key(32)} NOT NULL,
-  value   ${t.key(64)} NOT NULL,
+  value   ${t.key(ROUTE_VALUE)} NOT NULL,
   count   ${t.int} NOT NULL DEFAULT 0,
   PRIMARY KEY (bucket, facet, value)${indexesFor('traffic_facets')}
 )`,
@@ -307,7 +328,85 @@ export async function migrate(db: Database, dialect: MonitorDialect = 'sqlite'):
     ['request_id', TYPES[dialect].key(200)],
   ])
 
+  await widenColumns(db, dialect)
   await addLateIndexes(db, dialect)
+}
+
+/**
+ * Columns that outgrew the width they were first created at.
+ *
+ * `CREATE TABLE IF NOT EXISTS` leaves an existing table alone, so a column
+ * declared wider here stays narrow on every database made before the change —
+ * and the value that no longer fits is silently truncated by MySQL and
+ * rejected outright by Postgres. Neither is acceptable for a counter: the
+ * first makes two pages share a row and reports the total under one of their
+ * names, which is worse than not counting at all.
+ *
+ * SQLite is skipped because its `key()` is plain `TEXT`, which has no length
+ * to widen — the narrow declaration never constrained anything there.
+ *
+ * Idempotent by being a no-op when the column is already wide enough: both
+ * engines accept a widening `ALTER` on a column that is already that width,
+ * but doing it on every boot would rewrite the table each time on MySQL.
+ */
+const WIDENED: [table: string, column: string, width: number][] = [
+  // Grew when page views started being counted per route: a browser name fits
+  // in 64 characters and a route does not.
+  ['traffic_facets', 'value', ROUTE_VALUE],
+]
+
+async function widenColumns(db: Database, dialect: MonitorDialect): Promise<void> {
+  if (dialect === 'sqlite') {
+    return
+  }
+
+  for (const [table, column, width] of WIDENED) {
+    const current = await columnWidth(db, dialect, table, column)
+
+    // Unknown width means the table or column is not there yet — a fresh
+    // database, where `CREATE TABLE` has already used the full width.
+    if (current === undefined || current >= width) {
+      continue
+    }
+
+    const type = TYPES[dialect].key(width)
+    const statement = dialect === 'mysql'
+      ? `ALTER TABLE ${table} MODIFY \`${column}\` ${type} NOT NULL`
+      : `ALTER TABLE ${table} ALTER COLUMN "${column}" TYPE ${type}`
+
+    // A failure here must not stop the rest of the migration: the column being
+    // part of a primary key makes this the one statement a hosted database is
+    // most likely to refuse, and a monitor that will not boot is worse than
+    // one recording long routes under a shortened name.
+    await db.exec(statement).catch((error: unknown) => {
+      console.error(`[monitor] could not widen ${table}.${column}`, error)
+    })
+  }
+}
+
+/**
+ * How wide a character column currently is, or `undefined` if it is not there.
+ *
+ * Read from `information_schema`, which both engines carry and which — unlike
+ * a size or catalogue query — the owner of the table can read on managed
+ * hosting.
+ */
+async function columnWidth(
+  db: Database,
+  dialect: MonitorDialect,
+  table: string,
+  column: string,
+): Promise<number | undefined> {
+  const rows = await db
+    .prepare(
+      'SELECT character_maximum_length FROM information_schema.columns WHERE table_name = ? AND column_name = ?',
+    )
+    .all(table, column)
+    .catch(() => []) as Record<string, unknown>[]
+
+  const value = rows[0]?.character_maximum_length ?? rows[0]?.CHARACTER_MAXIMUM_LENGTH
+
+  return typeof value === 'number' ? value : undefined
 }
 
 /**
