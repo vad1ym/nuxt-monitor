@@ -115,6 +115,13 @@ export interface MonitorOptions {
    * losing older traces on every deploy. Maps are large — this is a disk
    * budget, not a retention policy.
    */
+  keepSourcemapBuilds?: number
+  /**
+   * @deprecated Renamed to `keepSourcemapBuilds`, which says what the number
+   * counts. `keepSourcemapsFor: 5` reads as a duration — five days, five
+   * releases — and it is neither: it is five *builds*. Still honoured, and
+   * warned about at build time.
+   */
   keepSourcemapsFor?: number
   /**
    * Extra key patterns to redact from captured payloads, on top of the
@@ -331,10 +338,19 @@ export interface MonitorNotificationOptions {
    * artefact: a secret in an image, copied to wherever that image goes.
    *
    * `databaseUrl` is read at runtime for exactly this reason, and a bot token
-   * deserves the same treatment. Set `NUXT_MONITOR_TELEGRAM_TOKEN`,
-   * `NUXT_MONITOR_TELEGRAM_CHAT_ID`, `NUXT_MONITOR_SLACK_WEBHOOK_URL`,
-   * `NUXT_MONITOR_SLACK_TOKEN` or `NUXT_MONITOR_WEBHOOK_URL` when the server
-   * starts and leave the corresponding field off the channel.
+   * deserves the same treatment. Set `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN`,
+   * `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_CHAT_ID`,
+   * `NUXT_MONITOR_NOTIFICATIONS_SLACK_WEBHOOK_URL`,
+   * `NUXT_MONITOR_NOTIFICATIONS_SLACK_TOKEN` or
+   * `NUXT_MONITOR_NOTIFICATIONS_WEBHOOK_URL` when the server starts, and leave
+   * the corresponding field off the channel.
+   *
+   * The `NOTIFICATIONS_` segment is not optional: these live under
+   * `notifications` in `runtimeConfig`, and Nuxt derives the variable name from
+   * the full path. The shorter spelling this comment used to give does nothing
+   * at all, which is the worst way for a credential to be wrong — the server
+   * starts, the channel looks configured, and the first alert is the one that
+   * does not arrive.
    *
    * A value here fills in only where the channel left one blank, so a config
    * that does spell out a token keeps working.
