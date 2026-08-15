@@ -66,8 +66,69 @@ export default defineNuxtPlugin({
      */
     let userId: string | undefined
 
+    /**
+     * Presses since the last post, as `route → label → count`.
+     *
+     * Counts rather than events, and flat rather than ordered: what is stored
+     * at the other end is how often a label was pressed on a page, never in
+     * what sequence. Held here between posts so a page of heavy clicking costs
+     * one entry per distinct button rather than one request per press.
+     */
+    const presses = new Map<string, number>()
+
+    /** Distinct route+label pairs held before the map stops growing. */
+    const MAX_PRESSES = 200
+
+    /**
+     * Joins the two halves of a press key.
+     *
+     * A newline rather than a space or a colon: the label is a button's own
+     * text, which routinely contains both, and splitting on one of those would
+     * cut "Add to cart" in the wrong place and file the press under a route
+     * that never existed. The text is collapsed onto one line before it gets
+     * here, so this cannot occur inside either half.
+     */
+    const SEPARATOR = '\n'
+
+    const countPress = (route: string, label: string): void => {
+      if (presses.size >= MAX_PRESSES && !presses.has(`${route}${SEPARATOR}${label}`)) {
+        // An application that renders a unique caption per row would otherwise
+        // grow this without bound. Dropping the new pairs keeps the ones
+        // already being counted intact, which is the more useful half.
+        return
+      }
+
+      const key = `${route}${SEPARATOR}${label}`
+
+      presses.set(key, (presses.get(key) ?? 0) + 1)
+    }
+
+    /** Empties the press counters into the shape the ingest route reads. */
+    const takePresses = (): { route: string, label: string, count: number }[] => {
+      if (presses.size === 0) {
+        return []
+      }
+
+      const batch = [...presses].map(([key, count]) => {
+        // Split at the first separator only, so a label that somehow carries
+        // one keeps the rest of its text rather than losing everything after
+        // it. The route can never contain one.
+        const at = key.indexOf(SEPARATOR)
+
+        return {
+          route: key.slice(0, at),
+          label: key.slice(at + 1),
+          count,
+        }
+      })
+
+      presses.clear()
+
+      return batch
+    }
+
     const queue = new EventQueue({
-      send: events => post(endpoint, events, sessionId()),
+      send: events => post(endpoint, events, sessionId(), takePresses()),
     })
 
     /**
@@ -254,26 +315,62 @@ export default defineNuxtPlugin({
       }
 
       const label = (target.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 80)
+      const name = label || target.tagName.toLowerCase()
 
       record({
         type: 'click',
         timestamp: Date.now(),
-        message: label || target.tagName.toLowerCase(),
+        message: name,
       })
+
+      /**
+       * The same press, counted as well as remembered.
+       *
+       * The breadcrumb above is kept only if something later throws, which is
+       * the wrong sample entirely for the question "what is this page used
+       * for": it would describe how people use the pages that break, and say
+       * nothing about the ones that work — precisely the pages worth covering
+       * with a test before they stop working.
+       *
+       * Aggregated here and sent as counts on a post that already happens.
+       * A request per click would be the one thing a monitoring library must
+       * never do to the application it is watching.
+       */
+      countPress(window.location.pathname, name)
     }, { capture: true, passive: true })
+
+    /**
+     * Sends what is buffered, including presses on a page that never failed.
+     *
+     * `queue.flush()` alone is not enough: it returns immediately when no
+     * events are pending, which on a working page is always. Relying on it
+     * would mean presses were only ever reported from sessions that hit an
+     * error — the same skew that makes the breadcrumb trail the wrong source
+     * for this, and the reason these are counted separately at all.
+     */
+    const flushAll = (): void => {
+      queue.flush()
+
+      const pending = takePresses()
+
+      if (pending.length) {
+        post(endpoint, [], sessionId(), pending)
+      }
+    }
 
     // A pending batch would be lost when the tab goes away. `visibilitychange`
     // fires reliably on mobile, where `beforeunload` often does not.
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') {
-        queue.flush()
+        flushAll()
       }
     })
 
-    window.addEventListener('pagehide', () => queue.flush())
+    window.addEventListener('pagehide', () => flushAll())
 
-    // Otherwise a lone error waits for a batch that may never fill.
-    setInterval(() => queue.flush(), 5_000)
+    // Otherwise a lone error waits for a batch that may never fill — and, on a
+    // page that never fails, so would every press.
+    setInterval(flushAll, 5_000)
 
     return {
       provide: {
@@ -332,13 +429,23 @@ function strip(url: string): string {
  * `sendBeacon` survives page unload, which is exactly when the last errors
  * tend to happen. It refuses oversized payloads, so fall back to `fetch`.
  */
-function post(endpoint: string, events: ClientEvent[], session?: string): boolean {
+function post(
+  endpoint: string,
+  events: ClientEvent[],
+  session?: string,
+  presses: { route: string, label: string, count: number }[] = [],
+): boolean {
   // The session rides on every post rather than only the first. It is what the
   // server counts as one visitor, and a batch that arrives after a page load
   // whose hello was lost — offline at the time, a beacon refused — would
   // otherwise be an error from a session that, as far as the totals are
   // concerned, never existed.
-  const body = JSON.stringify({ events, session })
+  //
+  // Presses ride along for the opposite reason to the events beside them: they
+  // are not worth a request of their own. Carrying them on a post that was
+  // already going out is what keeps "what is this page used for" free of any
+  // network cost the application would notice.
+  const body = JSON.stringify(presses.length ? { events, session, presses } : { events, session })
 
   try {
     if (navigator.sendBeacon?.(endpoint, new Blob([body], { type: 'application/json' }))) {

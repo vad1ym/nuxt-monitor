@@ -7,6 +7,7 @@ import type {
   MonitorFacetFilter,
   MonitorHealth,
   MonitorIgnoreOptions,
+  MonitorInteraction,
   MonitorIssue,
   MonitorGroupOptions,
   MonitorIssueReleases,
@@ -122,6 +123,23 @@ const MAX_PENDING_COUNTERS = 10_000
 const MAX_TRACKED_SESSIONS = 50_000
 
 /**
+ * Width of `interactions.label`, matching the column and the trimming the
+ * collector already applies to a breadcrumb's click label.
+ */
+const MAX_LABEL = 80
+
+/**
+ * Most presses of one label, on one page, in one minute, that a single batch
+ * may claim.
+ *
+ * The count is aggregated in the browser and therefore arrives from something
+ * that can be forged. A ceiling keeps a bad batch to a bounded distortion of
+ * one number rather than an arbitrary one, and it is far above what a person
+ * can produce in a minute — so a real user never meets it.
+ */
+const MAX_INTERACTIONS_PER_LABEL = 1_000
+
+/**
  * How long the request path stops flushing after a failed write.
  *
  * Long enough that a lock contended by the dashboard clears on its own, short
@@ -180,6 +198,8 @@ export class MonitorStore {
   private trafficCounters = new Map<string, number>()
   /** `bucket route le` → count. How long requests took, as a histogram. */
   private latencyCounters = new Map<string, number>()
+  /** `bucket route label` → count. What people press, per page. */
+  private interactionCounters = new Map<string, number>()
   private timer: ReturnType<typeof setInterval> | undefined
   private purgeTimer: ReturnType<typeof setInterval> | undefined
   private readonly flushSize: number
@@ -655,9 +675,56 @@ export class MonitorStore {
     }
   }
 
+  /**
+   * Counts presses of one label on one page.
+   *
+   * Page views say which pages carry the traffic; this says what is used on
+   * them, which is the part that decides what a test should actually do. A
+   * checkout page with heavy traffic where nobody reaches "Pay" is a different
+   * finding from one where everybody does, and a ranking of routes alone
+   * cannot separate them.
+   *
+   * Aggregated in memory and written with the other counters, because the
+   * alternative is a row per click — the one shape this must never take. The
+   * browser sends counts, not clicks, for the same reason.
+   *
+   * `count` arrives from the browser and is therefore not trusted: it is
+   * clamped, so a forged batch inflates one number by a bounded amount instead
+   * of an arbitrary one.
+   */
+  countInteraction(route: string, label: string, count = 1, at = Date.now()): void {
+    if (this.closed) {
+      return
+    }
+
+    const trimmed = label.trim()
+
+    if (!trimmed) {
+      return
+    }
+
+    const times = Number.isFinite(count) ? Math.min(Math.max(Math.trunc(count), 1), MAX_INTERACTIONS_PER_LABEL) : 1
+
+    const key = [
+      bucketOf(at, BUCKET_MS),
+      normalizeRoute(route),
+      trimmed.slice(0, MAX_LABEL),
+    ].join(KEY_SEPARATOR)
+
+    this.interactionCounters.set(key, (this.interactionCounters.get(key) ?? 0) + times)
+
+    // Bounded like every other counter here: the label comes from a page's own
+    // markup, so an application that renders a unique caption per row would
+    // otherwise turn this into an unbounded map in its own memory.
+    if (this.interactionCounters.size > 5_000) {
+      void this.flushCounters()
+    }
+  }
+
   /** Writes buffered counters. */
   private async flushCounters(): Promise<void> {
     await this.flushTrafficFacets()
+    await this.flushInteractions()
     await this.flushLatency()
 
     if (this.counters.size === 0) {
@@ -796,6 +863,58 @@ export class MonitorStore {
 
         for (const key of [...this.trafficCounters.keys()].slice(0, excess)) {
           this.trafficCounters.delete(key)
+        }
+      }
+    }
+  }
+
+  /**
+   * Writes what was pressed.
+   *
+   * Its own transaction for the same reason the traffic baseline has one: an
+   * independent tally, whose failure must not roll back the counts beside it.
+   * Merged back on failure and dropped only when the backlog is hopeless —
+   * these are counters, and holes in them understate a page's use rather than
+   * announcing themselves.
+   */
+  private async flushInteractions(): Promise<void> {
+    if (this.interactionCounters.size === 0) {
+      return
+    }
+
+    const batch = this.interactionCounters
+    this.interactionCounters = new Map()
+
+    const upsert = this.statement('interactions', `
+      INSERT INTO interactions (bucket, route, label, count)
+      VALUES (?, ?, ?, ?)
+      ${upsertClause(this.connection.dialect, 'interactions', ['bucket', 'route', 'label'], ['count = count + excluded.count'])}
+    `)
+
+    await this.db.exec('BEGIN')
+
+    try {
+      for (const [key, count] of batch) {
+        const [bucket, route, label] = key.split(KEY_SEPARATOR)
+
+        await upsert.run(Number(bucket), route!, label!, count)
+      }
+
+      await this.db.exec('COMMIT')
+    }
+    catch (error) {
+      await this.rollback()
+      console.error('[monitor] failed to flush interactions', error)
+
+      for (const [key, count] of batch) {
+        this.interactionCounters.set(key, (this.interactionCounters.get(key) ?? 0) + count)
+      }
+
+      if (this.interactionCounters.size > MAX_PENDING_COUNTERS) {
+        const excess = this.interactionCounters.size - MAX_PENDING_COUNTERS
+
+        for (const key of [...this.interactionCounters.keys()].slice(0, excess)) {
+          this.interactionCounters.delete(key)
         }
       }
     }
@@ -1757,8 +1876,9 @@ export class MonitorStore {
 
     this.trafficCounters.clear()
     this.latencyCounters.clear()
+    this.interactionCounters.clear()
 
-    for (const table of ['events', 'issues', 'request_stats', 'request_latency', 'traffic_facets', 'notifications']) {
+    for (const table of ['events', 'issues', 'request_stats', 'request_latency', 'traffic_facets', 'interactions', 'notifications']) {
       await this.db.exec(`DELETE FROM ${table}`)
     }
   }
@@ -1782,6 +1902,10 @@ export class MonitorStore {
     // histogram that expired first would make "slower than last week"
     // unanswerable at exactly the range that question is asked over.
     await this.db.prepare('DELETE FROM request_latency WHERE bucket < ?').run(counterCutoff)
+    // And the same again for what was pressed: it is read beside the page
+    // ranking and compared against it, so an interaction history that ended
+    // earlier would make the comparison silently narrower than it looks.
+    await this.db.prepare('DELETE FROM interactions WHERE bucket < ?').run(counterCutoff)
     const issues = await this.db.prepare(`
       DELETE FROM issues
       WHERE fingerprint NOT IN (SELECT DISTINCT fingerprint FROM events)
@@ -1953,6 +2077,20 @@ export class MonitorStore {
   async trafficFacets(windowMs: number): Promise<MonitorFacetCounts> {
     await this.flush()
     return queries.trafficFacets(this.db, windowMs)
+  }
+
+  /**
+   * What was pressed over a window, ranked, optionally within one page.
+   *
+   * Flushes first for the same reason the baseline does: on a quiet
+   * application the presses buffered since the last write are most of them.
+   */
+  async interactions(
+    windowMs: number,
+    options: { route?: string, limit?: number } = {},
+  ): Promise<MonitorInteraction[]> {
+    await this.flush()
+    return queries.interactions(this.db, windowMs, options)
   }
 
   /** Everything the dashboard screen draws, in one round trip. */

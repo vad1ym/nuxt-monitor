@@ -36,6 +36,7 @@ import type { MonitorStore } from './store'
 export class DisabledStore implements Pick<
   MonitorStore,
   'capture' | 'countRequest' | 'countTraffic' | 'countSession' | 'countLatency' | 'latency'
+  | 'countInteraction' | 'interactions'
   | 'relatedByRequest'
   | 'flush' | 'close' | 'listIssues' | 'getIssue'
   | 'getEvents' | 'facetCounts' | 'sessionCount' | 'eventCount' | 'overview'
@@ -56,6 +57,12 @@ export class DisabledStore implements Pick<
   countSession(): void {}
 
   countLatency(): void {}
+
+  countInteraction(): void {}
+
+  async interactions(): Promise<[]> {
+    return []
+  }
 
   async latency(): Promise<MonitorLatency> {
     return { requests: 0, routes: [] }

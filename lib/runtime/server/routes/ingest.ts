@@ -26,6 +26,19 @@ const MAX_RELEASE = 64
 /** Matches the server's own ceiling, since the value round-trips from there. */
 const MAX_REQUEST_ID = 200
 
+/**
+ * Press counters accepted per post.
+ *
+ * The browser holds at most 200 distinct route+label pairs before it stops
+ * adding new ones, so this is that ceiling rather than a second, tighter one
+ * that would silently drop the tail of an honest batch.
+ */
+const MAX_PRESSES = 200
+
+/** Bounds before the store's own; both are the width of the column. */
+const MAX_PRESS_ROUTE = 200
+const MAX_PRESS_LABEL = 80
+
 /** Events accepted per address per window, before anything is written. */
 const RATE_LIMIT = 100
 const RATE_WINDOW_MS = 60_000
@@ -100,6 +113,20 @@ export default defineEventHandler(async (event) => {
   if (session) {
     store.countSession(session)
   }
+
+  /**
+   * What was pressed, as counts the browser already aggregated.
+   *
+   * Rides this post rather than an endpoint of its own, for the same reason
+   * the session does: it inherits same-origin, the rate limit and the bounded
+   * body, and a second intake would be a second set of all three to get right.
+   *
+   * Everything here is attacker-supplied, so nothing is trusted: the list is
+   * capped, each field is bounded, and the store clamps the count. The worst a
+   * forged batch can do is inflate a counter it could inflate anyway by
+   * pressing the button.
+   */
+  countPresses(body, store)
 
   if (incoming.length === 0) {
     // 204 rather than 202: nothing was accepted for storage. A hello carrying
@@ -270,6 +297,44 @@ function facetsOf(raw: unknown, agent: ParsedUserAgent, release: string): Monito
  * These become facet rows and filter values, so anything else — punctuation,
  * whitespace, a whole JSON document — is dropped rather than truncated.
  */
+/**
+ * Records the presses a batch carried.
+ *
+ * Kept off the event path entirely: these are counters, and a malformed one
+ * must not cost a single error its delivery. Anything that is not the expected
+ * shape is skipped rather than rejected — a browser extension mangling the
+ * body should not turn a report into a 400.
+ */
+function countPresses(body: unknown, store: { countInteraction: (route: string, label: string, count?: number) => void }): void {
+  const claimed = (body as { presses?: unknown } | null)?.presses
+
+  if (!Array.isArray(claimed)) {
+    return
+  }
+
+  for (const entry of claimed.slice(0, MAX_PRESSES)) {
+    if (!entry || typeof entry !== 'object') {
+      continue
+    }
+
+    const press = entry as { route?: unknown, label?: unknown, count?: unknown }
+
+    // The label is free text from the page's own markup, so it cannot go
+    // through `identifier` — that would reject every button with a space in
+    // it, which is most of them. Bounded and required to be a string instead;
+    // the store trims and truncates it to the width of the column.
+    if (typeof press.route !== 'string' || typeof press.label !== 'string') {
+      continue
+    }
+
+    store.countInteraction(
+      press.route.slice(0, MAX_PRESS_ROUTE),
+      press.label.slice(0, MAX_PRESS_LABEL),
+      typeof press.count === 'number' ? press.count : 1,
+    )
+  }
+}
+
 function identifier(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string' || !value) {
     return undefined

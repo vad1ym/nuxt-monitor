@@ -651,6 +651,12 @@ function registerDashboard(
   })
 
   addServerHandler({
+    route: `${route}/api/interactions`,
+    method: 'get',
+    handler: resolver.resolve('./runtime/server/routes/interactions'),
+  })
+
+  addServerHandler({
     route: `${route}/api/stats`,
     method: 'get',
     handler: resolver.resolve('./runtime/server/routes/stats'),

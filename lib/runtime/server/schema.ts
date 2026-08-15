@@ -84,6 +84,7 @@ const INDEXES: [name: string, table: string, columns: string][] = [
   ['idx_notifications_at', 'notifications', 'at DESC'],
   // Read by window, like the request counters beside it.
   ['idx_traffic_bucket', 'traffic_facets', 'bucket DESC'],
+  ['idx_interactions_bucket', 'interactions', 'bucket DESC'],
   ['idx_latency_bucket', 'request_latency', 'bucket DESC'],
 ]
 
@@ -213,6 +214,33 @@ function tables(dialect: MonitorDialect): string[] {
   value   ${t.key(ROUTE_VALUE)} NOT NULL,
   count   ${t.int} NOT NULL DEFAULT 0,
   PRIMARY KEY (bucket, facet, value)${indexesFor('traffic_facets')}
+)`,
+
+    // What people press, per page.
+    //
+    // Page views rank the pages; this ranks what is actually used on one. The
+    // question it exists for is which paths through the application are worth
+    // a test: a page with heavy traffic whose primary action nobody triggers
+    // is a different problem from one where everybody presses the same button,
+    // and a list of routes alone cannot tell those apart.
+    //
+    // Counters, deliberately, and not a trail. What is stored is how many
+    // times a label was pressed on a route in a minute — never in what order,
+    // never by whom, and never joined to a session. That keeps this the same
+    // kind of data as the traffic baseline beside it rather than the beginning
+    // of a session recording, which is a different product with different
+    // obligations.
+    //
+    // The label is the element's own trimmed text, which the breadcrumb trail
+    // already captures for errors. No values, no attributes, no input
+    // contents — see the click listener in the collector for why that line is
+    // where it is.
+    `CREATE TABLE IF NOT EXISTS interactions (
+  bucket  ${t.int} NOT NULL,
+  route   ${t.key(191)} NOT NULL,
+  label   ${t.key(80)} NOT NULL,
+  count   ${t.int} NOT NULL DEFAULT 0,
+  PRIMARY KEY (bucket, route, label)${indexesFor('interactions')}
 )`,
 
     // Every attempt to alert somebody, including the ones that were silenced.

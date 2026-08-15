@@ -960,6 +960,25 @@ export interface MonitorRelease {
   lastSeen: number
 }
 
+/**
+ * How often one label was pressed on one page.
+ *
+ * Page views rank the pages; this ranks what is used on them, which is the
+ * half that says what a test should actually do rather than merely where to
+ * point it.
+ *
+ * A count, never a trail: no order, no session, no identity. The label is the
+ * element's own trimmed text, the same value the breadcrumbs already record
+ * for errors.
+ */
+export interface MonitorInteraction {
+  route: string
+  label: string
+  count: number
+  /** Share of the presses in scope, 0–1. Not a share of page views. */
+  share: number
+}
+
 /** Traffic and failures for one route shape. */
 export interface MonitorRouteStat {
   route: string

@@ -7,6 +7,7 @@ import type {
   MonitorFacetFilter,
   MonitorFacetName,
   MonitorHeatCell,
+  MonitorInteraction,
   MonitorIssue,
   MonitorIssueTrend,
   MonitorLatency,
@@ -21,7 +22,7 @@ import type {
 } from '../../types'
 import { FACET_NAMES, facetClause, facetColumn } from './facets'
 import { escapeLike, parseJson, toFacets, toIssue } from './rows'
-import { FAILED_SUM, bucketOf, isFailedClass } from '../shared/route'
+import { FAILED_SUM, bucketOf, isFailedClass, normalizeRoute } from '../shared/route'
 import { percentile } from '../shared/latency'
 import { BUCKET_MS } from './schema'
 import { changesOf } from './db'
@@ -1367,6 +1368,72 @@ export async function sessionTotal(db: Database, since: number): Promise<number>
   `).get(bucketOf(since, BUCKET_MS)) as { total: number | null }
 
   return Number(row?.total ?? 0)
+}
+
+/**
+ * What people pressed, ranked, optionally within one page.
+ *
+ * The companion to the page ranking rather than a repeat of it. Page views say
+ * where the traffic is; this says what it does when it gets there, and the two
+ * together are what decide where a test is worth writing: a busy page whose
+ * main action is rarely pressed is a different problem from one where every
+ * visitor presses it, and neither number alone distinguishes them.
+ *
+ * `route` narrows it to a single page, which is how it is read when a page has
+ * already been picked out of the ranking. Without it the counts are across the
+ * application, where a label common to every page — "Submit", "Back" — sums
+ * into the total it deserves rather than appearing once per route.
+ *
+ * `share` is against the presses in scope, not against page views: this
+ * answers "of what is pressed here, how much is this", and comparing a press
+ * count to a visit count would silently produce a rate above 1 for anything
+ * people click twice.
+ */
+export async function interactions(
+  db: Database,
+  windowMs: number,
+  options: { route?: string, limit?: number } = {},
+  now = Date.now(),
+): Promise<MonitorInteraction[]> {
+  const since = bucketOf(now - windowMs, BUCKET_MS)
+  const limit = Math.min(Math.max(options.limit ?? 20, 1), 200)
+
+  const rows = options.route
+    ? await db.prepare(`
+        SELECT route, label, SUM(count) AS total
+        FROM interactions
+        WHERE bucket >= ? AND route = ?
+        GROUP BY route, label
+        ORDER BY total DESC
+        LIMIT ?
+      `).all(since, normalizeRoute(options.route), limit) as Record<string, unknown>[]
+    : await db.prepare(`
+        SELECT route, label, SUM(count) AS total
+        FROM interactions
+        WHERE bucket >= ?
+        GROUP BY route, label
+        ORDER BY total DESC
+        LIMIT ?
+      `).all(since, limit) as Record<string, unknown>[]
+
+  // Against every press in scope, not only the ones that fit in `limit`: a
+  // share taken over the returned page would sum to 1 no matter how much of
+  // the tail was cut, so the top label of a long list would read as dominant
+  // purely because the list was truncated.
+  const scope = options.route
+    ? await db.prepare('SELECT COALESCE(SUM(count), 0) AS total FROM interactions WHERE bucket >= ? AND route = ?')
+      .get(since, normalizeRoute(options.route)) as { total: number | null }
+    : await db.prepare('SELECT COALESCE(SUM(count), 0) AS total FROM interactions WHERE bucket >= ?')
+      .get(since) as { total: number | null }
+
+  const total = Number(scope?.total ?? 0)
+
+  return rows.map(row => ({
+    route: String(row.route),
+    label: String(row.label),
+    count: Number(row.total),
+    share: total ? Number(row.total) / total : 0,
+  }))
 }
 
 /**
