@@ -60,7 +60,7 @@ output and nothing else — and it is why the archive is keyed by build rather
 than by release. A release name is reused across rebuilds, so keying by it meant
 one build deleted another's maps.
 
-`keepSourcemapsFor` bounds the archive at five builds. Map resolution does not
+`keepSourcemapBuilds` bounds the archive at five builds. Map resolution does not
 need `release` set; a release is still worth setting, since it tells you *when*
 something started.
 

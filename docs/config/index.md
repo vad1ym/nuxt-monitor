@@ -142,12 +142,15 @@ Ceiling on stored bytes, measured as pages in use rather than file size. `0`
 disables it. The most recent 200 events survive whatever you set. SQLite only —
 see [Storage](../guide/storage).
 
-## keepSourcemapsFor
+## keepSourcemapBuilds
 
 `number`, default `5`
 
 How many builds' sourcemaps to keep, newest first. Maps are large — this is a
-disk budget, not a retention policy.
+disk budget, not a retention policy. `0` keeps none.
+
+Renamed from `keepSourcemapsFor`, which read as a duration when the value is a
+count of builds. The old name still works and warns at build time.
 
 ## scrubKeys
 

@@ -38,7 +38,7 @@ export default defineNuxtModule<MonitorOptions>({
     maxEventsPerIssue: 100,
     maxIssues: 5_000,
     maxDatabaseMb: 256,
-    keepSourcemapsFor: 5,
+    keepSourcemapBuilds: 5,
     scrubKeys: [],
     capture: {},
     ignore: {},
@@ -155,7 +155,7 @@ export default defineNuxtModule<MonitorOptions>({
       // to survive the build that replaces it.
       dir: join(storageDir, 'maps'),
       release,
-      keep: options.keepSourcemapsFor ?? 5,
+      keep: resolveSourcemapBuilds(options),
     })
 
     // Collectors. The server side is a single Nitro `error` hook — every
@@ -767,4 +767,32 @@ function registerDevtoolsTab(nuxt: Nuxt, route: string): void {
       view: { type: 'iframe', src: route },
     })
   })
+}
+
+/**
+ * How many builds' sourcemaps to keep, under either spelling.
+ *
+ * `keepSourcemapsFor` was renamed to `keepSourcemapBuilds` because the old
+ * name reads as a duration and the value is a count of builds — five days and
+ * five releases are both plausible readings of `keepSourcemapsFor: 5`, and
+ * both are wrong.
+ *
+ * The old key still works. Silently dropping it would delete an archive
+ * somebody sized on purpose, and the failure would only surface weeks later as
+ * an unreadable stack trace from a release nobody kept the maps for.
+ */
+export function resolveSourcemapBuilds(options: MonitorOptions): number {
+  if (options.keepSourcemapsFor !== undefined) {
+    logger.warn(
+      '`monitor.keepSourcemapsFor` has been renamed to `monitor.keepSourcemapBuilds` '
+      + '— it counts builds, not days. The old name still works for now.',
+    )
+
+    // The old name wins when both are set, because the new one carries a
+    // default: preferring it would silently ignore the value actually written
+    // in the config file.
+    return options.keepSourcemapsFor
+  }
+
+  return options.keepSourcemapBuilds ?? 5
 }
