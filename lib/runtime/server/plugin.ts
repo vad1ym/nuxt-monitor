@@ -378,6 +378,23 @@ function requestContext(
   // 404 or a 422 that was never sent to anyone.
   context.statusCode = statusOf(error, getResponseStatus(event))
 
+  // The handler this request matched, as it is written in the source.
+  //
+  // `url` is the path a visitor asked for, which is what you need to reproduce
+  // the request; this is the route that answered it, which is what you need to
+  // find the code. They look alike for a static path and diverge exactly where
+  // it matters — `/api/orders/8412` says nothing about where to look, and
+  // `/api/orders/:id` is the file to open.
+  //
+  // Recorded alongside the raw path rather than instead of it: normalisation
+  // guesses a shape from the text, this is the shape the router actually used,
+  // and where the two disagree the disagreement is itself worth seeing.
+  const matched = matchedRoutePath(event)
+
+  if (matched !== undefined) {
+    context.matchedRoute = matched
+  }
+
   // How long it had been running. Absent rather than zero when the request
   // never passed the hook that starts the clock — a process-level rejection
   // has no request behind it, and "0 ms" would describe one that failed
@@ -420,4 +437,25 @@ function requestContext(
   }
 
   return context
+}
+
+/**
+ * The route pattern that matched, if the router recorded one.
+ *
+ * Read defensively: `matchedRoute` is marked experimental in h3, so its shape
+ * is allowed to change in a minor release. A monitoring module is the last
+ * thing that should throw because a field it merely finds useful moved — so an
+ * unexpected shape means the row is absent, not that the error report is.
+ */
+function matchedRoutePath(event: H3Event): string | undefined {
+  const matched = (event.context as { matchedRoute?: { path?: unknown } }).matchedRoute?.path
+
+  if (typeof matched !== 'string' || !matched) {
+    return undefined
+  }
+
+  // A catch-all that matched everything says nothing beyond what `url` already
+  // said, and it is the pattern most requests hit on a Nuxt app — so it would
+  // add a row to nearly every error while distinguishing nothing.
+  return matched === '/**' || matched === '/*' ? undefined : matched
 }
