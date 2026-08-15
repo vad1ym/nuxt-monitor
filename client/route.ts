@@ -12,9 +12,9 @@ import type { MonitorFacetFilter, MonitorFacetName } from '../lib/types'
  * by the server, and it is not.
  */
 
-export type View = 'overview' | 'issues' | 'usage' | 'notifications'
+export type View = 'overview' | 'issues' | 'notifications'
 
-const VIEWS: View[] = ['overview', 'issues', 'usage', 'notifications']
+const VIEWS: View[] = ['overview', 'issues', 'notifications']
 
 /** Facets a URL may carry. Anything else in the query string is ignored. */
 const FACETS: MonitorFacetName[] = [
