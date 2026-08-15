@@ -165,9 +165,35 @@ What of the failing request to keep beside the stack.
 | `capture.request` | `boolean` | `false` |
 | `capture.response` | `boolean` | `true` |
 | `capture.maxBytes` | `number` | `8192` |
+| `capture.environment` | `boolean` | `false` |
 
 A stack says where the code broke; a body says what broke it. "Cannot read
 properties of undefined" is one bug or fifty depending on what was posted.
+
+### What the browser records anyway
+
+Every client error already carries the conditions it happened under: the
+viewport it was rendered at, whether the browser thought it had a network, the
+connection class it reported, and the host a visitor arrived from — the host
+only, never the full referring URL. None of it singles anybody out, and each of
+them is regularly the whole explanation: a layout that only breaks below a
+breakpoint, a request that failed because a train entered a tunnel.
+
+### `capture.environment`
+
+Adds the browser's locale, time zone, screen size, pixel ratio and JS heap
+usage to client errors.
+
+Off by default, and not because the values are useless — a date that formats
+wrongly, a layout that breaks at one screen size and a tab that dies of memory
+pressure are each close to unreproducible without them.
+
+Off because of what they are *together*. Locale, time zone and exact screen
+geometry are the classic ingredients of a browser fingerprint: individually
+ordinary, jointly identifying enough to recognise a visitor across sessions.
+Everything this module collects by default is deliberately not that — see
+[Privacy](/guide/privacy) — so turning this on is a decision your application
+makes about its own users, not a default that quietly changes what the tool is.
 
 The response half is on: your application wrote it, and for a failure it is
 usually the error envelope you would have asked for first. The request half is

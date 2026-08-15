@@ -136,7 +136,16 @@ export default defineNuxtModule<MonitorOptions>({
     // runtimeConfig reaches it. Nothing secret goes here.
     nuxt.options.runtimeConfig.public.monitor = defu(
       nuxt.options.runtimeConfig.public.monitor as Record<string, unknown> | undefined,
-      { route, release },
+      {
+        route,
+        release,
+        // The one capture option the browser has to know about: the rest
+        // describe what the server stores, and are decided where the storing
+        // happens. This one decides what is read from `navigator` and `screen`
+        // in the first place, and the honest place to not collect something is
+        // before it is collected.
+        environment: options.capture?.environment === true,
+      },
     )
 
     enableClientSourcemaps(nuxt)

@@ -235,6 +235,29 @@ export interface MonitorCaptureOptions {
    * kilobytes of a payload almost always contain the field that mattered.
    */
   maxBytes?: number
+  /**
+   * Also record the browser's locale, time zone, screen and memory on an
+   * error. Default: `false`.
+   *
+   * Off by default, and not because the values are useless — they are some of
+   * the most useful there are. A date that formats wrongly, a layout that
+   * breaks at one screen size and a tab that dies of memory pressure are each
+   * nearly unreproducible without them.
+   *
+   * Off because of what they are together. Locale, time zone and exact screen
+   * geometry are the classic components of a browser fingerprint: individually
+   * ordinary, jointly identifying enough to recognise a visitor across
+   * sessions. Everything else this module records by default is deliberately
+   * not that — a per-tab random id, a coarse browser and OS, a device class —
+   * which is what lets it claim to collect no personal data and mean it.
+   *
+   * So this is a decision the application makes, knowing its own users and its
+   * own obligations, rather than a default that quietly changes what the tool
+   * is. The values that carry the same debugging weight without the same risk
+   * — viewport size, connectivity, the page navigated from — are collected
+   * either way and need no flag.
+   */
+  environment?: boolean
 }
 
 export interface MonitorSamplingOptions {

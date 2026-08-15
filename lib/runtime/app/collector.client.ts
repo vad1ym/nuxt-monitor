@@ -37,10 +37,15 @@ export default defineNuxtPlugin({
   enforce: 'pre',
 
   setup(nuxtApp) {
-    const config = useRuntimeConfig().public.monitor as { route: string, release?: string } | undefined
+    const config = useRuntimeConfig().public.monitor as {
+      route: string
+      release?: string
+      environment?: boolean
+    } | undefined
     const route = config?.route ?? '/_monitor'
     const endpoint = `${route}/api/ingest`
     const release = config?.release || undefined
+    const environment = config?.environment === true
 
     const breadcrumbs: MonitorBreadcrumb[] = []
     const MAX_BREADCRUMBS = 30
@@ -166,6 +171,7 @@ export default defineNuxtPlugin({
         // endpoint's 500 and the component that broke on its answer.
         lastFailedRequestId ? { ...extra, requestId: lastFailedRequestId } : extra,
         breadcrumbs,
+        environment,
       )
 
       if (normalized) {
@@ -472,6 +478,7 @@ function toClientEvent(
   error: unknown,
   extra: Record<string, unknown>,
   breadcrumbs: MonitorBreadcrumb[],
+  environment: boolean,
 ): ClientEvent | undefined {
   let type = 'Error'
   let message = ''
@@ -508,9 +515,121 @@ function toClientEvent(
     context: {
       url: window.location.pathname + window.location.search,
       userAgent: navigator.userAgent,
+      ...browserContext(environment),
       ...extra,
     },
     breadcrumbs: breadcrumbs.length ? [...breadcrumbs] : undefined,
+  }
+}
+
+/**
+ * What the browser can say about the conditions an error happened under.
+ *
+ * The half of an error report that a stack trace cannot supply. "Cannot read
+ * properties of undefined" is the same message whether the tab had been open
+ * for three seconds or three days, whether the network had just dropped, and
+ * whether the window was 320 pixels wide — and which of those was true is very
+ * often the entire explanation.
+ *
+ * Every value here is read at the moment of the error rather than at startup,
+ * because all of them change: a viewport is resized, a connection is lost, a
+ * heap fills up. A snapshot from page load would describe a browser nobody was
+ * using by the time anything went wrong.
+ *
+ * Split in two on purpose. The first group is what any server already learns
+ * from a request it serves, or is too coarse to single anybody out — so it is
+ * collected always. The second is locale, time zone, screen geometry and
+ * memory, which are the standard ingredients of a browser fingerprint, and it
+ * is collected only when the application asks for it by name. See
+ * `MonitorCaptureOptions.environment`.
+ */
+function browserContext(environment: boolean): Record<string, unknown> {
+  const context: Record<string, unknown> = {}
+
+  try {
+    // The size the page was actually being rendered at. A layout that breaks
+    // below a breakpoint is invisible in a report that says only "Chrome".
+    context.viewport = `${window.innerWidth}x${window.innerHeight}`
+
+    // Whether the browser thought it had a network at all. The difference
+    // between a bug and a train entering a tunnel, and there is no way to tell
+    // them apart afterwards from a failed request alone.
+    if (typeof navigator.onLine === 'boolean') {
+      context.online = navigator.onLine
+    }
+
+    // How the reader arrived at the page that broke — the host only.
+    //
+    // Deliberately not the full URL: a referrer routinely carries a search
+    // query, a session token in a path, or the title of a private document,
+    // and none of that is needed to answer the question this is here for,
+    // which is "did they come from our own checkout or from somewhere else".
+    const referrer = referrerHost()
+
+    if (referrer) {
+      context.referrer = referrer
+    }
+
+    // The connection class the browser reports: `4g`, `3g`, `slow-2g`. Not the
+    // speed estimate beside it, which is a continuously varying number and
+    // therefore a far better fingerprint than it is a debugging aid.
+    const connection = (navigator as { connection?: { effectiveType?: string } }).connection
+
+    if (typeof connection?.effectiveType === 'string') {
+      context.connection = connection.effectiveType
+    }
+
+    if (!environment) {
+      return context
+    }
+
+    // Everything past this point is opt-in — see the note on the option.
+    context.language = navigator.language
+    context.timezone = new Intl.DateTimeFormat().resolvedOptions().timeZone
+    context.screen = `${window.screen.width}x${window.screen.height}`
+    context.pixelRatio = window.devicePixelRatio
+
+    // Chromium only, and absent elsewhere rather than guessed at. Reported in
+    // megabytes because the raw byte counts are long enough to be unreadable
+    // in a list of context rows.
+    const memory = (performance as { memory?: { usedJSHeapSize?: number, jsHeapSizeLimit?: number } }).memory
+
+    if (typeof memory?.usedJSHeapSize === 'number' && typeof memory.jsHeapSizeLimit === 'number') {
+      const mb = (bytes: number): number => Math.round(bytes / 1024 / 1024)
+
+      context.heap = `${mb(memory.usedJSHeapSize)}/${mb(memory.jsHeapSizeLimit)} MB`
+    }
+  }
+  catch {
+    // A browser that refuses one of these — a locked-down embedded webview, a
+    // privacy extension replacing `navigator` — must not cost the report the
+    // fields already gathered, let alone the error itself.
+  }
+
+  return context
+}
+
+/**
+ * The host a visitor came from, or nothing.
+ *
+ * Same-origin referrers are dropped: navigating within the application is what
+ * the breadcrumb trail already records, in more detail and in order, so
+ * repeating it here would add a row that is either redundant or — on a
+ * single-page app, where the referrer is whatever page was first loaded —
+ * quietly misleading.
+ */
+function referrerHost(): string | undefined {
+  if (!document.referrer) {
+    return undefined
+  }
+
+  try {
+    const { host } = new URL(document.referrer)
+
+    return host && host !== window.location.host ? host : undefined
+  }
+  catch {
+    return undefined
   }
 }
 

@@ -108,7 +108,16 @@ errors, 250 sessions" and identifies nobody.
   `POST /api/checkout → 500`, and the visible label of what was clicked. No
   input values, no attributes, no page contents — a breadcrumb trail is not a
   session recording.
+- The **matched route** a failing request reached — `/api/orders/:id` beside the
+  `/api/orders/8412` that was asked for. About your code, not the caller.
+- The conditions a browser error happened under: the **viewport** it was
+  rendered at, whether the browser reported itself **online**, the
+  **connection class** (`4g`, `slow-2g`), and the **host** a visitor arrived
+  from. The host only — never the full referring URL, which routinely carries a
+  search query or a token.
 - The **request body**, but only if you turn it on — see below.
+- The browser's **locale, time zone, screen and heap**, but only if you turn
+  those on — see below.
 
 Browser fields are recorded for server errors too. A server error on a page
 render still happened *to* somebody, and knowing it only breaks on one browser
@@ -132,6 +141,28 @@ capture: { request: false }
 The response half is on by default because your application produced it rather
 than a visitor, and for a failure it is usually an error envelope. Turn it off
 the same way if your errors carry data you would rather not keep.
+
+## Locale, time zone and screen are opt-in
+
+`capture.environment` is off by default, and not because the values are
+useless. A date that formats wrongly, a layout that breaks at one screen size
+and a tab that dies of memory pressure are each close to unreproducible without
+them.
+
+It is off because of what they are together. Locale, time zone and exact screen
+geometry are the classic ingredients of a browser fingerprint — individually
+ordinary, jointly identifying enough to recognise a visitor across sessions.
+That is precisely what everything above is designed not to be, and it is the
+reason this module can say it collects no personal data and mean it.
+
+```ts
+// Off, and the default.
+capture: { environment: false }
+```
+
+The fields that carry the same debugging weight without the same risk —
+viewport, connectivity, the host somebody arrived from — are collected either
+way and need no flag.
 
 ## Retention
 
