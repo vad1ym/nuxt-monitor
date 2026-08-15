@@ -52,9 +52,7 @@ export function useMonitor(): {
      * outlive the session it describes or be read back on a later visit.
      */
     identify(id: string | undefined): void {
-      const setter = nuxtApp.$monitorIdentify as ((value: string | undefined) => void) | undefined
-
-      setter?.(typeof id === 'string' && id.trim() ? id.trim().slice(0, 64) : undefined)
+      nuxtApp.$monitorIdentify?.(typeof id === 'string' && id.trim() ? id.trim().slice(0, 64) : undefined)
     },
 
     exception(message: string, options: MonitorExceptionOptions = {}): void {
@@ -84,7 +82,7 @@ export function useMonitor(): {
       // Server-side, including during SSR: the collector plugin is client-only,
       // so there is nothing to report through and the event goes straight to
       // the store. `$monitorReport` is absent there by construction.
-      const report = nuxtApp.$monitorReport as ((event: ClientEvent) => void) | undefined
+      const report = nuxtApp.$monitorReport
 
       if (report) {
         report(event)
@@ -140,4 +138,24 @@ function reportDuringSsr(event: ClientEvent, nuxtApp: ReturnType<typeof useNuxtA
       tags: ['monitor', 'exception'],
     })
   }).catch(() => {})
+}
+
+/**
+ * What the client collector plugin provides.
+ *
+ * Declared here rather than in the module, because `#app` only resolves inside
+ * the runtime — and declared at all so the composable above reaches these
+ * through the type system instead of a cast. Neither is part of the documented
+ * surface; `useMonitor()` is. But an untyped injection is one rename away from
+ * failing silently in the one place that depends on it.
+ *
+ * Both optional, and that is load-bearing: the collector is client-only, so
+ * during SSR and in a build with collection switched off there is genuinely
+ * nothing there. The composable branches on exactly that.
+ */
+declare module '#app' {
+  interface NuxtApp {
+    $monitorReport?: (event: ClientEvent) => void
+    $monitorIdentify?: (id: string | undefined) => void
+  }
 }
