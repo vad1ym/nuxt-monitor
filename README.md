@@ -100,9 +100,7 @@ or `pnpm docs:dev` to read it locally.
   lifts this.
 - **Not for serverless on SQLite.** An ephemeral filesystem loses everything
   when the instance goes away; an external database does not.
-- **No multi-year retention** or one view across many apps. Alerting covers new
-  issues, regressions and growth; alerting on a spike against a baseline does
-  not exist yet.
+- **No multi-year retention** or one view across many apps.
 
 It is for the case those tools handle badly: one app, one server, errors you
 want to read now, on infrastructure you already have.

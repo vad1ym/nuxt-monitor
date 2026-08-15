@@ -258,6 +258,9 @@ Where alerts go, and what is worth one. Off until a channel is configured. See
 | `notifications.triggers.newIssue` | `boolean` | `true` |
 | `notifications.triggers.regression` | `boolean` | `true` |
 | `notifications.triggers.thresholds` | `number[]` | `[10, 100, 1000]` |
+| `notifications.triggers.spike` | `boolean \| { factor?, minimum? }` | `false` |
+| `notifications.triggers.errorRate` | `number \| { above, minimumRequests? }` | `false` |
+| `notifications.triggers.silence` | `boolean \| { after? }` | `false` |
 | `notifications.quietHours` | `{ from, to, timezone?, days? }` | — |
 
 A channel is one of:
@@ -293,6 +296,44 @@ notifications: {
 is one message per issue per hour rather than one per occurrence. `dashboardUrl`
 must be absolute — alerts are raised from background flushes, where there is no
 request to derive a host from.
+
+### The three that are off by default
+
+`newIssue`, `regression` and `thresholds` watch one issue at a time and are on
+because they cannot be noisy: each fires on a fact about a single fingerprint.
+The three below answer questions those cannot, and each needs a decision from
+you before it is safe to enable.
+
+```ts
+notifications: {
+  triggers: {
+    spike: true,            // or { factor: 5, minimum: 10 }
+    errorRate: 0.25,        // or { above: 0.25, minimumRequests: 20 }
+    silence: true,          // or { after: 2 * 60 * 60 * 1000 }
+  },
+}
+```
+
+**`spike`** — an issue running far faster than it used to. `true` means five
+times its established rate. Thresholds cannot express this: an issue ticking
+along at two an hour for a week that suddenly does four hundred in a minute
+crossed 100 and 1000 long ago, so nothing is said at exactly the moment
+something changed. Needs history to compare against, and ignores a handful of
+occurrences — ×180 from three events is arithmetic, not a finding.
+
+**`errorRate`** — the share of requests that failed, application-wide. The only
+trigger here that fires when no single issue is remarkable: fifty different
+faults each too small to alert on still add up to a checkout nobody can
+complete. Measured against requests served, so `minimumRequests` keeps it quiet
+on a quiet night — three failures out of four requests at 4am is not an outage.
+
+**`silence`** — nothing reported at all for `after` (two hours by default). The
+only one that fires on an *absence*, and the one that decides whether any of the
+others can be trusted: a collector that has died produces perfect silence, and
+silence reads exactly like a healthy afternoon. Compared against this
+application's own history, so a tool that normally sees four requests an hour
+has not broken by seeing none for twenty minutes. Keep `after` well above a
+deploy's restart window, or every deploy raises one.
 
 ## sampling
 
