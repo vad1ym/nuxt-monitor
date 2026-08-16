@@ -240,6 +240,10 @@ export interface MonitorCaptureOptions {
    *
    * Truncated rather than dropped past the limit, with a marker: the first few
    * kilobytes of a payload almost always contain the field that mattered.
+   *
+   * Not a way to switch bodies off: `0` and negatives fall back to the default,
+   * since a ceiling of nothing is a mistake far more often than an intention.
+   * Use `response: false` or `request: false` for that.
    */
   maxBytes?: number
   /**
@@ -276,10 +280,23 @@ export interface MonitorSamplingOptions {
    * that a loop cannot fill the database with copies.
    */
   burst?: number
-  /** Of the occurrences past the burst, keep one in this many. Default: 20. */
+  /**
+   * Of the occurrences past the burst, keep one in this many. Default: 20.
+   *
+   * Floored at 1, since keeping one in zero is not a thing to ask for.
+   */
   keepOneIn?: number
-  /** Length of the burst window in ms. Default: 60000. */
+  /** Length of the burst window in ms. Default: 60000. Floored at 1000. */
   windowMs?: number
+  /**
+   * Ceiling on fingerprints tracked at once. Default: 5000.
+   *
+   * Past it the oldest are forgotten, which only resets their burst allowance
+   * — the cost of being wrong here is storing a few more events, never losing
+   * a count. Worth raising only on an application with more than a few
+   * thousand distinct issues alive in one window.
+   */
+  maxTracked?: number
 }
 
 /**
@@ -413,9 +430,10 @@ export interface MonitorTelegramChannel extends MonitorChannelBase {
   /**
    * Bot token from `@BotFather`.
    *
-   * Prefer leaving this unset and supplying `NUXT_MONITOR_TELEGRAM_TOKEN` when
-   * the server starts — see the note on secrets below. A value written here is
-   * resolved at build time and ends up inside the build artefact.
+   * Prefer leaving this unset and supplying
+   * `NUXT_MONITOR_NOTIFICATIONS_TELEGRAM_TOKEN` when the server starts — see
+   * the note on secrets below. A value written here is resolved at build time
+   * and ends up inside the build artefact.
    */
   token?: string
   /** Target chat. A user id, a group id (negative) or `@channelname`. */
