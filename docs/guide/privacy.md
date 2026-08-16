@@ -115,54 +115,38 @@ errors, 250 sessions" and identifies nobody.
   **connection class** (`4g`, `slow-2g`), and the **host** a visitor arrived
   from. The host only — never the full referring URL, which routinely carries a
   search query or a token.
-- The **request body**, but only if you turn it on — see below.
-- The browser's **locale, time zone, screen and heap**, but only if you turn
-  those on — see below.
+- The **request body**, and the browser's **locale, time zone, screen and
+  heap** — but only if you turn those on. See below.
 
 Browser fields are recorded for server errors too. A server error on a page
 render still happened *to* somebody, and knowing it only breaks on one browser
 is as useful there as it is on the client.
 
-## Request bodies are opt-in
+## The two things that are opt-in
 
-`capture.request` is off by default and should stay off unless you have thought
-about what your endpoints receive. A request body is where passwords, card
-numbers and personal data actually live, and redaction matches *keys* — a token
-in a field called `payload` survives it.
-
-When it is on, only failing requests are read, so it cannot become a log of
-everything your users typed. Successful requests are counted, never stored.
-
-```ts
-// Off, and the default.
-capture: { request: false }
-```
+**`capture.request`** — a request body is where passwords, card numbers and
+personal data actually live, and redaction matches *keys*, so a token in a field
+called `payload` survives it. When on, only failing requests are read: it cannot
+become a log of everything your users typed.
 
 The response half is on by default because your application produced it rather
 than a visitor, and for a failure it is usually an error envelope. Turn it off
 the same way if your errors carry data you would rather not keep.
 
-## Locale, time zone and screen are opt-in
-
-`capture.environment` is off by default, and not because the values are
-useless. A date that formats wrongly, a layout that breaks at one screen size
-and a tab that dies of memory pressure are each close to unreproducible without
-them.
-
-It is off because of what they are together. Locale, time zone and exact screen
-geometry are the classic ingredients of a browser fingerprint — individually
-ordinary, jointly identifying enough to recognise a visitor across sessions.
-That is precisely what everything above is designed not to be, and it is the
-reason this module can say it collects no personal data and mean it.
+**`capture.environment`** — locale, time zone, screen geometry and heap. Off not
+because the values are useless but because of what they are *together*: the
+classic ingredients of a browser fingerprint, individually ordinary and jointly
+enough to recognise a visitor across sessions. That is precisely what everything
+above is designed not to be.
 
 ```ts
-// Off, and the default.
-capture: { environment: false }
+// Both off, and the defaults.
+capture: { request: false, environment: false }
 ```
 
-The fields that carry the same debugging weight without the same risk —
-viewport, connectivity, the host somebody arrived from — are collected either
-way and need no flag.
+The conditions that carry the same debugging weight without the same risk —
+viewport, connectivity, the host somebody arrived from — are recorded either way
+and need no flag.
 
 ## Retention
 

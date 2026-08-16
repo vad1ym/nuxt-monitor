@@ -76,7 +76,7 @@ lock those deployments out with no way to recover.
 
 `nuxt dev` serves the dashboard without a password. Requiring a credential to
 read your own errors on localhost is friction with nothing behind it, so
-[`auth.optional`](../config/#auth-optional) defaults to on there.
+[`auth.optional`](../config/#every-option) defaults to on there.
 
 To rehearse the real login locally — checking a reverse proxy, or the cookie
 flags — turn it off:

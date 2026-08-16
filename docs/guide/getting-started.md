@@ -79,7 +79,7 @@ trail of what led up to it — navigations, requests and the labels of what was
 clicked.
 
 **Bodies of failing requests** — the response body by default, the request body
-if you turn it on. See [`capture`](../config/#capture), and read
+if you turn it on. See [`capture`](../config/#capturerequest-and-captureresponse), and read
 [Privacy](./privacy) first if you are thinking about the request half.
 
 **Request counts** — for *every* request, failing or not: a route shape, a

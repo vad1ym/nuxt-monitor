@@ -59,7 +59,7 @@ honest outcome: nothing ever told the module when anything shipped.
 An individual issue carries the same fact as a sentence — **introduced in
 1.8.1 → 1.8.2** — which also says whether the deploy *after* it stopped the
 bleeding. When older occurrences have been trimmed away by
-[`maxEventsPerIssue`](../config/#maxeventsperissue) it reads "seen in" instead:
+[`maxEventsPerIssue`](../config/#every-option) it reads "seen in" instead:
 the earliest surviving occurrence is not necessarily where the issue began, and
 blaming a release that was innocent is worse than saying less.
 

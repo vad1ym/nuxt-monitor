@@ -210,7 +210,7 @@ called `data` survives it. That is the reason for the default.
 Adds the browser's locale, time zone, screen size, pixel ratio and JS heap usage
 to client errors. Off by default: together those are the classic ingredients of
 a browser fingerprint, and everything else this module collects is deliberately
-not that. See [Privacy](../guide/privacy#locale-time-zone-and-screen-are-opt-in).
+not that. See [Privacy](../guide/privacy#the-two-things-that-are-opt-in).
 
 The conditions that carry the same debugging weight without the same risk —
 viewport, connectivity, the host somebody arrived from — are recorded either way
