@@ -99,6 +99,20 @@ Facet counts over a window, for the filter panel.
 
 Query: `window` (milliseconds), plus any facet filters to count within.
 
+## GET /api/interactions
+
+What was pressed, ranked, optionally within one page. Counts per `(route,
+label)` — never a sequence, never tied to a session.
+
+| Parameter | Meaning |
+| --- | --- |
+| `window` | Milliseconds |
+| `route` | Narrows to one page; normalised, so `/posts/1` finds `/posts/:id` |
+| `limit` | Rows returned, 1–200 (default 20) |
+
+`share` is measured against every press in the window, not only the rows
+returned — a truncated list would otherwise report its top row as dominant.
+
 ## GET /api/stats
 
 Releases, routes, sessions and environments — the four section screens.

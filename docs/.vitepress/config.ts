@@ -3,10 +3,13 @@ import { defineConfig } from 'vitepress'
 /**
  * The documentation site.
  *
- * Ordered by when a reader needs each page rather than by topic: install,
- * then the two things that decide whether this is usable in production —
- * authentication and sourcemaps — then everything you tune afterwards, then
- * the honest account of what it does not do.
+ * Reference first, then the guide.
+ *
+ * The config table and the API list are what somebody opens for the second and
+ * every later time — "what is this option called, what does it default to" —
+ * and they were behind eleven guide pages. The guide is still ordered by when a
+ * reader needs each page: install, then the two things that decide whether this
+ * is usable in production, then what you tune afterwards.
  */
 export default defineConfig({
   title: 'nuxt-monitor',
@@ -41,6 +44,13 @@ export default defineConfig({
 
     sidebar: [
       {
+        text: 'Reference',
+        items: [
+          { text: 'Configuration', link: '/config/' },
+          { text: 'API', link: '/config/api' },
+        ],
+      },
+      {
         text: 'Guide',
         items: [
           { text: 'Getting started', link: '/guide/getting-started' },
@@ -54,13 +64,6 @@ export default defineConfig({
           { text: 'The overview', link: '/guide/overview' },
           { text: 'CLI and export', link: '/guide/cli' },
           { text: 'Deployment', link: '/guide/deployment' },
-        ],
-      },
-      {
-        text: 'Reference',
-        items: [
-          { text: 'Configuration', link: '/config/' },
-          { text: 'API', link: '/config/api' },
         ],
       },
     ],
