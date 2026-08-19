@@ -1,7 +1,7 @@
 {
   "name": "nuxt-monitor",
   "type": "module",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Local-first error monitoring for Nuxt. No DSN, no account, no sourcemap upload.",
   "license": "MIT",
   "author": "Vadym Bulakh <bulakhvad@gmail.com>",
