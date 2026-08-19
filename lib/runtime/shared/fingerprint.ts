@@ -54,6 +54,68 @@ export function fingerprint(
  */
 const IDENTIFIER = /^[a-z_$][\w$]{0,39}$/i
 
+/**
+ * A quoted token that is a request path rather than a value or a sentence.
+ *
+ * `$fetch` spells its failures `[GET] "/api/health-pages/bol-v-molochnye-zhelezy": 404`,
+ * and the path is the only part naming what broke. Collapsed whole to `<str>`
+ * it left `[GET] <str>: <n>` — a key every 404 in the application hashes to,
+ * so a missing health page, a missing root page and a mistyped endpoint became
+ * one issue with one of their messages as its title and another's request in
+ * the badge beside it. Two unrelated faults reading as cause and effect.
+ *
+ * So a path keeps its shape and loses only its variable segments, the same
+ * distinction `replaceQuoted` already draws for identifiers: structure comes
+ * from the source and is the same on every occurrence, values come from the
+ * request and are not.
+ *
+ * Deliberately strict about what counts as a path — a leading slash, no
+ * spaces, no `@`. A sentence that merely mentions a slash still becomes
+ * `<str>`.
+ */
+const QUOTED_PATH = /^\/[^\s'"@]*$/
+
+/** Long, hyphen-heavy tail segments are content slugs, not route structure. */
+const SLUG_MIN_LENGTH = 20
+const SLUG_MIN_HYPHENS = 3
+
+/**
+ * Reduces a quoted path to the endpoint it names.
+ *
+ * The variable segments go, because they vary per request and would file one
+ * issue per slug — a thousand missing health pages are one fault ("the content
+ * is not there"), not a thousand, and an issue list that grows with the
+ * catalogue rather than with the number of bugs is the same failure
+ * `normalizeRoute` exists to prevent in the counters.
+ *
+ * Numbers, uuids and hashes are left to the volatile patterns that run after
+ * this; what they cannot recognise is a slug of ordinary words, which is only
+ * distinguishable from a static segment by position and shape. Hence the
+ * heuristic, and hence it applying to the last segment alone: `health-pages`
+ * is structure and `bol-v-molochnye-zhelezy` is data, and nothing but their
+ * place in the path says so.
+ */
+function normalizePath(path: string): string {
+  const [withoutQuery = ''] = path.split('?')
+  const segments = withoutQuery.split('/')
+  const last = segments.length - 1
+  const tail = segments[last] ?? ''
+
+  // A file keeps its name: `entry.js` is structure, and the hash inside it is
+  // handled by the volatile patterns.
+  if (last < 1 || /\.[a-z0-9]{1,8}$/i.test(tail)) {
+    return withoutQuery
+  }
+
+  const hyphens = tail.split('-').length - 1
+
+  if (tail.length > SLUG_MIN_LENGTH || hyphens >= SLUG_MIN_HYPHENS) {
+    segments[last] = '<slug>'
+  }
+
+  return segments.join('/')
+}
+
 const VOLATILE_PATTERNS: [RegExp, string][] = [
   // UUIDs, then long hex runs (ids, content hashes, object addresses).
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi, '<uuid>'],
@@ -71,7 +133,23 @@ function replaceQuoted(message: string): string {
   return message.replace(/'([^']*)'|"([^"]*)"/g, (whole, single, double) => {
     const inner = single ?? double ?? ''
 
-    return IDENTIFIER.test(inner) ? whole : '<str>'
+    if (IDENTIFIER.test(inner)) {
+      return whole
+    }
+
+    // A path is neither an identifier nor an opaque value: it has structure
+    // worth keeping and detail worth losing, so it is normalised rather than
+    // kept or replaced.
+    if (!QUOTED_PATH.test(inner)) {
+      return '<str>'
+    }
+
+    // Re-quoted the way it arrived: the quote character is part of the
+    // surrounding message, and rewriting `'/a'` as `"/a"` would fingerprint two
+    // spellings of one message apart.
+    const quote = single === undefined ? '"' : `'`
+
+    return `${quote}${normalizePath(inner)}${quote}`
   })
 }
 

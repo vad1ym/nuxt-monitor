@@ -33,6 +33,44 @@ describe('normalizeMessage', () => {
       .not.toBe(normalizeMessage(`Cannot read properties of undefined (reading 'remaining')`))
   })
 
+  it('keeps a quoted path, because it names the endpoint that failed', () => {
+    // `$fetch` reports failures as `[GET] "/api/thing": 404`, and collapsing
+    // the path to `<str>` left `[GET] <str>: <n>` — a key every 404 in the
+    // application shares. A missing health page and a missing root page then
+    // sat in one issue, its title taken from one occurrence and the request
+    // badge beside it from another, reading as cause and effect.
+    expect(normalizeMessage('[GET] "/api/health-pages/x": 404'))
+      .not.toBe(normalizeMessage('[GET] "/activate": 404'))
+  })
+
+  it('collapses content slugs, so one fault is one issue', () => {
+    // A thousand missing health pages are one fault, not a thousand.
+    expect(normalizeMessage('[GET] "/api/health-pages/bol-v-molochnye-zhelezy": 404'))
+      .toBe(normalizeMessage('[GET] "/api/health-pages/vidkashliuvannia-krovi-krov-u-mokrotinni": 404'))
+  })
+
+  it('keeps a short static tail segment', () => {
+    // `reset-password` is route structure; collapsing it would merge every
+    // endpoint under `/api/user`.
+    expect(normalizeMessage('[GET] "/api/user/reset-password": 500'))
+      .not.toBe(normalizeMessage('[GET] "/api/user/change-email": 500'))
+  })
+
+  it('drops the query string, which is per-request detail', () => {
+    expect(normalizeMessage('[GET] "/api/promo-code-check?code=TEST20": 404'))
+      .toBe(normalizeMessage('[GET] "/api/promo-code-check?code=SUMMER": 404'))
+  })
+
+  it('keeps the quote character the message used', () => {
+    // Re-quoting `'/a'` as `"/a"` would fingerprint two spellings apart.
+    expect(normalizeMessage(`[GET] '/api/orders': 500`)).toContain(`'/api/orders'`)
+  })
+
+  it('still collapses a sentence that merely mentions a slash', () => {
+    expect(normalizeMessage('Failed at "some/path is broken here"'))
+      .toBe(normalizeMessage('Failed at "another/thing went wrong"'))
+  })
+
   it('keeps genuinely different messages apart', () => {
     expect(normalizeMessage('Connection refused')).not.toBe(normalizeMessage('Timeout exceeded'))
   })
